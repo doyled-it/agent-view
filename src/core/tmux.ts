@@ -608,33 +608,32 @@ export function attachSessionSync(sessionName: string): void {
   spawnSync("tmux", ["set-option", "-t", sessionName, "status-right-length", "120"], { stdio: "ignore" })
   spawnSync("tmux", ["set-option", "-t", sessionName, "status-right", "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"], { stdio: "ignore" })
 
-  // Attach to tmux - this blocks until user detaches (Ctrl+Q or Ctrl+B d)
-  const attachResult = spawnSync("tmux", ["attach-session", "-t", sessionName], {
-    stdio: ["inherit", "inherit", "pipe"],
-    env: process.env
-  })
+  try {
+    // Attach to tmux — blocks until user detaches
+    const attachResult = spawnSync("tmux", ["attach-session", "-t", sessionName], {
+      stdio: ["inherit", "inherit", "pipe"],
+      env: process.env
+    })
 
-  // Detect "not a terminal" error - usually caused by tmux version mismatch
-  // (e.g., tmux was upgraded via brew while old server was still running)
-  if (attachResult.status !== 0) {
-    const stderr = attachResult.stderr?.toString?.() || ""
-    if (stderr.includes("not a terminal")) {
-      throw new Error(
-        "tmux attach failed: this is usually caused by a tmux version mismatch. " +
-        "The tmux server was started with an older version. " +
-        "Run 'tmux kill-server' in a terminal to fix this. " +
-        "Agent View will recreate your sessions automatically."
-      )
+    if (attachResult.status !== 0) {
+      const stderr = attachResult.stderr?.toString?.() || ""
+      if (stderr.includes("not a terminal")) {
+        throw new Error(
+          "tmux attach failed: this is usually caused by a tmux version mismatch. " +
+          "The tmux server was started with an older version. " +
+          "Run 'tmux kill-server' in a terminal to fix this. " +
+          "Agent View will recreate your sessions automatically."
+        )
+      }
     }
+  } finally {
+    // Always unbind keys, even if attach crashed
+    spawnSync("tmux", ["unbind-key", "-n", "C-q"], { stdio: "ignore" })
+    spawnSync("tmux", ["unbind-key", "-n", "C-k"], { stdio: "ignore" })
+    spawnSync("tmux", ["unbind-key", "-n", "C-t"], { stdio: "ignore" })
+
+    // Clear screen and re-enter alternate buffer for TUI
+    process.stdout.write("\x1b[2J\x1b[H")
+    process.stdout.write("\x1b[?1049h")
   }
-
-
-  // Unbind session-specific keys (restore default behavior)
-  spawnSync("tmux", ["unbind-key", "-n", "C-q"], { stdio: "ignore" })
-  spawnSync("tmux", ["unbind-key", "-n", "C-k"], { stdio: "ignore" })
-  spawnSync("tmux", ["unbind-key", "-n", "C-t"], { stdio: "ignore" })
-
-  // Clear screen and re-enter alternate buffer for TUI
-  process.stdout.write("\x1b[2J\x1b[H")
-  process.stdout.write("\x1b[?1049h")
 }
