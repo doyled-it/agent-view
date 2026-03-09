@@ -179,7 +179,11 @@ export class SessionManager {
       worktreeRepo: options.worktreeRepo || "",
       worktreeBranch: options.worktreeBranch || "",
       toolData,
-      acknowledged: false
+      acknowledged: false,
+      notify: false,
+      statusChangedAt: now,
+      restartCount: 0,
+      statusHistory: [{ status: "running" as SessionStatus, timestamp: now.getTime() }],
     }
 
     storage.saveSession(session)
@@ -331,6 +335,7 @@ export class SessionManager {
     session.lastAccessed = new Date()
 
     storage.saveSession(session)
+    storage.incrementRestartCount(sessionId)
     storage.touch()
 
     return session

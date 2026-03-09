@@ -37,6 +37,10 @@ export interface Session {
   worktreeBranch: string
   toolData: Record<string, unknown>
   acknowledged: boolean
+  notify: boolean
+  statusChangedAt: Date
+  restartCount: number
+  statusHistory: Array<{ status: SessionStatus; timestamp: number }>
 }
 
 export interface Group {
