@@ -550,8 +550,11 @@ export async function attachWithPty(sessionName: string): Promise<void> {
   })
 }
 
-// Signal file for command palette request
-const COMMAND_PALETTE_SIGNAL = "/tmp/agent-view-cmd-palette"
+// Signal file for command palette request (per-user to avoid conflicts)
+export function getSignalFilePath(): string {
+  const uid = typeof process.getuid === "function" ? process.getuid() : process.pid
+  return `/tmp/agent-view-cmd-palette-${uid}`
+}
 
 /**
  * Check if command palette was requested during attached session
@@ -559,8 +562,8 @@ const COMMAND_PALETTE_SIGNAL = "/tmp/agent-view-cmd-palette"
 export function wasCommandPaletteRequested(): boolean {
   const fs = require("fs")
   try {
-    if (fs.existsSync(COMMAND_PALETTE_SIGNAL)) {
-      fs.unlinkSync(COMMAND_PALETTE_SIGNAL)
+    if (fs.existsSync(getSignalFilePath())) {
+      fs.unlinkSync(getSignalFilePath())
       return true
     }
   } catch {
@@ -579,7 +582,7 @@ export function attachSessionSync(sessionName: string): void {
 
   // Clear any existing signal
   try {
-    fs.unlinkSync(COMMAND_PALETTE_SIGNAL)
+    fs.unlinkSync(getSignalFilePath())
   } catch {
     // Ignore if doesn't exist
   }
@@ -592,7 +595,7 @@ export function attachSessionSync(sessionName: string): void {
   spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
 
   // Bind Ctrl+K to create signal file and detach
-  spawnSync("tmux", ["bind-key", "-n", "C-k", "run-shell", `touch ${COMMAND_PALETTE_SIGNAL}`, "\\;", "detach-client"], { stdio: "ignore" })
+  spawnSync("tmux", ["bind-key", "-n", "C-k", "run-shell", `touch ${getSignalFilePath()}`, "\\;", "detach-client"], { stdio: "ignore" })
 
   // Bind Ctrl+T to open a terminal pane (split horizontally, half screen)
   spawnSync("tmux", ["bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}"], { stdio: "ignore" })
