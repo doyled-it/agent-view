@@ -17,7 +17,7 @@ build-binaries:
     - export BUN_INSTALL="$HOME/.bun"
     - export PATH="$BUN_INSTALL/bin:$PATH"
     - bun install
-    - bun run compile --all
+    - bun run compile
     - ls -lh bin/*.tar.gz
   artifacts:
     paths:
