@@ -17,7 +17,6 @@ import { DialogGroup } from "@tui/component/dialog-group"
 import { DialogMove } from "@tui/component/dialog-move"
 import { attachSessionSync, capturePane, wasCommandPaletteRequested } from "@/core/tmux"
 import { canFork } from "@/core/claude"
-import { useCommandDialog } from "@tui/component/dialog-command"
 import type { Session, Group } from "@/core/types"
 import { formatRelativeTime, formatSmartTime, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
@@ -72,7 +71,6 @@ export function Home() {
   const dialog = useDialog()
   const toast = useToast()
   const renderer = useRenderer()
-  const command = useCommandDialog()
 
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [previewContent, setPreviewContent] = createSignal<string>("")
@@ -245,18 +243,31 @@ export function Home() {
 
     previewFetchAbort = true
     renderer.suspend()
+    let attachError: Error | undefined
     try {
       attachSessionSync(session.tmuxSession)
     } catch (err) {
-      console.error("Attach error:", err)
+      attachError = err as Error
     }
     renderer.resume()
     sync.refresh()
 
-    // Check if user pressed Ctrl+K to open command palette
-    if (wasCommandPaletteRequested()) {
-      command.open()
+    if (attachError) {
+      if (attachError.message.includes("version mismatch")) {
+        toast.show({
+          title: "tmux version mismatch",
+          message: "Run 'tmux kill-server' in a terminal, then restart Agent View",
+          variant: "error",
+          duration: 8000
+        })
+      } else {
+        toast.show({ message: `Attach failed: ${attachError.message}`, variant: "error", duration: 4000 })
+      }
+      return
     }
+
+    // Consume the signal file if it exists (Ctrl+K just goes home)
+    wasCommandPaletteRequested()
   }
 
   async function handleDelete(session: Session) {

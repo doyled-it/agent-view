@@ -126,6 +126,28 @@ export function isSessionActive(name: string, thresholdSeconds = 2): boolean {
 /**
  * Create a new tmux session
  */
+/**
+ * Check if the tmux server version matches the client version.
+ * A mismatch (e.g., after brew upgrade) causes "open terminal failed: not a terminal"
+ * errors because the protocol between client and server has changed.
+ */
+export async function checkTmuxVersionMismatch(): Promise<boolean> {
+  try {
+    // Get client version
+    const { stdout: clientOut } = await execAsync("tmux -V")
+    const clientVersion = clientOut.trim()
+
+    // Get server version (only works if server is running)
+    const { stdout: serverOut } = await execAsync("tmux display-message -p '#{version}'")
+    const serverVersion = serverOut.trim()
+
+    if (!serverVersion) return false // Can't determine, assume OK
+    return clientVersion !== `tmux ${serverVersion}`
+  } catch {
+    return false // Server not running or can't check
+  }
+}
+
 export async function createSession(options: {
   name: string
   command?: string
@@ -562,10 +584,14 @@ export function attachSessionSync(sessionName: string): void {
     // Ignore if doesn't exist
   }
 
+  // Exit alternate screen buffer, clear screen, and show cursor immediately
+  // to avoid flashing the TUI content during tmux setup
+  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[H\x1b[?25h")
+
   // Bind Ctrl+Q to detach in this session (C-q = ASCII 17)
   spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
 
-  // Bind Ctrl+K to create signal file and detach (opens command palette on return)
+  // Bind Ctrl+K to create signal file and detach
   spawnSync("tmux", ["bind-key", "-n", "C-k", "run-shell", `touch ${COMMAND_PALETTE_SIGNAL}`, "\\;", "detach-client"], { stdio: "ignore" })
 
   // Bind Ctrl+T to open a terminal pane (split horizontally, half screen)
@@ -579,18 +605,26 @@ export function attachSessionSync(sessionName: string): void {
   spawnSync("tmux", ["set-option", "-t", sessionName, "status-right-length", "120"], { stdio: "ignore" })
   spawnSync("tmux", ["set-option", "-t", sessionName, "status-right", "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"], { stdio: "ignore" })
 
-  // Exit alternate screen buffer (TUI uses this)
-  process.stdout.write("\x1b[?1049l")
-  // Clear screen
-  process.stdout.write("\x1b[2J\x1b[H")
-  // Show cursor
-  process.stdout.write("\x1b[?25h")
-
   // Attach to tmux - this blocks until user detaches (Ctrl+Q or Ctrl+B d)
-  spawnSync("tmux", ["attach-session", "-t", sessionName], {
-    stdio: "inherit",
+  const attachResult = spawnSync("tmux", ["attach-session", "-t", sessionName], {
+    stdio: ["inherit", "inherit", "pipe"],
     env: process.env
   })
+
+  // Detect "not a terminal" error - usually caused by tmux version mismatch
+  // (e.g., tmux was upgraded via brew while old server was still running)
+  if (attachResult.status !== 0) {
+    const stderr = attachResult.stderr?.toString?.() || ""
+    if (stderr.includes("not a terminal")) {
+      throw new Error(
+        "tmux attach failed: this is usually caused by a tmux version mismatch. " +
+        "The tmux server was started with an older version. " +
+        "Run 'tmux kill-server' in a terminal to fix this. " +
+        "Agent View will recreate your sessions automatically."
+      )
+    }
+  }
+
 
   // Unbind session-specific keys (restore default behavior)
   spawnSync("tmux", ["unbind-key", "-n", "C-q"], { stdio: "ignore" })

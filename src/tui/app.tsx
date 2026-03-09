@@ -32,7 +32,7 @@ import { DialogNew } from "@tui/component/dialog-new"
 import { Home } from "@tui/routes/home"
 import { Session } from "@tui/routes/session"
 import { getStorage, setStorage, Storage } from "@/core/storage"
-import { isTmuxAvailable } from "@/core/tmux"
+import { isTmuxAvailable, checkTmuxVersionMismatch } from "@/core/tmux"
 
 async function detectTerminalMode(): Promise<"dark" | "light"> {
   // Simple detection - could be enhanced
@@ -51,6 +51,18 @@ export async function tui(options: TuiOptions = {}) {
   const tmuxOk = await isTmuxAvailable()
   if (!tmuxOk) {
     console.error("Error: tmux is not available. Please install tmux first.")
+    process.exit(1)
+  }
+
+  // Check for tmux version mismatch (e.g., after brew upgrade)
+  const versionMismatch = await checkTmuxVersionMismatch()
+  if (versionMismatch) {
+    console.error("\x1b[33mWarning: tmux version mismatch detected!\x1b[0m")
+    console.error("The tmux server is running an older version than the installed client.")
+    console.error("This will cause 'open terminal failed' errors when attaching to sessions.")
+    console.error("")
+    console.error("Fix: run \x1b[1mtmux kill-server\x1b[0m and restart Agent View.")
+    console.error("")
     process.exit(1)
   }
 
@@ -191,7 +203,8 @@ function App(props: { onExit: () => Promise<void> }) {
     }
 
     if (evt.ctrl && evt.name === "k") {
-      command.open()
+      dialog.clear()
+      route.navigate({ type: "home" })
     }
 
     if (evt.name === "n") {
