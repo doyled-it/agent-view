@@ -55,16 +55,24 @@ Agent View monitors your sessions and shows real-time status indicators:
 
 ## Installation
 
-### Quick Install
+### Quick Install (MITRE)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/frayo44/agent-view/main/install.sh | bash
+curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash
 ```
+
+Install a specific version:
+
+```bash
+curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash -s -- -v 1.0.0
+```
+
+**Requirements:** tmux (`brew install tmux` on macOS)
 
 ### Manual Install
 
 ```bash
-git clone git@github.com:frayo44/agent-view.git
+git clone git@gitlab.mitre.org:mdoyle/agent-view.git
 cd agent-view
 bun install
 bun run build
