@@ -1,0 +1,319 @@
+stages:
+  - build
+  - release
+
+build-binaries:
+  stage: build
+  image: debian:bookworm-slim
+  tags:
+    - docker
+  before_script:
+    - apt-get update && apt-get install -y curl unzip git ca-certificates
+    - curl -ksSL https://gitlab.mitre.org/mitre-scripts/mitre-pki/raw/master/os_scripts/install_certs.sh | sh
+    - curl -fsSL https://bun.sh/install | bash
+    - export BUN_INSTALL="$HOME/.bun"
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+  script:
+    - set -e
+    - export BUN_INSTALL="$HOME/.bun"
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - bun install
+    - bun run compile --all
+    - ls -lh bin/*.tar.gz
+  artifacts:
+    paths:
+      - bin/*.tar.gz
+    expire_in: 1 week
+  only:
+    - tags
+
+bump-version:
+  stage: release
+  image: debian:bookworm-slim
+  tags:
+    - docker
+  variables:
+    CHANGELOG_FILE: CHANGELOG.md
+  before_script:
+    - apt-get update && apt-get install -y curl jq git ca-certificates
+    - curl -ksSL https://gitlab.mitre.org/mitre-scripts/mitre-pki/raw/master/os_scripts/install_certs.sh | sh
+  script:
+    - |
+      set -e
+
+      # Fetch and checkout main
+      git fetch origin
+      git checkout main
+      git pull origin main
+
+      # Skip if last commit was from the bot
+      LAST_AUTHOR=$(git log -1 --pretty=format:'%an')
+      if [ "$LAST_AUTHOR" = "$COMMIT_BOT_USER" ]; then
+        echo "Last commit was from $COMMIT_BOT_USER, skipping bump."
+        exit 0
+      fi
+
+      # Get MR info from GitLab API
+      PROJECT_ID=$(echo "$CI_PROJECT_ID")
+      COMMIT_SHA=$(git log -1 --pretty=format:'%H')
+      MR_RESPONSE=$(curl -ksSL --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
+        "https://gitlab.mitre.org/api/v4/projects/${PROJECT_ID}/repository/commits/${COMMIT_SHA}/merge_requests")
+
+      MR_IID=$(echo "$MR_RESPONSE" | jq -r '.[0].iid // empty')
+      if [ -z "$MR_IID" ]; then
+        echo "No MR found for commit $COMMIT_SHA, skipping."
+        exit 0
+      fi
+
+      # Extract MR labels and determine bump type
+      LABELS=$(echo "$MR_RESPONSE" | jq -r '.[0].labels[]' 2>/dev/null || true)
+      BUMP_TYPE=""
+      if echo "$LABELS" | grep -q "Version::Major"; then
+        BUMP_TYPE="major"
+      elif echo "$LABELS" | grep -q "Version::Minor"; then
+        BUMP_TYPE="minor"
+      elif echo "$LABELS" | grep -q "Version::Patch"; then
+        BUMP_TYPE="patch"
+      fi
+
+      if [ -z "$BUMP_TYPE" ]; then
+        echo "No version label found on MR !${MR_IID}, skipping."
+        exit 0
+      fi
+
+      echo "Bump type: $BUMP_TYPE"
+
+      # Get current version from package.json
+      CURRENT_VERSION=$(jq -r '.version' package.json)
+      MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
+      MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
+      PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
+
+      echo "Current version: $CURRENT_VERSION"
+
+      # Bump version
+      case "$BUMP_TYPE" in
+        major)
+          MAJOR=$((MAJOR + 1))
+          MINOR=0
+          PATCH=0
+          ;;
+        minor)
+          MINOR=$((MINOR + 1))
+          PATCH=0
+          ;;
+        patch)
+          PATCH=$((PATCH + 1))
+          ;;
+      esac
+
+      NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+      echo "New version: $NEW_VERSION"
+
+      # Update package.json
+      jq --arg v "$NEW_VERSION" '.version = $v' package.json > package.json.tmp
+      mv package.json.tmp package.json
+
+      # Get MR commits for context
+      MR_COMMITS=$(curl -ksSL --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
+        "https://gitlab.mitre.org/api/v4/projects/${PROJECT_ID}/merge_requests/${MR_IID}/commits" \
+        | jq -r '.[].title' 2>/dev/null || true)
+
+      MR_TITLE=$(echo "$MR_RESPONSE" | jq -r '.[0].title // "No title"')
+      MR_DESCRIPTION=$(echo "$MR_RESPONSE" | jq -r '.[0].description // "No description"')
+      TODAY=$(date +%Y-%m-%d)
+
+      # Generate changelog via LLM
+      CHANGELOG_ENTRY=""
+      if [ -n "$AIP_API_KEY" ]; then
+        LLM_PROMPT="Generate a changelog entry following Common Changelog conventions for version ${NEW_VERSION} released on ${TODAY}.
+
+      MR Title: ${MR_TITLE}
+      MR Description: ${MR_DESCRIPTION}
+
+      Commits:
+      ${MR_COMMITS}
+
+      Format the entry as:
+      ## [${NEW_VERSION}] - ${TODAY}
+
+      Use categories like ### Added, ### Changed, ### Fixed, ### Removed as appropriate.
+      Each item should be a concise bullet point. Only include relevant categories.
+      Do not wrap the output in markdown code fences."
+
+        LLM_PAYLOAD=$(jq -n \
+          --arg model "openai/gpt-oss-120b" \
+          --arg prompt "$LLM_PROMPT" \
+          '{
+            model: $model,
+            messages: [{role: "user", content: $prompt}],
+            temperature: 0.3
+          }')
+
+        LLM_RESPONSE=$(curl -ksSL -X POST \
+          "https://models.k8s.aip.mitre.org/v1/chat/completions" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer $AIP_API_KEY" \
+          -d "$LLM_PAYLOAD" 2>/dev/null || true)
+
+        CHANGELOG_ENTRY=$(echo "$LLM_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
+      fi
+
+      # Fallback to simple entry if LLM fails
+      if [ -z "$CHANGELOG_ENTRY" ]; then
+        CHANGELOG_ENTRY="## [${NEW_VERSION}] - ${TODAY}
+
+### Changed
+
+- ${MR_TITLE}"
+      fi
+
+      # Update or create CHANGELOG.md
+      if [ -f "$CHANGELOG_FILE" ]; then
+        # Insert after the first header line (# Changelog)
+        HEADER=$(head -n 1 "$CHANGELOG_FILE")
+        REST=$(tail -n +2 "$CHANGELOG_FILE")
+        {
+          echo "$HEADER"
+          echo ""
+          echo "$CHANGELOG_ENTRY"
+          echo "$REST"
+        } > "$CHANGELOG_FILE"
+      else
+        {
+          echo "# Changelog"
+          echo ""
+          echo "$CHANGELOG_ENTRY"
+        } > "$CHANGELOG_FILE"
+      fi
+
+      # Configure git and commit
+      git config user.name "$COMMIT_BOT_USER"
+      git config user.email "${COMMIT_BOT_USER}@mitre.org"
+
+      git add package.json "$CHANGELOG_FILE"
+      git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
+
+      # Tag and push
+      git tag "v${NEW_VERSION}"
+      git push "https://${COMMIT_BOT_USER}:${CI_TAG_TOKEN}@gitlab.mitre.org/${CI_PROJECT_PATH}.git" main --tags
+  needs: []
+  only:
+    - main
+
+create-release:
+  stage: release
+  image: alpine:3.19
+  tags:
+    - docker
+  before_script:
+    - apk add --no-cache curl jq sed git
+  script:
+    - |
+      set -e
+
+      # Extract version from tag (strip v prefix)
+      VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
+      echo "Creating release for version: $VERSION"
+
+      # Get commits between previous tag and current tag
+      PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+      if [ -n "$PREV_TAG" ]; then
+        COMMITS=$(git log "${PREV_TAG}..${CI_COMMIT_TAG}" --pretty=format:"- %s" 2>/dev/null || true)
+      else
+        COMMITS=$(git log --pretty=format:"- %s" -20 2>/dev/null || true)
+      fi
+
+      # Generate release notes via LLM
+      RELEASE_NOTES=""
+      if [ -n "$AIP_API_KEY" ]; then
+        LLM_PROMPT="Generate concise release notes following Common Changelog conventions for version ${VERSION}.
+
+      Commits:
+      ${COMMITS}
+
+      Format as a bulleted list grouped by category (Added, Changed, Fixed, Removed) as appropriate.
+      Only include relevant categories. Be concise. Do not wrap in code fences."
+
+        LLM_PAYLOAD=$(jq -n \
+          --arg model "openai/gpt-oss-120b" \
+          --arg prompt "$LLM_PROMPT" \
+          '{
+            model: $model,
+            messages: [{role: "user", content: $prompt}],
+            temperature: 0.3
+          }')
+
+        LLM_RESPONSE=$(curl -ksSL -X POST \
+          "https://models.k8s.aip.mitre.org/v1/chat/completions" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer $AIP_API_KEY" \
+          -d "$LLM_PAYLOAD" 2>/dev/null || true)
+
+        RELEASE_NOTES=$(echo "$LLM_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
+      fi
+
+      # Fallback to raw commits if LLM fails
+      if [ -z "$RELEASE_NOTES" ]; then
+        RELEASE_NOTES="$COMMITS"
+      fi
+
+      # Build release_notes.md with install instructions
+      cat > release_notes.md <<EOF
+## What's New in v${VERSION}
+
+${RELEASE_NOTES}
+
+## Installation
+
+\`\`\`bash
+curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash
+\`\`\`
+EOF
+
+      # Upload each tarball to GitLab generic packages API
+      ASSET_LINKS="[]"
+      for tarball in bin/*.tar.gz; do
+        FILENAME=$(basename "$tarball")
+        echo "Uploading $FILENAME..."
+        curl -ksSL --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
+          --upload-file "$tarball" \
+          "https://gitlab.mitre.org/api/v4/projects/${CI_PROJECT_ID}/packages/generic/agent-view/${VERSION}/${FILENAME}"
+
+        LINK=$(jq -n \
+          --arg name "$FILENAME" \
+          --arg url "https://gitlab.mitre.org/api/v4/projects/${CI_PROJECT_ID}/packages/generic/agent-view/${VERSION}/${FILENAME}" \
+          '{name: $name, url: $url, link_type: "package"}')
+
+        ASSET_LINKS=$(echo "$ASSET_LINKS" | jq --argjson link "$LINK" '. + [$link]')
+      done
+
+      echo "Asset links: $ASSET_LINKS"
+
+      # Read release notes content
+      RELEASE_BODY=$(cat release_notes.md)
+
+      # Create GitLab release via API
+      RELEASE_PAYLOAD=$(jq -n \
+        --arg tag "$CI_COMMIT_TAG" \
+        --arg name "v${VERSION}" \
+        --arg description "$RELEASE_BODY" \
+        --argjson assets "{\"links\": $ASSET_LINKS}" \
+        '{
+          tag_name: $tag,
+          name: $name,
+          description: $description,
+          assets: $assets
+        }')
+
+      curl -ksSL -X POST \
+        "https://gitlab.mitre.org/api/v4/projects/${CI_PROJECT_ID}/releases" \
+        --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
+        --header "Content-Type: application/json" \
+        --data "$RELEASE_PAYLOAD"
+
+      echo "Release v${VERSION} created successfully."
+  needs:
+    - build-binaries
+  only:
+    - tags
