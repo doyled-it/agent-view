@@ -15,6 +15,7 @@ import { DialogFork } from "@tui/component/dialog-fork"
 import { DialogRename } from "@tui/component/dialog-rename"
 import { DialogGroup } from "@tui/component/dialog-group"
 import { DialogMove } from "@tui/component/dialog-move"
+import { DialogConfirm } from "@tui/component/dialog-confirm"
 import { attachSessionSync, capturePane, wasCommandPaletteRequested } from "@/core/tmux"
 import { canFork } from "@/core/claude"
 import type { Session, Group } from "@/core/types"
@@ -214,25 +215,33 @@ export function Home() {
 
   // Handle deleting a group
   async function handleDeleteGroup(group: Group) {
-    const sessionCount = getGroupSessionCount(allSessions(), group.path)
-
-    // Don't allow deleting default group
     if (group.path === DEFAULT_GROUP_PATH) {
       toast.show({ message: "Cannot delete the default group", variant: "error", duration: 2000 })
       return
     }
 
-    // Move sessions to default group before deleting
-    if (sessionCount > 0) {
-      const sessionsInGroup = allSessions().filter(s => s.groupPath === group.path)
-      for (const session of sessionsInGroup) {
-        sync.session.moveToGroup(session.id, DEFAULT_GROUP_PATH)
-      }
-    }
+    const sessionCount = getGroupSessionCount(allSessions(), group.path)
+    const message = sessionCount > 0
+      ? `Delete group "${group.name}"? Its ${sessionCount} session(s) will be moved to the default group.`
+      : `Delete group "${group.name}"?`
 
-    sync.group.delete(group.path)
-    toast.show({ message: `Deleted group "${group.name}"`, variant: "info", duration: 2000 })
-    sync.refresh()
+    dialog.push(() => (
+      <DialogConfirm
+        title="Delete Group"
+        message={message}
+        onConfirm={() => {
+          if (sessionCount > 0) {
+            const sessionsInGroup = allSessions().filter(s => s.groupPath === group.path)
+            for (const session of sessionsInGroup) {
+              sync.session.moveToGroup(session.id, DEFAULT_GROUP_PATH)
+            }
+          }
+          sync.group.delete(group.path)
+          toast.show({ message: `Deleted group "${group.name}"`, variant: "info", duration: 2000 })
+          sync.refresh()
+        }}
+      />
+    ))
   }
 
   function handleAttach(session: Session) {
@@ -271,12 +280,20 @@ export function Home() {
   }
 
   async function handleDelete(session: Session) {
-    try {
-      await sync.session.delete(session.id)
-      toast.show({ message: `Deleted ${session.title}`, variant: "info", duration: 2000 })
-    } catch (err) {
-      toast.error(err as Error)
-    }
+    dialog.push(() => (
+      <DialogConfirm
+        title="Delete Session"
+        message={`Delete "${session.title}"? This will kill the tmux session.`}
+        onConfirm={async () => {
+          try {
+            await sync.session.delete(session.id)
+            toast.show({ message: `Deleted ${session.title}`, variant: "info", duration: 2000 })
+          } catch (err) {
+            toast.error(err as Error)
+          }
+        }}
+      />
+    ))
   }
 
   async function handleRestart(session: Session) {
