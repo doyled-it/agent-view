@@ -212,11 +212,14 @@ download_and_install() {
 
     echo -e "${MUTED}Downloading...${NC}"
     if ! curl -k#fL -o "$tmp_dir/$filename" "$url"; then
-        echo -e "${RED}Download failed. The release may not have binaries for your platform.${NC}"
-        echo -e "${MUTED}URL: ${url}${NC}"
-        echo -e "${MUTED}You can install from source instead:${NC}"
+        echo -e "${RED}Download failed.${NC}"
+        echo -e "${MUTED}Pre-built binaries are only available for linux-x64.${NC}"
+        echo -e "${MUTED}Your platform: ${NC}${platform}"
+        echo ""
+        echo -e "${MUTED}Install from source instead:${NC}"
         echo -e "  git clone ${GITLAB_URL}/mdoyle/agent-view.git"
-        echo -e "  cd agent-view && bun install && bun run build"
+        echo -e "  cd agent-view && bun install && bun run compile"
+        echo -e "  cd bin/agent-view-${platform} && ./install.sh"
         rm -rf "$tmp_dir"
         exit 1
     fi
