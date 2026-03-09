@@ -14,7 +14,6 @@ build-binaries:
     - export BUN_INSTALL="$HOME/.bun"
     - export PATH="$BUN_INSTALL/bin:$PATH"
   script:
-    - set -e
     - export BUN_INSTALL="$HOME/.bun"
     - export PATH="$BUN_INSTALL/bin:$PATH"
     - bun install
@@ -41,20 +40,17 @@ bump-version:
     - |
       set -e
 
-      # Fetch and checkout main
       git fetch origin
       git checkout main
       git pull origin main
 
-      # Skip if last commit was from the bot
       LAST_AUTHOR=$(git log -1 --pretty=format:'%an')
       if [ "$LAST_AUTHOR" = "$COMMIT_BOT_USER" ]; then
         echo "Last commit was from $COMMIT_BOT_USER, skipping bump."
         exit 0
       fi
 
-      # Get MR info from GitLab API
-      PROJECT_ID=$(echo "$CI_PROJECT_ID")
+      PROJECT_ID="$CI_PROJECT_ID"
       COMMIT_SHA=$(git log -1 --pretty=format:'%H')
       MR_RESPONSE=$(curl -ksSL --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
         "https://gitlab.mitre.org/api/v4/projects/${PROJECT_ID}/repository/commits/${COMMIT_SHA}/merge_requests")
@@ -65,7 +61,6 @@ bump-version:
         exit 0
       fi
 
-      # Extract MR labels and determine bump type
       LABELS=$(echo "$MR_RESPONSE" | jq -r '.[0].labels[]' 2>/dev/null || true)
       BUMP_TYPE=""
       if echo "$LABELS" | grep -q "Version::Major"; then
@@ -83,72 +78,41 @@ bump-version:
 
       echo "Bump type: $BUMP_TYPE"
 
-      # Get current version from package.json
       CURRENT_VERSION=$(jq -r '.version' package.json)
       MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
       MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
       PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
 
-      echo "Current version: $CURRENT_VERSION"
-
-      # Bump version
       case "$BUMP_TYPE" in
-        major)
-          MAJOR=$((MAJOR + 1))
-          MINOR=0
-          PATCH=0
-          ;;
-        minor)
-          MINOR=$((MINOR + 1))
-          PATCH=0
-          ;;
-        patch)
-          PATCH=$((PATCH + 1))
-          ;;
+        major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+        minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+        patch) PATCH=$((PATCH + 1)) ;;
       esac
 
       NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-      echo "New version: $NEW_VERSION"
+      echo "Current: $CURRENT_VERSION -> New: $NEW_VERSION"
 
-      # Update package.json
       jq --arg v "$NEW_VERSION" '.version = $v' package.json > package.json.tmp
       mv package.json.tmp package.json
 
-      # Get MR commits for context
       MR_COMMITS=$(curl -ksSL --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
         "https://gitlab.mitre.org/api/v4/projects/${PROJECT_ID}/merge_requests/${MR_IID}/commits" \
         | jq -r '.[].title' 2>/dev/null || true)
 
       MR_TITLE=$(echo "$MR_RESPONSE" | jq -r '.[0].title // "No title"')
-      MR_DESCRIPTION=$(echo "$MR_RESPONSE" | jq -r '.[0].description // "No description"')
+      MR_DESCRIPTION=$(echo "$MR_RESPONSE" | jq -r '.[0].description // ""')
+      MR_AUTHOR=$(echo "$MR_RESPONSE" | jq -r '.[0].author.username // "unknown"')
       TODAY=$(date +%Y-%m-%d)
 
-      # Generate changelog via LLM
       CHANGELOG_ENTRY=""
-      if [ -n "$AIP_API_KEY" ]; then
-        LLM_PROMPT="Generate a changelog entry following Common Changelog conventions for version ${NEW_VERSION} released on ${TODAY}.
-
-      MR Title: ${MR_TITLE}
-      MR Description: ${MR_DESCRIPTION}
-
-      Commits:
-      ${MR_COMMITS}
-
-      Format the entry as:
-      ## [${NEW_VERSION}] - ${TODAY}
-
-      Use categories like ### Added, ### Changed, ### Fixed, ### Removed as appropriate.
-      Each item should be a concise bullet point. Only include relevant categories.
-      Do not wrap the output in markdown code fences."
+      if [ -n "${AIP_API_KEY:-}" ]; then
+        LLM_PROMPT=$(printf 'Generate a changelog entry following Common Changelog conventions.\n\nVersion: %s (%s release, previous: %s)\nMR Title: %s\nMR Author: @%s\nMR Description: %s\nCommits:\n%s\n\nRULES:\n1. Use headings: Changed, Added, Removed, Fixed (only relevant ones)\n2. Imperative mood (Add, Fix, Change, Remove)\n3. Reference MR: (!%s) and author: (@%s)\n4. Output ONLY headings and bullet points, no version header or date.\n5. Do not wrap in code fences.' \
+          "$NEW_VERSION" "$BUMP_TYPE" "$CURRENT_VERSION" "$MR_TITLE" "$MR_AUTHOR" "$MR_DESCRIPTION" "$MR_COMMITS" "$MR_IID" "$MR_AUTHOR")
 
         LLM_PAYLOAD=$(jq -n \
           --arg model "openai/gpt-oss-120b" \
           --arg prompt "$LLM_PROMPT" \
-          '{
-            model: $model,
-            messages: [{role: "user", content: $prompt}],
-            temperature: 0.3
-          }')
+          '{model: $model, messages: [{role: "user", content: $prompt}], temperature: 0.3}')
 
         LLM_RESPONSE=$(curl -ksSL -X POST \
           "https://models.k8s.aip.mitre.org/v1/chat/completions" \
@@ -159,44 +123,32 @@ bump-version:
         CHANGELOG_ENTRY=$(echo "$LLM_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
       fi
 
-      # Fallback to simple entry if LLM fails
       if [ -z "$CHANGELOG_ENTRY" ]; then
-        CHANGELOG_ENTRY="## [${NEW_VERSION}] - ${TODAY}
-
-### Changed
-
-- ${MR_TITLE}"
+        printf -v CHANGELOG_ENTRY "### Changed\n\n- %s (!%s) (@%s)" "$MR_TITLE" "$MR_IID" "$MR_AUTHOR"
       fi
 
-      # Update or create CHANGELOG.md
+      VERSION_HEADER=$(printf "## [%s] - %s" "$NEW_VERSION" "$TODAY")
+
       if [ -f "$CHANGELOG_FILE" ]; then
-        # Insert after the first header line (# Changelog)
         HEADER=$(head -n 1 "$CHANGELOG_FILE")
         REST=$(tail -n +2 "$CHANGELOG_FILE")
-        {
-          echo "$HEADER"
-          echo ""
-          echo "$CHANGELOG_ENTRY"
-          echo "$REST"
-        } > "$CHANGELOG_FILE"
+        printf "%s\n\n%s\n\n%s\n%s" "$HEADER" "$VERSION_HEADER" "$CHANGELOG_ENTRY" "$REST" > "$CHANGELOG_FILE"
       else
-        {
-          echo "# Changelog"
-          echo ""
-          echo "$CHANGELOG_ENTRY"
-        } > "$CHANGELOG_FILE"
+        printf "# Changelog\n\n%s\n\n%s\n" "$VERSION_HEADER" "$CHANGELOG_ENTRY" > "$CHANGELOG_FILE"
       fi
 
-      # Configure git and commit
+      echo "Updated CHANGELOG.md"
+
       git config user.name "$COMMIT_BOT_USER"
       git config user.email "${COMMIT_BOT_USER}@mitre.org"
 
       git add package.json "$CHANGELOG_FILE"
       git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
 
-      # Tag and push
       git tag "v${NEW_VERSION}"
-      git push "https://${COMMIT_BOT_USER}:${CI_TAG_TOKEN}@gitlab.mitre.org/${CI_PROJECT_PATH}.git" main --tags
+      git push "https://oauth2:${CI_TAG_TOKEN}@gitlab.mitre.org/${CI_PROJECT_PATH}.git" main --tags
+
+      echo "Version bumped and tagged: v${NEW_VERSION}"
   needs: []
   only:
     - main
@@ -212,37 +164,26 @@ create-release:
     - |
       set -e
 
-      # Extract version from tag (strip v prefix)
       VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
       echo "Creating release for version: $VERSION"
 
-      # Get commits between previous tag and current tag
-      PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-      if [ -n "$PREV_TAG" ]; then
-        COMMITS=$(git log "${PREV_TAG}..${CI_COMMIT_TAG}" --pretty=format:"- %s" 2>/dev/null || true)
-      else
-        COMMITS=$(git log --pretty=format:"- %s" -20 2>/dev/null || true)
+      git fetch --tags
+      PREV_TAG=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -B1 "^${CI_COMMIT_TAG}$" | head -1)
+      if [ "$PREV_TAG" = "$CI_COMMIT_TAG" ] || [ -z "$PREV_TAG" ]; then
+        PREV_TAG=$(git rev-list --max-parents=0 HEAD)
       fi
 
-      # Generate release notes via LLM
+      COMMITS=$(git log "${PREV_TAG}..${CI_COMMIT_TAG}" --pretty=format:"- %s" --no-merges 2>/dev/null | head -50 || true)
+
       RELEASE_NOTES=""
-      if [ -n "$AIP_API_KEY" ]; then
-        LLM_PROMPT="Generate concise release notes following Common Changelog conventions for version ${VERSION}.
-
-      Commits:
-      ${COMMITS}
-
-      Format as a bulleted list grouped by category (Added, Changed, Fixed, Removed) as appropriate.
-      Only include relevant categories. Be concise. Do not wrap in code fences."
+      if [ -n "${AIP_API_KEY:-}" ]; then
+        LLM_PROMPT=$(printf 'Generate concise release notes for version %s.\n\nCommits:\n%s\n\nRULES:\n1. Use headings: Changed, Added, Removed, Fixed (only relevant ones)\n2. Imperative mood\n3. Combine related commits\n4. Exclude CI/CD, formatting, docs-only, version bump commits\n5. Output ONLY headings and bullet points. No code fences.' \
+          "$VERSION" "$COMMITS")
 
         LLM_PAYLOAD=$(jq -n \
           --arg model "openai/gpt-oss-120b" \
           --arg prompt "$LLM_PROMPT" \
-          '{
-            model: $model,
-            messages: [{role: "user", content: $prompt}],
-            temperature: 0.3
-          }')
+          '{model: $model, messages: [{role: "user", content: $prompt}], temperature: 0.3}')
 
         LLM_RESPONSE=$(curl -ksSL -X POST \
           "https://models.k8s.aip.mitre.org/v1/chat/completions" \
@@ -253,25 +194,14 @@ create-release:
         RELEASE_NOTES=$(echo "$LLM_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
       fi
 
-      # Fallback to raw commits if LLM fails
       if [ -z "$RELEASE_NOTES" ]; then
         RELEASE_NOTES="$COMMITS"
       fi
 
-      # Build release_notes.md with install instructions
-      cat > release_notes.md <<EOF
-## What's New in v${VERSION}
+      INSTALL_CMD='curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash'
 
-${RELEASE_NOTES}
+      DESCRIPTION=$(printf "## What's New in v%s\n\n%s\n\n## Installation\n\n\`\`\`bash\n%s\n\`\`\`\n" "$VERSION" "$RELEASE_NOTES" "$INSTALL_CMD")
 
-## Installation
-
-\`\`\`bash
-curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash
-\`\`\`
-EOF
-
-      # Upload each tarball to GitLab generic packages API
       ASSET_LINKS="[]"
       for tarball in bin/*.tar.gz; do
         FILENAME=$(basename "$tarball")
@@ -288,23 +218,12 @@ EOF
         ASSET_LINKS=$(echo "$ASSET_LINKS" | jq --argjson link "$LINK" '. + [$link]')
       done
 
-      echo "Asset links: $ASSET_LINKS"
-
-      # Read release notes content
-      RELEASE_BODY=$(cat release_notes.md)
-
-      # Create GitLab release via API
       RELEASE_PAYLOAD=$(jq -n \
         --arg tag "$CI_COMMIT_TAG" \
-        --arg name "v${VERSION}" \
-        --arg description "$RELEASE_BODY" \
+        --arg name "Agent View v${VERSION}" \
+        --arg description "$DESCRIPTION" \
         --argjson assets "{\"links\": $ASSET_LINKS}" \
-        '{
-          tag_name: $tag,
-          name: $name,
-          description: $description,
-          assets: $assets
-        }')
+        '{tag_name: $tag, name: $name, description: $description, assets: $assets}')
 
       curl -ksSL -X POST \
         "https://gitlab.mitre.org/api/v4/projects/${CI_PROJECT_ID}/releases" \
