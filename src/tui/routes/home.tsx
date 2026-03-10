@@ -19,7 +19,7 @@ import { DialogConfirm } from "@tui/component/dialog-confirm"
 import { attachSessionSync, capturePane, wasCommandPaletteRequested } from "@/core/tmux"
 import { canFork } from "@/core/claude"
 import type { Session, Group } from "@/core/types"
-import { formatRelativeTime, formatSmartTime, truncatePath } from "@tui/util/locale"
+import { formatRelativeTime, formatSmartTime, formatDurationShort, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
 import { sortSessionsByCreatedAt } from "@tui/util/session"
 import {
@@ -577,6 +577,11 @@ export function Home() {
     // Indentation for sessions under groups
     const indent = props.indented ? 2 : 0
 
+    const duration = createMemo(() => {
+      const elapsed = Date.now() - props.session.createdAt.getTime()
+      return formatDurationShort(elapsed)
+    })
+
     return (
       <box
         flexDirection="row"
@@ -615,9 +620,18 @@ export function Home() {
           <text> </text>
         </Show>
 
-        {/* Time */}
+        {/* Duration */}
         <text fg={isSelected() ? theme.selectedListItemText : theme.textMuted}>
-          {formatSmartTime(props.session.lastAccessed)}
+          {duration()}
+        </text>
+        <text> </text>
+
+        {/* Status timestamp — show "waiting 5m ago" for non-running, normal time for running */}
+        <text fg={isSelected() ? theme.selectedListItemText : theme.textMuted}>
+          {props.session.status !== "running" && props.session.status !== "idle"
+            ? formatRelativeTime(props.session.statusChangedAt)
+            : formatSmartTime(props.session.lastAccessed)
+          }
         </text>
       </box>
     )
