@@ -127,6 +127,13 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         moveToGroup(id: string, groupPath: string): void {
           manager.moveToGroup(id, groupPath)
           refresh()
+        },
+        toggleNotify(id: string): void {
+          const session = store.sessions.find(s => s.id === id)
+          if (!session) return
+          storage.setNotify(id, !session.notify)
+          storage.touch()
+          refresh()
         }
       },
       group: {

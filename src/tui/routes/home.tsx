@@ -451,6 +451,19 @@ export function Home() {
       }
     }
 
+    // ! to toggle notifications
+    if (evt.name === "!" || (evt.shift && evt.name === "1")) {
+      const session = selectedSession()
+      if (session) {
+        sync.session.toggleNotify(session.id)
+        toast.show({
+          message: session.notify ? `Notifications off for ${session.title}` : `Notifications on for ${session.title}`,
+          variant: "info",
+          duration: 2000
+        })
+      }
+    }
+
     // f to fork (quick)
     if (evt.name === "f" && !evt.shift) {
       log("f pressed, selectedSession:", selectedSession()?.id, selectedSession()?.tool)
@@ -599,6 +612,9 @@ export function Home() {
         <text fg={isSelected() ? theme.selectedListItemText : statusColor()}>
           {STATUS_ICONS[props.session.status]}
         </text>
+        <Show when={props.session.notify}>
+          <text fg={isSelected() ? theme.selectedListItemText : theme.accent}>*</text>
+        </Show>
         <text> </text>
 
         {/* Title */}
@@ -918,6 +934,18 @@ export function Home() {
         <box flexDirection="column" alignItems="center">
           <text fg={theme.text}>1-9</text>
           <text fg={theme.textMuted}>jump</text>
+        </box>
+        <box flexDirection="column" alignItems="center">
+          <text fg={theme.text}>!</text>
+          <text fg={theme.textMuted}>notify</text>
+        </box>
+        <box flexDirection="column" alignItems="center">
+          <text fg={theme.text}>e</text>
+          <text fg={theme.textMuted}>export</text>
+        </box>
+        <box flexDirection="column" alignItems="center">
+          <text fg={theme.text}>/</text>
+          <text fg={theme.textMuted}>search</text>
         </box>
         <box flexDirection="column" alignItems="center">
           <text fg={theme.text}>q</text>
