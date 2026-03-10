@@ -12,6 +12,8 @@ import path from "path"
 import fs from "fs"
 import os from "os"
 import { getClaudeSessionID, buildForkCommand, canFork, buildClaudeCommand } from "./claude"
+import { sendNotification } from "./notify"
+import { getConfig } from "./config"
 
 const logFile = path.join(os.homedir(), ".agent-orchestrator", "debug.log")
 function log(...args: unknown[]) {
@@ -70,6 +72,7 @@ export class SessionManager {
 
     const storage = getStorage()
     const sessions = storage.loadSessions()
+    const config = getConfig()
 
     for (const session of sessions) {
       if (!session.tmuxSession) continue
@@ -82,6 +85,9 @@ export class SessionManager {
       }
 
       const isActive = tmux.isSessionActive(session.tmuxSession, 2)
+      const previousStatus = session.status
+
+      let newStatus: SessionStatus = "idle"
 
       // Always capture output and check patterns - not just when active
       // This fixes the bug where waiting sessions were incorrectly marked as idle
@@ -94,21 +100,36 @@ export class SessionManager {
         const status = tmux.parseToolStatus(output, session.tool)
 
         if (status.isWaiting) {
-          // Agent is waiting for user input (permission prompt, question, etc.)
-          storage.writeStatus(session.id, "waiting", session.tool)
+          newStatus = "waiting"
         } else if (status.hasError) {
-          // Agent encountered an error
-          storage.writeStatus(session.id, "error", session.tool)
+          newStatus = "error"
         } else if (status.isBusy || isActive) {
-          // Agent is actively working (spinner visible, recent output, etc.)
-          storage.writeStatus(session.id, "running", session.tool)
+          newStatus = "running"
         } else {
-          // No recent activity and no waiting prompt - idle
-          storage.writeStatus(session.id, "idle", session.tool)
+          newStatus = "idle"
         }
       } catch {
         // Fallback: use activity-based detection if capture fails
-        storage.writeStatus(session.id, isActive ? "running" : "idle", session.tool)
+        newStatus = isActive ? "running" : "idle"
+      }
+
+      storage.writeStatus(session.id, newStatus, session.tool)
+
+      // Fire notification on status change to waiting/error
+      if (session.notify && newStatus !== previousStatus) {
+        if (newStatus === "waiting") {
+          sendNotification(
+            "Agent View",
+            `${session.title} is waiting for input`,
+            config.notifications?.sound ?? false
+          )
+        } else if (newStatus === "error") {
+          sendNotification(
+            "Agent View",
+            `${session.title} encountered an error`,
+            config.notifications?.sound ?? false
+          )
+        }
       }
     }
 
