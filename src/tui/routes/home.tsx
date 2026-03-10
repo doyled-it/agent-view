@@ -19,7 +19,7 @@ import { DialogConfirm } from "@tui/component/dialog-confirm"
 import { attachSessionSync, capturePane, wasCommandPaletteRequested } from "@/core/tmux"
 import { canFork } from "@/core/claude"
 import type { Session, Group } from "@/core/types"
-import { formatRelativeTime, formatSmartTime, formatDurationShort, truncatePath } from "@tui/util/locale"
+import { formatRelativeTime, formatSmartTime, formatDurationShort, formatDuration, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
 import { sortSessionsByCreatedAt } from "@tui/util/session"
 import {
@@ -651,6 +651,23 @@ export function Home() {
       }
     })
 
+    // Compute time-in-status from statusHistory
+    const statusTimes = createMemo(() => {
+      const history = session.statusHistory || []
+      const times: Record<string, number> = {}
+      for (let i = 0; i < history.length; i++) {
+        const entry = history[i]!
+        const nextTime = i + 1 < history.length ? history[i + 1]!.timestamp : Date.now()
+        const duration = nextTime - entry.timestamp
+        times[entry.status] = (times[entry.status] || 0) + duration
+      }
+      return times
+    })
+
+    const elapsed = createMemo(() => {
+      return formatDuration(Date.now() - session.createdAt.getTime())
+    })
+
     return (
       <box flexDirection="column" paddingLeft={1} paddingRight={1}>
         {/* Session title and status */}
@@ -669,10 +686,16 @@ export function Home() {
           <text fg={theme.textMuted}>{truncatePath(session.projectPath, rightWidth() - 20)}</text>
         </box>
 
-        {/* More info */}
+        {/* Metrics line */}
         <box flexDirection="row" gap={2} height={1}>
           <text fg={theme.accent}>{session.tool}</text>
-          <text fg={theme.textMuted}>{formatRelativeTime(session.lastAccessed)}</text>
+          <text fg={theme.textMuted}>Duration: {elapsed()}</text>
+          <Show when={session.restartCount > 0}>
+            <text fg={theme.textMuted}>Restarts: {session.restartCount}</text>
+          </Show>
+          <Show when={statusTimes().waiting}>
+            <text fg={theme.warning}>Waiting: {formatDuration(statusTimes().waiting || 0)}</text>
+          </Show>
           <Show when={session.worktreeBranch}>
             <text fg={theme.info}>{session.worktreeBranch}</text>
           </Show>
