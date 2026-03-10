@@ -13,11 +13,16 @@ export interface WorktreeConfig {
   autoCleanup?: boolean
 }
 
+export interface NotificationConfig {
+  sound?: boolean
+}
+
 export interface AppConfig {
   defaultTool?: Tool
   theme?: string
   worktree?: WorktreeConfig
   defaultGroup?: string
+  notifications?: NotificationConfig
 }
 
 const CONFIG_DIR = path.join(os.homedir(), ".agent-view")
@@ -30,7 +35,10 @@ const DEFAULT_CONFIG: AppConfig = {
     defaultBaseBranch: "main",
     autoCleanup: true
   },
-  defaultGroup: "default"
+  defaultGroup: "default",
+  notifications: {
+    sound: false
+  }
 }
 
 // Cached config for sync access
@@ -62,6 +70,10 @@ export async function loadConfig(): Promise<AppConfig> {
       worktree: {
         ...DEFAULT_CONFIG.worktree,
         ...parsed.worktree
+      },
+      notifications: {
+        ...DEFAULT_CONFIG.notifications,
+        ...parsed.notifications
       }
     }
 
