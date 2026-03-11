@@ -259,6 +259,17 @@ export async function capturePane(
 }
 
 /**
+ * Capture the full tmux scrollback history, stripped of ANSI codes
+ */
+export async function captureFullScrollback(name: string): Promise<string> {
+  const { stdout } = await execAsync(`tmux capture-pane -t "${name}" -p -S - -J`, {
+    timeout: 10000,
+    maxBuffer: 10 * 1024 * 1024 // 10MB
+  })
+  return stripAnsi(stdout)
+}
+
+/**
  * Get pane dimensions
  */
 export async function getPaneDimensions(name: string): Promise<{ width: number; height: number }> {

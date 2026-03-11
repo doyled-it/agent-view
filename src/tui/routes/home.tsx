@@ -16,7 +16,7 @@ import { DialogRename } from "@tui/component/dialog-rename"
 import { DialogGroup } from "@tui/component/dialog-group"
 import { DialogMove } from "@tui/component/dialog-move"
 import { DialogConfirm } from "@tui/component/dialog-confirm"
-import { attachSessionSync, capturePane, wasCommandPaletteRequested } from "@/core/tmux"
+import { attachSessionSync, capturePane, captureFullScrollback, wasCommandPaletteRequested } from "@/core/tmux"
 import { canFork } from "@/core/claude"
 import type { Session, Group } from "@/core/types"
 import { formatRelativeTime, formatSmartTime, formatDurationShort, formatDuration, truncatePath } from "@tui/util/locale"
@@ -343,6 +343,34 @@ export function Home() {
     }
   }
 
+  async function handleExport(session: Session) {
+    if (!session.tmuxSession) {
+      toast.show({ message: "Session has no tmux session", variant: "error", duration: 2000 })
+      return
+    }
+
+    try {
+      const content = await captureFullScrollback(session.tmuxSession)
+
+      const logsDir = path.join(os.homedir(), ".agent-view", "logs")
+      fs.mkdirSync(logsDir, { recursive: true })
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+      const safeName = session.title.replace(/[^a-z0-9-]/gi, "-").slice(0, 30)
+      const logPath = path.join(logsDir, `${safeName}-${timestamp}.log`)
+
+      fs.writeFileSync(logPath, content)
+
+      toast.show({
+        message: `Exported to ${logPath}`,
+        variant: "success",
+        duration: 4000
+      })
+    } catch (err) {
+      toast.error(err as Error)
+    }
+  }
+
   // Keyboard navigation
   useKeyboard((evt) => {
     log("Home useKeyboard:", evt.name, "dialog.stack.length:", dialog.stack.length)
@@ -483,6 +511,14 @@ export function Home() {
           return
         }
         dialog.push(() => <DialogFork session={session} />)
+      }
+    }
+
+    // e to export session log
+    if (evt.name === "e") {
+      const session = selectedSession()
+      if (session) {
+        handleExport(session)
       }
     }
   })
