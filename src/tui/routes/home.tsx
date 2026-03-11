@@ -4,7 +4,7 @@
  */
 
 import { createMemo, createSignal, For, Show, createEffect, onCleanup } from "solid-js"
-import { TextAttributes, ScrollBoxRenderable } from "@opentui/core"
+import { TextAttributes, ScrollBoxRenderable, InputRenderable } from "@opentui/core"
 import { useTerminalDimensions, useKeyboard, useRenderer } from "@opentui/solid"
 import { useTheme } from "@tui/context/theme"
 import { useSync } from "@tui/context/sync"
@@ -76,6 +76,11 @@ export function Home() {
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [previewContent, setPreviewContent] = createSignal<string>("")
   const [previewLoading, setPreviewLoading] = createSignal(false)
+  const [searchActive, setSearchActive] = createSignal(false)
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [searchResults, setSearchResults] = createSignal<string[]>([])
+  const [searchMatchIndex, setSearchMatchIndex] = createSignal(0)
+  const [searchTotalMatches, setSearchTotalMatches] = createSignal(0)
   let scrollRef: ScrollBoxRenderable | undefined
   let previewDebounceTimer: ReturnType<typeof setTimeout> | undefined
   let previewFetchAbort = false
@@ -371,9 +376,72 @@ export function Home() {
     }
   }
 
+  async function executeSearch(query: string) {
+    const session = selectedSession()
+    if (!session?.tmuxSession || !query) {
+      setSearchResults([])
+      setSearchTotalMatches(0)
+      return
+    }
+
+    try {
+      const content = await captureFullScrollback(session.tmuxSession)
+      const lines = content.split("\n")
+      const lowerQuery = query.toLowerCase()
+
+      const matchingBlocks: string[] = []
+      let totalMatches = 0
+
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i]!.toLowerCase().includes(lowerQuery)) {
+          totalMatches++
+          const start = Math.max(0, i - 3)
+          const end = Math.min(lines.length - 1, i + 3)
+          const block = lines.slice(start, end + 1).map((line, idx) => {
+            const lineNum = start + idx
+            const prefix = lineNum === i ? ">>> " : "    "
+            return `${prefix}${line}`
+          }).join("\n")
+          matchingBlocks.push(block)
+        }
+      }
+
+      setSearchResults(matchingBlocks)
+      setSearchTotalMatches(totalMatches)
+      setSearchMatchIndex(0)
+    } catch {
+      setSearchResults([])
+      setSearchTotalMatches(0)
+    }
+  }
+
   // Keyboard navigation
   useKeyboard((evt) => {
     log("Home useKeyboard:", evt.name, "dialog.stack.length:", dialog.stack.length)
+
+    // Handle search mode keys (before other shortcuts)
+    if (searchActive()) {
+      if (evt.name === "escape") {
+        setSearchActive(false)
+        setSearchQuery("")
+        setSearchResults([])
+        return
+      }
+      if (evt.name === "return") {
+        executeSearch(searchQuery())
+        return
+      }
+      if (evt.name === "n" && !evt.shift && searchResults().length > 0) {
+        setSearchMatchIndex((searchMatchIndex() + 1) % searchResults().length)
+        return
+      }
+      if (evt.name === "n" && evt.shift && searchResults().length > 0) {
+        setSearchMatchIndex((searchMatchIndex() - 1 + searchResults().length) % searchResults().length)
+        return
+      }
+      // Don't process other shortcuts while in search mode
+      return
+    }
 
     // Skip if dialog is open
     if (dialog.stack.length > 0) return
@@ -520,6 +588,14 @@ export function Home() {
       if (session) {
         handleExport(session)
       }
+    }
+
+    // / to start search
+    if (evt.name === "/") {
+      setSearchActive(true)
+      setSearchQuery("")
+      setSearchResults([])
+      return
     }
   })
 
@@ -893,27 +969,65 @@ export function Home() {
                 <box flexDirection="column" flexGrow={1}>
                   <PreviewHeader />
 
-                  {/* Terminal output */}
-                  <scrollbox flexGrow={1} scrollbarOptions={{ visible: true }}>
-                    <Show
-                      when={previewLines().length > 0}
-                      fallback={
-                        <box paddingLeft={1} paddingTop={1}>
-                          <text fg={theme.textMuted}>
-                            {previewLoading() ? "Loading..." : "No output yet"}
-                          </text>
-                        </box>
-                      }
-                    >
+                  {/* Terminal output OR search results */}
+                  <Show
+                    when={searchActive() && searchResults().length > 0}
+                    fallback={
+                      <scrollbox flexGrow={1} scrollbarOptions={{ visible: true }}>
+                        <Show
+                          when={previewLines().length > 0}
+                          fallback={
+                            <box paddingLeft={1} paddingTop={1}>
+                              <text fg={theme.textMuted}>
+                                {previewLoading() ? "Loading..." : "No output yet"}
+                              </text>
+                            </box>
+                          }
+                        >
+                          <box flexDirection="column" paddingLeft={1}>
+                            <For each={previewLines().slice(-50)}>
+                              {(line) => (
+                                <text fg={theme.text}>{stripAnsi(line).slice(0, rightWidth() - 4)}</text>
+                              )}
+                            </For>
+                          </box>
+                        </Show>
+                      </scrollbox>
+                    }
+                  >
+                    <scrollbox flexGrow={1} scrollbarOptions={{ visible: true }}>
                       <box flexDirection="column" paddingLeft={1}>
-                        <For each={previewLines().slice(-50)}>
+                        <For each={searchResults()[searchMatchIndex()]?.split("\n") || []}>
                           {(line) => (
-                            <text fg={theme.text}>{stripAnsi(line).slice(0, rightWidth() - 4)}</text>
+                            <text fg={line.startsWith(">>>") ? theme.warning : theme.text}>
+                              {line.slice(0, rightWidth() - 4)}
+                            </text>
                           )}
                         </For>
                       </box>
-                    </Show>
-                  </scrollbox>
+                    </scrollbox>
+                  </Show>
+                </box>
+              </Show>
+
+              {/* Search bar */}
+              <Show when={searchActive()}>
+                <box height={1} paddingLeft={1} backgroundColor={theme.backgroundElement} flexDirection="row">
+                  <text fg={theme.primary}>/</text>
+                  <input
+                    value={searchQuery()}
+                    onInput={setSearchQuery}
+                    focusedBackgroundColor={theme.backgroundElement}
+                    cursorColor={theme.primary}
+                    focusedTextColor={theme.text}
+                    ref={(r: InputRenderable) => { setTimeout(() => r?.focus(), 10) }}
+                  />
+                  <text flexGrow={1}> </text>
+                  <Show when={searchTotalMatches() > 0}>
+                    <text fg={theme.textMuted}>
+                      Match {searchMatchIndex() + 1}/{searchTotalMatches()} (n/N)
+                    </text>
+                  </Show>
                 </box>
               </Show>
             </box>
