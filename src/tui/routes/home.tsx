@@ -4,7 +4,7 @@
  */
 
 import { createMemo, createSignal, For, Show, createEffect, onCleanup } from "solid-js"
-import { TextAttributes, ScrollBoxRenderable, InputRenderable } from "@opentui/core"
+import { TextAttributes, ScrollBoxRenderable } from "@opentui/core"
 import { useTerminalDimensions, useKeyboard, useRenderer } from "@opentui/solid"
 import { useTheme } from "@tui/context/theme"
 import { useSync } from "@tui/context/sync"
@@ -419,7 +419,7 @@ export function Home() {
   useKeyboard((evt) => {
     log("Home useKeyboard:", evt.name, "dialog.stack.length:", dialog.stack.length)
 
-    // Handle search mode keys (before other shortcuts)
+    // Handle search mode — capture all input so dashboard shortcuts don't fire
     if (searchActive()) {
       if (evt.name === "escape") {
         setSearchActive(false)
@@ -431,6 +431,7 @@ export function Home() {
         executeSearch(searchQuery())
         return
       }
+      // n/N navigate matches only when results exist
       if (evt.name === "n" && !evt.shift && searchResults().length > 0) {
         setSearchMatchIndex((searchMatchIndex() + 1) % searchResults().length)
         return
@@ -439,7 +440,17 @@ export function Home() {
         setSearchMatchIndex((searchMatchIndex() - 1 + searchResults().length) % searchResults().length)
         return
       }
-      // Don't process other shortcuts while in search mode
+      // Backspace
+      if (evt.name === "backspace") {
+        setSearchQuery(q => q.slice(0, -1))
+        return
+      }
+      // Printable characters — append to query
+      if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
+        setSearchQuery(q => q + evt.name)
+        return
+      }
+      // Swallow everything else so dashboard shortcuts don't fire
       return
     }
 
@@ -1021,14 +1032,8 @@ export function Home() {
               <Show when={searchActive()}>
                 <box height={1} paddingLeft={1} backgroundColor={theme.backgroundElement} flexDirection="row">
                   <text fg={theme.primary}>/</text>
-                  <input
-                    value={searchQuery()}
-                    onInput={setSearchQuery}
-                    focusedBackgroundColor={theme.backgroundElement}
-                    cursorColor={theme.primary}
-                    focusedTextColor={theme.text}
-                    ref={(r: InputRenderable) => { setTimeout(() => r?.focus(), 10) }}
-                  />
+                  <text fg={theme.text}>{searchQuery()}</text>
+                  <text fg={theme.primary}>█</text>
                   <text flexGrow={1}> </text>
                   <Show when={searchTotalMatches() > 0}>
                     <text fg={theme.textMuted}>
