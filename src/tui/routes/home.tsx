@@ -694,13 +694,20 @@ export function Home() {
       }
     })
 
-    const maxTitleLen = useDualColumn() ? 15 : 20
-    const title = props.session.title.length > maxTitleLen
-      ? props.session.title.slice(0, maxTitleLen - 2) + ".."
-      : props.session.title
-
     // Indentation for sessions under groups
     const indent = props.indented ? 2 : 0
+
+    // Dynamic title truncation based on available panel width
+    // Reserve space for: padding (1+indent + 1), status icon (2), notify (*1), space (1), right-side content (~20)
+    const rightContentWidth = useDualColumn() ? 18 : 28 // duration + timestamp (+ tool in single col)
+    const reservedChars = (1 + indent) + 1 + 2 + 1 + 1 + rightContentWidth
+    const maxTitleLen = createMemo(() => Math.max(8, leftWidth() - reservedChars))
+    const title = createMemo(() => {
+      const max = maxTitleLen()
+      return props.session.title.length > max
+        ? props.session.title.slice(0, max - 2) + ".."
+        : props.session.title
+    })
 
     const duration = createMemo(() => {
       const elapsed = Date.now() - props.session.createdAt.getTime()
@@ -734,7 +741,7 @@ export function Home() {
           fg={isSelected() ? theme.selectedListItemText : theme.text}
           attributes={isSelected() ? TextAttributes.BOLD : undefined}
         >
-          {title}
+          {title()}
         </text>
 
         {/* Spacer */}
