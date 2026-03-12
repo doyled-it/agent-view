@@ -7,6 +7,7 @@ import { createMemo, createSignal, For, Show, createEffect, onCleanup } from "so
 import { TextAttributes, ScrollBoxRenderable } from "@opentui/core"
 import { useTerminalDimensions, useKeyboard, useRenderer } from "@opentui/solid"
 import { useTheme } from "@tui/context/theme"
+import { useKV } from "@tui/context/kv"
 import { useSync } from "@tui/context/sync"
 import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
@@ -72,8 +73,14 @@ export function Home() {
   const dialog = useDialog()
   const toast = useToast()
   const renderer = useRenderer()
+  const kv = useKV()
 
-  const [selectedIndex, setSelectedIndex] = createSignal(0)
+  const [selectedIndex, _setSelectedIndex] = createSignal(kv.get<number>("home.selectedIndex", 0))
+  const setSelectedIndex = (v: number | ((prev: number) => number)) => {
+    const next = typeof v === "function" ? v(selectedIndex()) : v
+    _setSelectedIndex(next)
+    kv.set("home.selectedIndex", next)
+  }
   const [previewContent, setPreviewContent] = createSignal<string>("")
   const [previewLoading, setPreviewLoading] = createSignal(false)
   const [searchActive, setSearchActive] = createSignal(false)
