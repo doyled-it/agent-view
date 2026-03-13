@@ -251,6 +251,11 @@ download_and_install() {
     cp "$bin_path" "$INSTALL_DIR/$APP"
     chmod 755 "$INSTALL_DIR/$APP"
 
+    # Ad-hoc codesign on macOS to prevent "killed" on launch
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign &>/dev/null; then
+        codesign -s - "$INSTALL_DIR/$APP" 2>/dev/null || true
+    fi
+
     # Copy prebuilds/ if present (needed for native modules like node-pty)
     if [ -d "$extract_dir/prebuilds" ]; then
         rm -rf "$INSTALL_DIR/prebuilds"
