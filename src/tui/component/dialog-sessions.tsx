@@ -12,7 +12,7 @@ import { useRoute } from "@tui/context/route"
 import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
 import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
-import { attachSessionSync } from "@/core/tmux"
+import { attachSessionAsync } from "@/core/tmux"
 import type { Session, SessionStatus } from "@/core/types"
 import { formatSmartTime, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
@@ -94,7 +94,7 @@ export function DialogSessions() {
     }
   }
 
-  function handleAttach(sessionId: string) {
+  async function handleAttach(sessionId: string) {
     const session = sync.session.get(sessionId)
     if (!session) {
       toast.show({ message: "Session not found", variant: "error", duration: 2000 })
@@ -109,10 +109,8 @@ export function DialogSessions() {
     // Suspend the TUI
     renderer.suspend()
 
-    // Use sync attach - this blocks the event loop completely
-    // User detaches with standard tmux: Ctrl+B, D
     try {
-      attachSessionSync(session.tmuxSession)
+      await attachSessionAsync(session.tmuxSession)
     } catch (err) {
       console.error("Attach error:", err)
     }

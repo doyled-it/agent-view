@@ -648,3 +648,68 @@ export function attachSessionSync(sessionName: string): void {
     process.stdout.write("\x1b[?1049h")
   }
 }
+
+/**
+ * Attach to a tmux session asynchronously.
+ * Unlike attachSessionSync, this does NOT block the event loop,
+ * so setInterval-based polling (e.g. notifications) keeps running.
+ */
+export function attachSessionAsync(sessionName: string): Promise<void> {
+  const { spawnSync } = require("child_process")
+  const fs = require("fs")
+
+  // Clear any existing signal
+  try {
+    fs.unlinkSync(getSignalFilePath())
+  } catch {
+    // Ignore if doesn't exist
+  }
+
+  // Exit alternate screen buffer, clear screen, and show cursor immediately
+  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[H\x1b[?25h")
+
+  // Bind keys (these are fast, sync is fine)
+  spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
+  spawnSync("tmux", ["bind-key", "-n", "C-k", "run-shell", `touch ${getSignalFilePath()}`, "\\;", "detach-client"], { stdio: "ignore" })
+  spawnSync("tmux", ["bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}"], { stdio: "ignore" })
+
+  // Configure status bar
+  spawnSync("tmux", ["set-option", "-t", sessionName, "status", "on"], { stdio: "ignore" })
+  spawnSync("tmux", ["set-option", "-t", sessionName, "status-position", "bottom"], { stdio: "ignore" })
+  spawnSync("tmux", ["set-option", "-t", sessionName, "status-style", "bg=#1e1e2e,fg=#cdd6f4"], { stdio: "ignore" })
+  spawnSync("tmux", ["set-option", "-t", sessionName, "status-left", ""], { stdio: "ignore" })
+  spawnSync("tmux", ["set-option", "-t", sessionName, "status-right-length", "120"], { stdio: "ignore" })
+  spawnSync("tmux", ["set-option", "-t", sessionName, "status-right", "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"], { stdio: "ignore" })
+
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn("tmux", ["attach-session", "-t", sessionName], {
+      stdio: ["inherit", "inherit", "pipe"],
+      env: process.env
+    })
+
+    let stderr = ""
+    child.stderr?.on("data", (data: Buffer) => { stderr += data.toString() })
+
+    child.on("close", (code) => {
+      // Always unbind keys
+      spawnSync("tmux", ["unbind-key", "-n", "C-q"], { stdio: "ignore" })
+      spawnSync("tmux", ["unbind-key", "-n", "C-k"], { stdio: "ignore" })
+      spawnSync("tmux", ["unbind-key", "-n", "C-t"], { stdio: "ignore" })
+
+      // Clear screen and re-enter alternate buffer for TUI
+      process.stdout.write("\x1b[2J\x1b[H")
+      process.stdout.write("\x1b[?1049h")
+
+      if (code !== 0 && stderr.includes("not a terminal")) {
+        reject(new Error(
+          "tmux attach failed: this is usually caused by a tmux version mismatch. " +
+          "The tmux server was started with an older version. " +
+          "Run 'tmux kill-server' in a terminal to fix this. " +
+          "Agent View will recreate your sessions automatically."
+        ))
+      } else {
+        resolve()
+      }
+    })
+  })
+}

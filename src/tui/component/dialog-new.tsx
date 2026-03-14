@@ -12,7 +12,7 @@ import { useConfig } from "@tui/context/config"
 import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
 import { InputAutocomplete } from "@tui/ui/input-autocomplete"
-import { attachSessionSync } from "@/core/tmux"
+import { attachSessionAsync } from "@/core/tmux"
 import { isGitRepo, getRepoRoot, createWorktree, generateBranchName, generateWorktreePath, sanitizeBranchName, branchExists } from "@/core/git"
 import { HistoryManager } from "@/core/history"
 import { getStorage } from "@/core/storage"
@@ -313,7 +313,7 @@ export function DialogNew() {
       if (session.tmuxSession) {
         // Suspend TUI and attach
         renderer.suspend()
-        attachSessionSync(session.tmuxSession)
+        await attachSessionAsync(session.tmuxSession)
         renderer.resume()
       }
 

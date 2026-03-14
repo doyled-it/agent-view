@@ -17,7 +17,7 @@ import { DialogRename } from "@tui/component/dialog-rename"
 import { DialogGroup } from "@tui/component/dialog-group"
 import { DialogMove } from "@tui/component/dialog-move"
 import { DialogConfirm } from "@tui/component/dialog-confirm"
-import { attachSessionSync, capturePane, captureFullScrollback, wasCommandPaletteRequested } from "@/core/tmux"
+import { attachSessionAsync, capturePane, captureFullScrollback, wasCommandPaletteRequested } from "@/core/tmux"
 import { canFork } from "@/core/claude"
 import type { Session, Group } from "@/core/types"
 import { formatRelativeTime, formatSmartTime, formatDurationShort, formatDuration, truncatePath } from "@tui/util/locale"
@@ -256,7 +256,7 @@ export function Home() {
     ))
   }
 
-  function handleAttach(session: Session) {
+  async function handleAttach(session: Session) {
     if (!session.tmuxSession) {
       toast.show({ message: "Session has no tmux session", variant: "error", duration: 2000 })
       return
@@ -264,16 +264,12 @@ export function Home() {
 
     previewFetchAbort = true
     renderer.suspend()
-    let attachError: Error | undefined
     try {
-      attachSessionSync(session.tmuxSession)
+      await attachSessionAsync(session.tmuxSession)
     } catch (err) {
-      attachError = err as Error
-    }
-    renderer.resume()
-    sync.refresh()
-
-    if (attachError) {
+      renderer.resume()
+      sync.refresh()
+      const attachError = err as Error
       if (attachError.message.includes("version mismatch")) {
         toast.show({
           title: "tmux version mismatch",
@@ -286,6 +282,8 @@ export function Home() {
       }
       return
     }
+    renderer.resume()
+    sync.refresh()
 
     // Consume the signal file if it exists (Ctrl+K just goes home)
     wasCommandPaletteRequested()
