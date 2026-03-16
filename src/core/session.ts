@@ -101,6 +101,8 @@ export class SessionManager {
 
         if (status.isWaiting) {
           newStatus = "waiting"
+        } else if (status.hasExited) {
+          newStatus = "idle"
         } else if (status.hasError) {
           newStatus = "error"
         } else if (status.isBusy || isActive) {
@@ -115,20 +117,19 @@ export class SessionManager {
 
       storage.writeStatus(session.id, newStatus, session.tool)
 
-      // Fire notification on status change to waiting/error
+      // Fire notifications on meaningful status changes:
+      // - waiting: agent needs user input
+      // - completed: agent finished its task (was running, now idle)
+      // - interrupted: agent exited/crashed (was running, now error)
+      // NOT on transient errors the agent is actively fixing
       if (session.notify && newStatus !== previousStatus) {
+        const sound = config.notifications?.sound ?? false
         if (newStatus === "waiting") {
-          sendNotification(
-            "Agent View",
-            `${session.title} is waiting for input`,
-            config.notifications?.sound ?? false
-          )
-        } else if (newStatus === "error") {
-          sendNotification(
-            "Agent View",
-            `${session.title} encountered an error`,
-            config.notifications?.sound ?? false
-          )
+          sendNotification("Agent View", `${session.title} is waiting for input`, sound)
+        } else if (newStatus === "idle" && (previousStatus === "running" || previousStatus === "waiting")) {
+          sendNotification("Agent View", `${session.title} has completed its task`, sound)
+        } else if (newStatus === "error" && previousStatus !== "error") {
+          sendNotification("Agent View", `${session.title} was interrupted`, sound)
         }
       }
     }

@@ -359,6 +359,7 @@ export interface ToolStatus {
   isWaiting: boolean
   isBusy: boolean
   hasError: boolean
+  hasExited: boolean
 }
 
 /**
@@ -474,13 +475,19 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
     isWaiting = WAITING_PATTERNS.some(p => p.test(lastLines))
   }
 
-  hasError = ERROR_PATTERNS.some(p => p.test(lastLines))
+  // Only flag errors if the tool is NOT actively working.
+  // Transient errors (lint failures, test failures) that the agent is fixing
+  // should not show as "error" status while the agent is still busy.
+  if (!isBusy) {
+    hasError = ERROR_PATTERNS.some(p => p.test(lastLines))
+  }
 
   return {
     isActive: false, // Determined by activity timestamp
     isWaiting,
     isBusy,
-    hasError
+    hasError,
+    hasExited
   }
 }
 
