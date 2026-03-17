@@ -42,6 +42,9 @@ function generateTitle(): string {
 
 export class SessionManager {
   private refreshInterval: NodeJS.Timeout | null = null
+  // Track last notified status per session to prevent repeated notifications
+  // from status flickering (output detection can alternate between states)
+  private lastNotifiedStatus: Map<string, SessionStatus> = new Map()
 
   /**
    * Start the session status refresh loop
@@ -117,20 +120,34 @@ export class SessionManager {
 
       storage.writeStatus(session.id, newStatus, session.tool)
 
-      // Fire notifications on meaningful status changes:
-      // - waiting: agent needs user input
-      // - completed: agent finished its task (was running, now idle)
-      // - interrupted: agent exited/crashed (was running, now error)
-      // NOT on transient errors the agent is actively fixing
+      // Fire notifications on meaningful status changes.
+      // Use lastNotifiedStatus to debounce — status detection can flicker
+      // between states on consecutive polls due to output capture timing.
+      // Only notify once per distinct status until a genuinely different state is reached.
       if (session.notify && newStatus !== previousStatus) {
+        const lastNotified = this.lastNotifiedStatus.get(session.id)
         const sound = config.notifications?.sound ?? false
-        if (newStatus === "waiting") {
+        let didNotify = false
+
+        if (newStatus === "waiting" && lastNotified !== "waiting") {
           sendNotification("Agent View", `${session.title} is waiting for input`, sound)
-        } else if (newStatus === "idle" && (previousStatus === "running" || previousStatus === "waiting")) {
+          didNotify = true
+        } else if (newStatus === "idle" && lastNotified !== "idle" && (previousStatus === "running" || previousStatus === "waiting")) {
           sendNotification("Agent View", `${session.title} has completed its task`, sound)
-        } else if (newStatus === "error" && previousStatus !== "error") {
+          didNotify = true
+        } else if (newStatus === "error" && lastNotified !== "error") {
           sendNotification("Agent View", `${session.title} was interrupted`, sound)
+          didNotify = true
         }
+
+        if (didNotify) {
+          this.lastNotifiedStatus.set(session.id, newStatus)
+        }
+      }
+      // Reset notification tracking when status stabilizes on running
+      // so the next transition will trigger a fresh notification
+      if (newStatus === "running") {
+        this.lastNotifiedStatus.delete(session.id)
       }
     }
 
