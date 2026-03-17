@@ -114,6 +114,20 @@ export interface TmuxSession {
 }
 
 /**
+ * Get the set of session names that currently have a tmux client attached.
+ * Used to suppress notifications when the user is already looking at a session.
+ */
+export async function getAttachedSessions(): Promise<Set<string>> {
+  try {
+    const { stdout } = await execAsync("tmux list-clients -F '#{client_session}'")
+    const names = stdout.trim().split("\n").filter(Boolean)
+    return new Set(names)
+  } catch {
+    return new Set()
+  }
+}
+
+/**
  * Check if a session has active output (activity within last N seconds)
  */
 export function isSessionActive(name: string, thresholdSeconds = 2): boolean {

@@ -76,6 +76,8 @@ export class SessionManager {
     const storage = getStorage()
     const sessions = storage.loadSessions()
     const config = getConfig()
+    // Get sessions with an attached client — skip notifications for these
+    const attachedSessions = await tmux.getAttachedSessions()
 
     for (const session of sessions) {
       if (!session.tmuxSession) continue
@@ -124,7 +126,8 @@ export class SessionManager {
       // Use lastNotifiedStatus to debounce — status detection can flicker
       // between states on consecutive polls due to output capture timing.
       // Only notify once per distinct status until a genuinely different state is reached.
-      if (session.notify && newStatus !== previousStatus) {
+      const isAttached = session.tmuxSession ? attachedSessions.has(session.tmuxSession) : false
+      if (session.notify && newStatus !== previousStatus && !isAttached) {
         const lastNotified = this.lastNotifiedStatus.get(session.id)
         const sound = config.notifications?.sound ?? false
         let didNotify = false
