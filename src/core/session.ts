@@ -45,9 +45,18 @@ export class SessionManager {
   // Track last notified status per session to prevent repeated notifications
   // from status flickering (output detection can alternate between states)
   private lastNotifiedStatus: Map<string, SessionStatus> = new Map()
+  // Track when a session entered "running" state. Used to require sustained
+  // running before treating a transition to idle as "task completed".
+  // Prevents false notifications from brief tmux activity blips.
+  private runningStartTime: Map<string, number> = new Map()
+  // Track the last known running duration for each session (ms)
+  private lastSustainedRunning: Map<string, number> = new Map()
   // Sessions recently detached from — suppress notifications briefly
   // to avoid notifying about status the user just saw
   private recentlyDetached: Map<string, number> = new Map()
+  // Minimum time (ms) a session must be "running" before an idle transition
+  // triggers a "completed" notification. Filters out activity blips.
+  private static readonly MIN_RUNNING_DURATION_MS = 10_000
 
   /**
    * Mark a tmux session as recently detached so we suppress the next notification.
@@ -144,6 +153,15 @@ export class SessionManager {
         // Clean up after grace period expires
         if (Date.now() - detachTime >= 5000) this.recentlyDetached.delete(session.tmuxSession)
       }
+      // Track running duration to filter out brief activity blips
+      if (newStatus === "running") {
+        if (!this.runningStartTime.has(session.id)) {
+          this.runningStartTime.set(session.id, Date.now())
+        }
+      } else {
+        this.runningStartTime.delete(session.id)
+      }
+
       if (session.notify && newStatus !== previousStatus && !isAttached && !recentlyDetached) {
         const lastNotified = this.lastNotifiedStatus.get(session.id)
         const sound = config.notifications?.sound ?? false
@@ -153,8 +171,14 @@ export class SessionManager {
           sendNotification("Agent View", `${session.title} is waiting for input`, sound)
           didNotify = true
         } else if (newStatus === "idle" && lastNotified !== "idle" && (previousStatus === "running" || previousStatus === "waiting")) {
-          sendNotification("Agent View", `${session.title} has completed its task`, sound)
-          didNotify = true
+          // Only notify "completed" if the session was running long enough
+          // to be doing real work, not just a brief tmux activity blip
+          const wasRunningLongEnough = previousStatus === "waiting" ||
+            (this.lastSustainedRunning.get(session.id) ?? 0) >= SessionManager.MIN_RUNNING_DURATION_MS
+          if (wasRunningLongEnough) {
+            sendNotification("Agent View", `${session.title} has completed its task`, sound)
+            didNotify = true
+          }
         } else if (newStatus === "error" && lastNotified !== "error") {
           sendNotification("Agent View", `${session.title} was interrupted`, sound)
           didNotify = true
@@ -164,10 +188,15 @@ export class SessionManager {
           this.lastNotifiedStatus.set(session.id, newStatus)
         }
       }
-      // Reset notification tracking when status stabilizes on running
-      // so the next transition will trigger a fresh notification
+      // Reset notification tracking when session has been running for a
+      // sustained period, so the next transition triggers a fresh notification
       if (newStatus === "running") {
-        this.lastNotifiedStatus.delete(session.id)
+        const runStart = this.runningStartTime.get(session.id)
+        const runDuration = runStart ? Date.now() - runStart : 0
+        this.lastSustainedRunning.set(session.id, runDuration)
+        if (runDuration >= SessionManager.MIN_RUNNING_DURATION_MS) {
+          this.lastNotifiedStatus.delete(session.id)
+        }
       }
     }
 
