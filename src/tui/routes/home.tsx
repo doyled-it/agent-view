@@ -19,6 +19,7 @@ import { DialogMove } from "@tui/component/dialog-move"
 import { DialogConfirm } from "@tui/component/dialog-confirm"
 import { attachSessionAsync, capturePane, captureFullScrollback, wasCommandPaletteRequested } from "@/core/tmux"
 import { canFork } from "@/core/claude"
+import { getSessionManager } from "@/core/session"
 import type { Session, Group } from "@/core/types"
 import { formatRelativeTime, formatSmartTime, formatDurationShort, formatDuration, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
@@ -282,6 +283,8 @@ export function Home() {
       }
       return
     }
+    // Suppress notifications briefly — user just saw this session's state
+    getSessionManager().suppressNotification(session.tmuxSession!)
     renderer.resume()
     sync.refresh()
 

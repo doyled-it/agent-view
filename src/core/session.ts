@@ -45,6 +45,16 @@ export class SessionManager {
   // Track last notified status per session to prevent repeated notifications
   // from status flickering (output detection can alternate between states)
   private lastNotifiedStatus: Map<string, SessionStatus> = new Map()
+  // Sessions recently detached from — suppress notifications briefly
+  // to avoid notifying about status the user just saw
+  private recentlyDetached: Map<string, number> = new Map()
+
+  /**
+   * Mark a tmux session as recently detached so we suppress the next notification.
+   */
+  suppressNotification(tmuxSession: string): void {
+    this.recentlyDetached.set(tmuxSession, Date.now())
+  }
 
   /**
    * Start the session status refresh loop
@@ -127,7 +137,14 @@ export class SessionManager {
       // between states on consecutive polls due to output capture timing.
       // Only notify once per distinct status until a genuinely different state is reached.
       const isAttached = session.tmuxSession ? attachedSessions.has(session.tmuxSession) : false
-      if (session.notify && newStatus !== previousStatus && !isAttached) {
+      // Check if recently detached (suppress for 5s after detaching)
+      const detachTime = session.tmuxSession ? this.recentlyDetached.get(session.tmuxSession) : undefined
+      const recentlyDetached = detachTime != null && Date.now() - detachTime < 5000
+      if (recentlyDetached && session.tmuxSession) {
+        // Clean up after grace period expires
+        if (Date.now() - detachTime >= 5000) this.recentlyDetached.delete(session.tmuxSession)
+      }
+      if (session.notify && newStatus !== previousStatus && !isAttached && !recentlyDetached) {
         const lastNotified = this.lastNotifiedStatus.get(session.id)
         const sound = config.notifications?.sound ?? false
         let didNotify = false

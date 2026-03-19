@@ -13,6 +13,7 @@ import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
 import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
 import { attachSessionAsync } from "@/core/tmux"
+import { getSessionManager } from "@/core/session"
 import type { Session, SessionStatus } from "@/core/types"
 import { formatSmartTime, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
@@ -115,6 +116,7 @@ export function DialogSessions() {
       console.error("Attach error:", err)
     }
 
+    getSessionManager().suppressNotification(session.tmuxSession!)
     // Resume the TUI when we return
     renderer.resume()
 
