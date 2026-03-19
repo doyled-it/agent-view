@@ -632,9 +632,9 @@ export function attachSessionSync(sessionName: string): void {
     // Ignore if doesn't exist
   }
 
-  // Exit alternate screen buffer, clear screen, and show cursor immediately
-  // to avoid flashing the TUI content during tmux setup
-  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[H\x1b[?25h")
+  // Exit alternate screen buffer, clear screen (including scrollback), show cursor.
+  // \x1b[3J clears the outer terminal's scrollback so tmux doesn't repaint old lines.
+  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[3J\x1b[H\x1b[?25h")
 
   // Bind Ctrl+Q to detach in this session (C-q = ASCII 17)
   spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
@@ -699,8 +699,11 @@ export function attachSessionAsync(sessionName: string): Promise<void> {
     // Ignore if doesn't exist
   }
 
-  // Exit alternate screen buffer, clear screen, and show cursor immediately
-  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[H\x1b[?25h")
+  // Exit alternate screen buffer, clear screen (including scrollback), show cursor.
+  // The \x1b[3J clears the terminal's scrollback buffer so tmux doesn't
+  // have to repaint thousands of old lines when it takes over — this only
+  // affects the outer terminal's scrollback, NOT the tmux pane history.
+  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[3J\x1b[H\x1b[?25h")
 
   // Bind keys (these are fast, sync is fine)
   spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
