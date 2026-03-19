@@ -6,6 +6,7 @@
 export type SessionStatus =
   | "running"     // Agent is actively working
   | "waiting"     // Agent needs input/approval
+  | "compacting"  // Agent is compacting/summarizing conversation
   | "idle"        // Session exists but agent is not active
   | "error"       // Session has an error
   | "stopped"     // Session was explicitly stopped

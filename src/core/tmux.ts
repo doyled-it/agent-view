@@ -371,6 +371,7 @@ export function generateSessionName(title: string): string {
 export interface ToolStatus {
   isActive: boolean
   isWaiting: boolean
+  isCompacting: boolean
   isBusy: boolean
   hasError: boolean
   hasExited: boolean
@@ -424,6 +425,13 @@ const CLAUDE_EXITED_PATTERNS = [
   /Press Ctrl-C again to exit/i,
 ]
 
+// Patterns indicating Claude is compacting/summarizing conversation
+const CLAUDE_COMPACTING_PATTERNS = [
+  /compacting conversation/i,
+  /summarizing conversation/i,
+  /context window.*(compact|compress)/i,
+]
+
 // Generic waiting patterns (for other tools)
 const WAITING_PATTERNS = [
   /\? \(y\/n\)/i,
@@ -466,6 +474,7 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
   const lastFewLines = trimmedLines.slice(-10).join("\n")
 
   let isWaiting = false
+  let isCompacting = false
   let isBusy = false
   let hasError = false
   let hasExited = false
@@ -477,6 +486,9 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
     hasExited = CLAUDE_EXITED_PATTERNS.some(p => p.test(lastLines))
 
     if (!hasExited) {
+      // Check for compacting (conversation summarization)
+      isCompacting = CLAUDE_COMPACTING_PATTERNS.some(p => p.test(lastLines))
+
       // Check for busy indicators (actively working)
       isBusy = CLAUDE_BUSY_PATTERNS.some(p => p.test(lastLines)) || hasSpinner(lastFewLines)
 
@@ -499,6 +511,7 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
   return {
     isActive: false, // Determined by activity timestamp
     isWaiting,
+    isCompacting,
     isBusy,
     hasError,
     hasExited

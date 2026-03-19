@@ -10,6 +10,7 @@ import type { Session, SessionStatus } from "@/core/types"
 const STATUS_LABELS: Record<SessionStatus, { icon: string; label: string }> = {
   running: { icon: "●", label: "Running" },
   waiting: { icon: "◐", label: "Waiting" },
+  compacting: { icon: "◌", label: "Compacting" },
   idle: { icon: "○", label: "Idle" },
   stopped: { icon: "◻", label: "Stopped" },
   error: { icon: "✗", label: "Error" }
@@ -31,6 +32,8 @@ export function SessionHeader(props: { session: Session }) {
         return theme.success
       case "waiting":
         return theme.warning
+      case "compacting":
+        return theme.primary
       case "error":
         return theme.error
       default:

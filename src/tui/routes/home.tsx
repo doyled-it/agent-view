@@ -684,6 +684,12 @@ export function Home() {
           </text>
           <text> </text>
         </Show>
+        <Show when={statusSummary().compacting > 0}>
+          <text fg={isSelected() ? theme.selectedListItemText : theme.primary}>
+            {STATUS_ICONS.compacting}{statusSummary().compacting}
+          </text>
+          <text> </text>
+        </Show>
 
         {/* Session count */}
         <text fg={isSelected() ? theme.selectedListItemText : theme.textMuted}>
@@ -708,6 +714,7 @@ export function Home() {
       switch (props.session.status) {
         case "running": return theme.success
         case "waiting": return theme.warning
+        case "compacting": return theme.primary
         case "error": return theme.error
         default: return theme.textMuted
       }
@@ -800,6 +807,7 @@ export function Home() {
       switch (session.status) {
         case "running": return theme.success
         case "waiting": return theme.warning
+        case "compacting": return theme.primary
         case "error": return theme.error
         default: return theme.textMuted
       }

@@ -125,6 +125,8 @@ export class SessionManager {
 
         if (status.isWaiting) {
           newStatus = "waiting"
+        } else if (status.isCompacting) {
+          newStatus = "compacting"
         } else if (status.hasExited) {
           newStatus = "idle"
         } else if (status.hasError) {

@@ -18,7 +18,7 @@ import type { Session, SessionStatus } from "@/core/types"
 import { formatSmartTime, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
 
-const STATUS_ORDER: SessionStatus[] = ["running", "waiting", "idle", "stopped", "error"]
+const STATUS_ORDER: SessionStatus[] = ["running", "waiting", "compacting", "idle", "stopped", "error"]
 
 export function DialogSessions() {
   const dialog = useDialog()
