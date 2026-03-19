@@ -14,10 +14,10 @@ export interface GroupedItem {
 }
 
 export const DEFAULT_GROUP_PATH = "my-sessions"
-export const DEFAULT_GROUP_NAME = "My Sessions"
+export const DEFAULT_GROUP_NAME = "Ungrouped"
 
 /**
- * Ensure the default "My Sessions" group exists
+ * Ensure the default "Ungrouped" group exists
  */
 export function ensureDefaultGroup(groups: Group[]): Group[] {
   const hasDefault = groups.some(g => g.path === DEFAULT_GROUP_PATH)
@@ -65,6 +65,11 @@ export function flattenGroupTree(sessions: Session[], groups: Group[]): GroupedI
   let groupIndex = 1
   for (const group of sortedGroups) {
     const groupSessions = sessionsByGroup.get(group.path) || []
+
+    // Hide the default group when it has no sessions
+    if (group.path === DEFAULT_GROUP_PATH && groupSessions.length === 0) {
+      continue
+    }
 
     // Add group header
     result.push({
