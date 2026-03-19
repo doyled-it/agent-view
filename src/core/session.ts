@@ -51,12 +51,18 @@ export class SessionManager {
   private runningStartTime: Map<string, number> = new Map()
   // Track the last known running duration for each session (ms)
   private lastSustainedRunning: Map<string, number> = new Map()
+  // Track when a session first entered idle — require sustained idle before
+  // firing a "completed" notification (agent may pause briefly between outputs)
+  private idleStartTime: Map<string, number> = new Map()
   // Sessions recently detached from — suppress notifications briefly
   // to avoid notifying about status the user just saw
   private recentlyDetached: Map<string, number> = new Map()
   // Minimum time (ms) a session must be "running" before an idle transition
   // triggers a "completed" notification. Filters out activity blips.
   private static readonly MIN_RUNNING_DURATION_MS = 10_000
+  // Minimum time (ms) a session must be idle before we consider it "completed".
+  // Agents can pause briefly between text outputs without being truly done.
+  private static readonly MIN_IDLE_DURATION_MS = 8_000
 
   /**
    * Mark a tmux session as recently detached so we suppress the next notification.
@@ -160,11 +166,23 @@ export class SessionManager {
         if (!this.runningStartTime.has(session.id)) {
           this.runningStartTime.set(session.id, Date.now())
         }
+        this.idleStartTime.delete(session.id)
+      } else if (newStatus === "idle") {
+        if (!this.idleStartTime.has(session.id)) {
+          this.idleStartTime.set(session.id, Date.now())
+        }
+        this.runningStartTime.delete(session.id)
       } else {
+        this.idleStartTime.delete(session.id)
         this.runningStartTime.delete(session.id)
       }
 
-      if (session.notify && newStatus !== previousStatus && !isAttached && !recentlyDetached) {
+      // Determine if idle is sustained (not a brief pause between outputs)
+      const idleStart = this.idleStartTime.get(session.id)
+      const idleDuration = idleStart ? Date.now() - idleStart : 0
+      const isSustainedIdle = idleDuration >= SessionManager.MIN_IDLE_DURATION_MS
+
+      if (session.notify && !isAttached && !recentlyDetached) {
         const lastNotified = this.lastNotifiedStatus.get(session.id)
         const sound = config.notifications?.sound ?? false
         let didNotify = false
@@ -172,10 +190,11 @@ export class SessionManager {
         if (newStatus === "waiting" && lastNotified !== "waiting") {
           sendNotification("Agent View", `${session.title} is waiting for input`, sound)
           didNotify = true
-        } else if (newStatus === "idle" && lastNotified !== "idle" && (previousStatus === "running" || previousStatus === "waiting")) {
+        } else if (newStatus === "idle" && lastNotified !== "idle" && isSustainedIdle) {
           // Only notify "completed" if the session was running long enough
-          // to be doing real work, not just a brief tmux activity blip
-          const wasRunningLongEnough = previousStatus === "waiting" ||
+          // to be doing real work AND has been idle long enough to not be
+          // a brief pause between outputs
+          const wasRunningLongEnough =
             (this.lastSustainedRunning.get(session.id) ?? 0) >= SessionManager.MIN_RUNNING_DURATION_MS
           if (wasRunningLongEnough) {
             sendNotification("Agent View", `${session.title} has completed its task`, sound)
