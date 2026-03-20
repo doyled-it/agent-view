@@ -632,9 +632,10 @@ export function attachSessionSync(sessionName: string): void {
     // Ignore if doesn't exist
   }
 
-  // Exit alternate screen buffer, clear screen (including scrollback), show cursor.
-  // \x1b[3J clears the outer terminal's scrollback so tmux doesn't repaint old lines.
-  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[3J\x1b[H\x1b[?25h")
+  // Clear the screen and show cursor, but stay in the alternate screen buffer.
+  // Exiting the alternate screen (\x1b[?1049l) would restore the main buffer's
+  // old scrollback, causing a visible "scroll from top" effect as tmux redraws.
+  process.stdout.write("\x1b[2J\x1b[H\x1b[?25h")
 
   // Bind Ctrl+Q to detach in this session (C-q = ASCII 17)
   spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
@@ -677,9 +678,8 @@ export function attachSessionSync(sessionName: string): void {
     spawnSync("tmux", ["unbind-key", "-n", "C-k"], { stdio: "ignore" })
     spawnSync("tmux", ["unbind-key", "-n", "C-t"], { stdio: "ignore" })
 
-    // Clear screen and re-enter alternate buffer for TUI
+    // Clear screen for TUI — we stayed in the alternate buffer, so just clear it
     process.stdout.write("\x1b[2J\x1b[H")
-    process.stdout.write("\x1b[?1049h")
   }
 }
 
@@ -699,11 +699,14 @@ export function attachSessionAsync(sessionName: string): Promise<void> {
     // Ignore if doesn't exist
   }
 
-  // Exit alternate screen buffer, clear screen (including scrollback), show cursor.
-  // The \x1b[3J clears the terminal's scrollback buffer so tmux doesn't
-  // have to repaint thousands of old lines when it takes over — this only
-  // affects the outer terminal's scrollback, NOT the tmux pane history.
-  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[3J\x1b[H\x1b[?25h")
+  // Clear the screen and show cursor, but stay in the alternate screen buffer.
+  // Exiting the alternate screen (\x1b[?1049l) would restore the main buffer's
+  // old scrollback, causing a visible "scroll from top" effect as tmux redraws.
+  // By staying in the alternate buffer, tmux draws directly on a clean screen.
+  process.stdout.write("\x1b[2J\x1b[H\x1b[?25h")
+
+  // Cancel any copy-mode in the target pane so we see the live view, not scrollback
+  spawnSync("tmux", ["send-keys", "-t", sessionName, "-X", "cancel"], { stdio: "ignore" })
 
   // Bind keys (these are fast, sync is fine)
   spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
@@ -733,9 +736,8 @@ export function attachSessionAsync(sessionName: string): Promise<void> {
       spawnSync("tmux", ["unbind-key", "-n", "C-k"], { stdio: "ignore" })
       spawnSync("tmux", ["unbind-key", "-n", "C-t"], { stdio: "ignore" })
 
-      // Clear screen and re-enter alternate buffer for TUI
+      // Clear screen for TUI — we stayed in the alternate buffer, so just clear it
       process.stdout.write("\x1b[2J\x1b[H")
-      process.stdout.write("\x1b[?1049h")
 
       if (code !== 0 && stderr.includes("not a terminal")) {
         reject(new Error(
