@@ -108,6 +108,25 @@ export function Session() {
     if (evt.name === "escape") {
       inputRef?.blur()
     }
+
+    // Alt+Backspace: delete one word backward
+    if (evt.name === "backspace" && evt.meta && inputRef?.focused) {
+      evt.preventDefault()
+      setInputValue((v) => {
+        let i = v.length - 1
+        while (i >= 0 && v[i] === " ") i--
+        while (i >= 0 && v[i] !== " ") i--
+        return v.slice(0, i + 1)
+      })
+      return
+    }
+
+    // Ctrl+U: delete to beginning of line (standard Unix; also covers Cmd+Backspace in many terminal configs)
+    if (evt.name === "u" && evt.ctrl && inputRef?.focused) {
+      evt.preventDefault()
+      setInputValue("")
+      return
+    }
   })
 
   return (
