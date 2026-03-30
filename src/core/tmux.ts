@@ -637,22 +637,20 @@ export function attachSessionSync(sessionName: string): void {
   // old scrollback, causing a visible "scroll from top" effect as tmux redraws.
   process.stdout.write("\x1b[2J\x1b[H\x1b[?25h")
 
-  // Bind Ctrl+Q to detach in this session (C-q = ASCII 17)
-  spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
-
-  // Bind Ctrl+K to create signal file and detach
-  spawnSync("tmux", ["bind-key", "-n", "C-k", "run-shell", `touch ${getSignalFilePath()}`, "\\;", "detach-client"], { stdio: "ignore" })
-
-  // Bind Ctrl+T to open a terminal pane (split horizontally, half screen)
-  spawnSync("tmux", ["bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}"], { stdio: "ignore" })
-
-  // Configure status bar with shortcuts
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status", "on"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-position", "bottom"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-style", "bg=#1e1e2e,fg=#cdd6f4"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-left", ""], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-right-length", "120"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-right", "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"], { stdio: "ignore" })
+  // Batch all pre-attach setup into a single tmux invocation (9 calls → 1)
+  const signalFilePath = getSignalFilePath()
+  const statusRightText = "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"
+  spawnSync("tmux", [
+    "bind-key", "-n", "C-q", "detach-client", ";",
+    "bind-key", "-n", "C-k", "run-shell", `touch ${signalFilePath}`, "\\;", "detach-client", ";",
+    "bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}", ";",
+    "set-option", "-t", sessionName, "status", "on", ";",
+    "set-option", "-t", sessionName, "status-position", "bottom", ";",
+    "set-option", "-t", sessionName, "status-style", "bg=#1e1e2e,fg=#cdd6f4", ";",
+    "set-option", "-t", sessionName, "status-left", "", ";",
+    "set-option", "-t", sessionName, "status-right-length", "120", ";",
+    "set-option", "-t", sessionName, "status-right", statusRightText,
+  ], { stdio: "ignore" })
 
   try {
     // Attach to tmux — blocks until user detaches
@@ -673,10 +671,12 @@ export function attachSessionSync(sessionName: string): void {
       }
     }
   } finally {
-    // Always unbind keys, even if attach crashed
-    spawnSync("tmux", ["unbind-key", "-n", "C-q"], { stdio: "ignore" })
-    spawnSync("tmux", ["unbind-key", "-n", "C-k"], { stdio: "ignore" })
-    spawnSync("tmux", ["unbind-key", "-n", "C-t"], { stdio: "ignore" })
+    // Unbind keys in a single call, even if attach crashed
+    spawnSync("tmux", [
+      "unbind-key", "-n", "C-q", ";",
+      "unbind-key", "-n", "C-k", ";",
+      "unbind-key", "-n", "C-t",
+    ], { stdio: "ignore" })
 
     // Clear screen for TUI — we stayed in the alternate buffer, so just clear it
     process.stdout.write("\x1b[2J\x1b[H")
@@ -705,21 +705,27 @@ export function attachSessionAsync(sessionName: string): Promise<void> {
   // By staying in the alternate buffer, tmux draws directly on a clean screen.
   process.stdout.write("\x1b[2J\x1b[H\x1b[?25h")
 
-  // Cancel any copy-mode in the target pane so we see the live view, not scrollback
-  spawnSync("tmux", ["send-keys", "-t", sessionName, "-X", "cancel"], { stdio: "ignore" })
-
-  // Bind keys (these are fast, sync is fine)
-  spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
-  spawnSync("tmux", ["bind-key", "-n", "C-k", "run-shell", `touch ${getSignalFilePath()}`, "\\;", "detach-client"], { stdio: "ignore" })
-  spawnSync("tmux", ["bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}"], { stdio: "ignore" })
-
-  // Configure status bar
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status", "on"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-position", "bottom"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-style", "bg=#1e1e2e,fg=#cdd6f4"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-left", ""], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-right-length", "120"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-right", "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"], { stdio: "ignore" })
+  // Batch all pre-attach setup into a single tmux invocation using ; chaining.
+  // Previously 9 separate spawnSync calls; each caused process spawn overhead and
+  // potentially a full pane re-wrap (which scales with scrollback buffer size).
+  // One call = one server round-trip, one batched redraw.
+  const signalFile = getSignalFilePath()
+  const statusRight = "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"
+  spawnSync("tmux", [
+    // Cancel copy-mode so we land on the live view
+    "send-keys", "-t", sessionName, "-X", "cancel", ";",
+    // Key bindings
+    "bind-key", "-n", "C-q", "detach-client", ";",
+    "bind-key", "-n", "C-k", "run-shell", `touch ${signalFile}`, "\\;", "detach-client", ";",
+    "bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}", ";",
+    // Status bar (all options in one batch → single redraw)
+    "set-option", "-t", sessionName, "status", "on", ";",
+    "set-option", "-t", sessionName, "status-position", "bottom", ";",
+    "set-option", "-t", sessionName, "status-style", "bg=#1e1e2e,fg=#cdd6f4", ";",
+    "set-option", "-t", sessionName, "status-left", "", ";",
+    "set-option", "-t", sessionName, "status-right-length", "120", ";",
+    "set-option", "-t", sessionName, "status-right", statusRight,
+  ], { stdio: "ignore" })
 
   return new Promise<void>((resolve, reject) => {
     const child = spawn("tmux", ["attach-session", "-t", sessionName], {
@@ -731,10 +737,12 @@ export function attachSessionAsync(sessionName: string): Promise<void> {
     child.stderr?.on("data", (data: Buffer) => { stderr += data.toString() })
 
     child.on("close", (code) => {
-      // Always unbind keys
-      spawnSync("tmux", ["unbind-key", "-n", "C-q"], { stdio: "ignore" })
-      spawnSync("tmux", ["unbind-key", "-n", "C-k"], { stdio: "ignore" })
-      spawnSync("tmux", ["unbind-key", "-n", "C-t"], { stdio: "ignore" })
+      // Unbind keys in a single call
+      spawnSync("tmux", [
+        "unbind-key", "-n", "C-q", ";",
+        "unbind-key", "-n", "C-k", ";",
+        "unbind-key", "-n", "C-t",
+      ], { stdio: "ignore" })
 
       // Clear screen for TUI — we stayed in the alternate buffer, so just clear it
       process.stdout.write("\x1b[2J\x1b[H")
