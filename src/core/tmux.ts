@@ -375,6 +375,7 @@ export interface ToolStatus {
   isBusy: boolean
   hasError: boolean
   hasExited: boolean
+  hasIdlePrompt: boolean
 }
 
 /**
@@ -479,6 +480,7 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
   let isBusy = false
   let hasError = false
   let hasExited = false
+  let hasIdlePrompt = false
 
   if (tool === "claude") {
     // Claude Code specific detection
@@ -497,15 +499,12 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
       isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastLines))
 
       // Detect Claude's idle input prompt: ❯ at the start of a line means
-      // Claude finished responding and is waiting for the user's next message.
+      // Claude finished responding and is at the prompt. This is distinct from
+      // "waiting" (which means Claude needs approval/answer to a direct question).
       // The line may have trailing content (e.g. companion snail art) so we
       // can't require end-of-line — just check ❯ followed by whitespace.
-      // Only applies when not already detected as busy or waiting.
       if (!isBusy && !isWaiting && !isCompacting) {
-        const hasIdlePrompt = /^❯\s/m.test(lastFewLines)
-        if (hasIdlePrompt) {
-          isWaiting = true
-        }
+        hasIdlePrompt = /^❯\s/m.test(lastFewLines)
       }
     }
     // If Claude has exited, both isBusy and isWaiting stay false -> will become idle
@@ -527,7 +526,8 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
     isCompacting,
     isBusy,
     hasError,
-    hasExited
+    hasExited,
+    hasIdlePrompt
   }
 }
 
