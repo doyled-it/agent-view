@@ -496,11 +496,13 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
       // Check for waiting indicators (needs user input)
       isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastLines))
 
-      // Detect Claude's idle input prompt: ❯ on its own line means Claude
-      // finished responding and is waiting for the user's next message.
+      // Detect Claude's idle input prompt: ❯ at the start of a line means
+      // Claude finished responding and is waiting for the user's next message.
+      // The line may have trailing content (e.g. companion snail art) so we
+      // can't require end-of-line — just check ❯ followed by whitespace.
       // Only applies when not already detected as busy or waiting.
       if (!isBusy && !isWaiting && !isCompacting) {
-        const hasIdlePrompt = /^❯\s*$/m.test(lastFewLines)
+        const hasIdlePrompt = /^❯\s/m.test(lastFewLines)
         if (hasIdlePrompt) {
           isWaiting = true
         }
