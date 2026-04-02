@@ -205,6 +205,7 @@ export function Home() {
     return {
       running: byStatus.running.length,
       waiting: byStatus.waiting.length,
+      paused: byStatus.paused.length,
       total: sync.session.list().length
     }
   })
@@ -728,6 +729,7 @@ export function Home() {
       switch (props.session.status) {
         case "running": return theme.success
         case "waiting": return theme.warning
+        case "paused": return theme.info
         case "compacting": return theme.primary
         case "error": return theme.error
         default: return theme.textMuted
@@ -828,6 +830,7 @@ export function Home() {
       switch (session.status) {
         case "running": return theme.success
         case "waiting": return theme.warning
+        case "paused": return theme.info
         case "compacting": return theme.primary
         case "error": return theme.error
         default: return theme.textMuted
@@ -947,6 +950,9 @@ export function Home() {
           </Show>
           <Show when={stats().waiting > 0}>
             <text fg={theme.warning}>◐ {stats().waiting}</text>
+          </Show>
+          <Show when={stats().paused > 0}>
+            <text fg={theme.info}>◆ {stats().paused}</text>
           </Show>
           <text fg={theme.textMuted}>{stats().total} sessions</text>
         </box>

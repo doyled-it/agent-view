@@ -32,6 +32,8 @@ export function SessionHeader(props: { session: Session }) {
         return theme.success
       case "waiting":
         return theme.warning
+      case "paused":
+        return theme.info
       case "compacting":
         return theme.primary
       case "error":

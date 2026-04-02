@@ -166,8 +166,12 @@ export class SessionManager {
             // Keep previous status while error is not yet sustained
             newStatus = previousStatus === "error" ? "idle" : previousStatus
           }
+        } else if (status.hasIdlePrompt && status.hasQuestion) {
+          // Claude asked a question and is at its prompt waiting for an answer.
+          newStatus = "paused"
+          this.errorStartTime.delete(session.id)
         } else if (status.hasIdlePrompt) {
-          // Claude is at its prompt — finished work, not actively doing anything.
+          // Claude is at its prompt — finished work, no question asked.
           // This overrides isActive (tmux activity) which can be true from
           // TUI redraws even when Claude is idle at its prompt.
           newStatus = "idle"

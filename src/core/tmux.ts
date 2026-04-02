@@ -376,6 +376,7 @@ export interface ToolStatus {
   hasError: boolean
   hasExited: boolean
   hasIdlePrompt: boolean
+  hasQuestion: boolean
 }
 
 /**
@@ -481,6 +482,7 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
   let hasError = false
   let hasExited = false
   let hasIdlePrompt = false
+  let hasQuestion = false
 
   if (tool === "claude") {
     // Claude Code specific detection
@@ -505,6 +507,26 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
       // can't require end-of-line — just check ❯ followed by whitespace.
       if (!isBusy && !isWaiting && !isCompacting) {
         hasIdlePrompt = /^❯\s/m.test(lastFewLines)
+        if (hasIdlePrompt) {
+          // Check if Claude's recent output contains a question.
+          // Scan the last several content lines above the ❯ prompt —
+          // the question isn't always the very last line.
+          const promptIdx = trimmedLines.findIndex(l => /^❯\s/.test(l))
+          const linesAbovePrompt = promptIdx >= 0 ? trimmedLines.slice(Math.max(0, promptIdx - 20), promptIdx) : []
+          let contentLinesChecked = 0
+          for (let i = linesAbovePrompt.length - 1; i >= 0 && contentLinesChecked < 8; i--) {
+            const line = linesAbovePrompt[i]!.trim()
+            // Skip non-content lines
+            if (!line || /^[─━═]+$/.test(line) || /Thistle/.test(line)) continue
+            if (/^\.\-\-\.$/.test(line) || /^\\/.test(line) || /^\\_/.test(line) || /^~+$/.test(line)) continue
+            if (/^[✻✳✽✶✢⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏·]/.test(line)) continue
+            contentLinesChecked++
+            if (/\?\s*$/.test(line)) {
+              hasQuestion = true
+              break
+            }
+          }
+        }
       }
     }
     // If Claude has exited, both isBusy and isWaiting stay false -> will become idle
@@ -527,7 +549,8 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
     isBusy,
     hasError,
     hasExited,
-    hasIdlePrompt
+    hasIdlePrompt,
+    hasQuestion
   }
 }
 

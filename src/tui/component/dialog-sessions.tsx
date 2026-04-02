@@ -18,7 +18,7 @@ import type { Session, SessionStatus } from "@/core/types"
 import { formatSmartTime, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
 
-const STATUS_ORDER: SessionStatus[] = ["running", "waiting", "compacting", "idle", "stopped", "error"]
+const STATUS_ORDER: SessionStatus[] = ["running", "waiting", "paused", "compacting", "idle", "stopped", "error"]
 
 export function DialogSessions() {
   const dialog = useDialog()
@@ -157,6 +157,8 @@ function StatusGutter(props: { status: SessionStatus; acknowledged: boolean }) {
         return theme.success
       case "waiting":
         return theme.warning
+      case "paused":
+        return theme.info
       case "error":
         return theme.error
       case "idle":
@@ -169,7 +171,7 @@ function StatusGutter(props: { status: SessionStatus; acknowledged: boolean }) {
   return (
     <text fg={color()} flexShrink={0}>
       {STATUS_ICONS[props.status]}
-      <Show when={!props.acknowledged && (props.status === "waiting" || props.status === "error")}>
+      <Show when={!props.acknowledged && (props.status === "waiting" || props.status === "paused" || props.status === "error")}>
         <span style={{ fg: theme.warning }}>!</span>
       </Show>
     </text>
