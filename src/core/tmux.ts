@@ -391,6 +391,7 @@ export function stripAnsi(text: string): string {
 // These indicate Claude is in the middle of processing
 const CLAUDE_BUSY_PATTERNS = [
   /ctrl\+c to interrupt/i,
+  /esc to interrupt/i,
   /….*tokens/i,  // Processing indicator with tokens count
 ]
 
@@ -494,6 +495,16 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
 
       // Check for waiting indicators (needs user input)
       isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastLines))
+
+      // Detect Claude's idle input prompt: ❯ on its own line means Claude
+      // finished responding and is waiting for the user's next message.
+      // Only applies when not already detected as busy or waiting.
+      if (!isBusy && !isWaiting && !isCompacting) {
+        const hasIdlePrompt = /^❯\s*$/m.test(lastFewLines)
+        if (hasIdlePrompt) {
+          isWaiting = true
+        }
+      }
     }
     // If Claude has exited, both isBusy and isWaiting stay false -> will become idle
   } else {
