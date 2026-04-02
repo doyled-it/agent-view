@@ -39,6 +39,7 @@ export interface Session {
   toolData: Record<string, unknown>
   acknowledged: boolean
   notify: boolean
+  followUp: boolean
   statusChangedAt: Date
   restartCount: number
   statusHistory: Array<{ status: SessionStatus; timestamp: number }>

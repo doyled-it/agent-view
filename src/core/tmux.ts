@@ -642,7 +642,7 @@ export function attachSessionSync(sessionName: string): void {
   const statusRightText = "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"
   spawnSync("tmux", [
     "bind-key", "-n", "C-q", "detach-client", ";",
-    "bind-key", "-n", "C-k", "run-shell", `touch ${signalFilePath}`, "\\;", "detach-client", ";",
+    "bind-key", "-n", "C-k", "run-shell", `touch ${signalFilePath} && tmux detach-client`, ";",
     "bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}", ";",
     "set-option", "-t", sessionName, "status", "on", ";",
     "set-option", "-t", sessionName, "status-position", "bottom", ";",
@@ -705,6 +705,9 @@ export function attachSessionAsync(sessionName: string): Promise<void> {
   // By staying in the alternate buffer, tmux draws directly on a clean screen.
   process.stdout.write("\x1b[2J\x1b[H\x1b[?25h")
 
+  // Cancel copy-mode (non-fatal — may not be in copy mode)
+  spawnSync("tmux", ["send-keys", "-t", sessionName, "-X", "cancel"], { stdio: "ignore" })
+
   // Batch all pre-attach setup into a single tmux invocation using ; chaining.
   // Previously 9 separate spawnSync calls; each caused process spawn overhead and
   // potentially a full pane re-wrap (which scales with scrollback buffer size).
@@ -712,11 +715,9 @@ export function attachSessionAsync(sessionName: string): Promise<void> {
   const signalFile = getSignalFilePath()
   const statusRight = "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"
   spawnSync("tmux", [
-    // Cancel copy-mode so we land on the live view
-    "send-keys", "-t", sessionName, "-X", "cancel", ";",
     // Key bindings
     "bind-key", "-n", "C-q", "detach-client", ";",
-    "bind-key", "-n", "C-k", "run-shell", `touch ${signalFile}`, "\\;", "detach-client", ";",
+    "bind-key", "-n", "C-k", "run-shell", `touch ${signalFile} && tmux detach-client`, ";",
     "bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}", ";",
     // Status bar (all options in one batch → single redraw)
     "set-option", "-t", sessionName, "status", "on", ";",

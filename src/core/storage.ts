@@ -10,7 +10,7 @@ import os from "os"
 import fs from "fs"
 import type { Session, Group, StatusUpdate, Tool, SessionStatus } from "./types"
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 export interface StorageOptions {
   dbPath?: string
@@ -108,6 +108,13 @@ export class Storage {
       }
     }
 
+    // Migration: v2 -> v3
+    if (!currentVersion || parseInt(currentVersion.value) < 3) {
+      try {
+        this.db.exec("ALTER TABLE sessions ADD COLUMN follow_up INTEGER NOT NULL DEFAULT 0")
+      } catch { /* column may already exist */ }
+    }
+
     // Set schema version
     const setVersion = this.db.prepare(
       "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?)"
@@ -140,8 +147,8 @@ export class Storage {
         created_at, last_accessed,
         parent_session_id, worktree_path, worktree_repo, worktree_branch,
         tool_data, acknowledged,
-        notify, status_changed_at, restart_count, status_history
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        notify, follow_up, status_changed_at, restart_count, status_history
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     stmt.run(
@@ -164,6 +171,7 @@ export class Storage {
       JSON.stringify(session.toolData),
       session.acknowledged ? 1 : 0,
       session.notify ? 1 : 0,
+      session.followUp ? 1 : 0,
       session.statusChangedAt.getTime(),
       session.restartCount,
       JSON.stringify(session.statusHistory)
@@ -180,8 +188,8 @@ export class Storage {
         created_at, last_accessed,
         parent_session_id, worktree_path, worktree_repo, worktree_branch,
         tool_data, acknowledged,
-        notify, status_changed_at, restart_count, status_history
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        notify, follow_up, status_changed_at, restart_count, status_history
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     const transaction = this.db.transaction(() => {
@@ -212,6 +220,7 @@ export class Storage {
           JSON.stringify(session.toolData),
           session.acknowledged ? 1 : 0,
           session.notify ? 1 : 0,
+          session.followUp ? 1 : 0,
           session.statusChangedAt.getTime(),
           session.restartCount,
           JSON.stringify(session.statusHistory)
@@ -230,7 +239,7 @@ export class Storage {
         created_at, last_accessed,
         parent_session_id, worktree_path, worktree_repo, worktree_branch,
         tool_data, acknowledged,
-        notify, status_changed_at, restart_count, status_history
+        notify, follow_up, status_changed_at, restart_count, status_history
       FROM sessions ORDER BY sort_order
     `)
 
@@ -255,6 +264,7 @@ export class Storage {
       toolData: JSON.parse(row.tool_data),
       acknowledged: row.acknowledged === 1,
       notify: row.notify === 1,
+      followUp: row.follow_up === 1,
       statusChangedAt: new Date(row.status_changed_at || row.created_at),
       restartCount: row.restart_count || 0,
       statusHistory: JSON.parse(row.status_history || "[]"),
@@ -268,7 +278,7 @@ export class Storage {
         created_at, last_accessed,
         parent_session_id, worktree_path, worktree_repo, worktree_branch,
         tool_data, acknowledged,
-        notify, status_changed_at, restart_count, status_history
+        notify, follow_up, status_changed_at, restart_count, status_history
       FROM sessions WHERE id = ?
     `)
 
@@ -295,6 +305,7 @@ export class Storage {
       toolData: JSON.parse(row.tool_data),
       acknowledged: row.acknowledged === 1,
       notify: row.notify === 1,
+      followUp: row.follow_up === 1,
       statusChangedAt: new Date(row.status_changed_at || row.created_at),
       restartCount: row.restart_count || 0,
       statusHistory: JSON.parse(row.status_history || "[]"),
@@ -319,7 +330,8 @@ export class Storage {
       worktreePath: "worktree_path",
       worktreeRepo: "worktree_repo",
       worktreeBranch: "worktree_branch",
-      toolData: "tool_data"
+      toolData: "tool_data",
+      followUp: "follow_up"
     }
     const column = columnMap[field] ?? field
     const stmt = this.db.prepare(`UPDATE sessions SET ${column} = ? WHERE id = ?`)
@@ -363,6 +375,11 @@ export class Storage {
   setNotify(id: string, notify: boolean): void {
     const stmt = this.db.prepare("UPDATE sessions SET notify = ? WHERE id = ?")
     stmt.run(notify ? 1 : 0, id)
+  }
+
+  setFollowUp(id: string, followUp: boolean): void {
+    const stmt = this.db.prepare("UPDATE sessions SET follow_up = ? WHERE id = ?")
+    stmt.run(followUp ? 1 : 0, id)
   }
 
   updateStatusHistory(id: string, status: SessionStatus, timestamp: number): void {

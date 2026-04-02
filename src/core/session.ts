@@ -63,6 +63,17 @@ export class SessionManager {
   // Minimum time (ms) a session must be idle before we consider it "completed".
   // Agents can pause briefly between text outputs without being truly done.
   private static readonly MIN_IDLE_DURATION_MS = 8_000
+  // Track when a session first showed error patterns — require sustained error
+  // before displaying, since agents often encounter transient tool errors and recover.
+  private errorStartTime: Map<string, number> = new Map()
+  // Minimum time (ms) error patterns must persist before showing error status.
+  // Agents typically recover from transient tool errors within a few seconds.
+  private static readonly MIN_ERROR_DURATION_MS = 5_000
+  // Debounce status transitions — track when a candidate status first appeared.
+  // Prevents UI flickering when tmux activity bounces near the threshold.
+  private pendingStatus: Map<string, { status: SessionStatus; since: number }> = new Map()
+  // Minimum time (ms) a new status must persist before the UI updates.
+  private static readonly STATUS_DEBOUNCE_MS = 2_000
 
   /**
    * Mark a tmux session as recently detached so we suppress the next notification.
@@ -104,13 +115,17 @@ export class SessionManager {
     // Get sessions with an attached client — skip notifications for these
     const attachedSessions = await tmux.getAttachedSessions()
 
+    let anyChanged = false
+
     for (const session of sessions) {
       if (!session.tmuxSession) continue
 
       const exists = tmux.sessionExists(session.tmuxSession)
       if (!exists) {
-        // Session was killed externally
-        storage.writeStatus(session.id, "stopped", session.tool)
+        if (session.status !== "stopped") {
+          storage.writeStatus(session.id, "stopped", session.tool)
+          anyChanged = true
+        }
         continue
       }
 
@@ -131,23 +146,65 @@ export class SessionManager {
 
         if (status.isWaiting) {
           newStatus = "waiting"
+          this.errorStartTime.delete(session.id)
         } else if (status.isCompacting) {
           newStatus = "compacting"
+          this.errorStartTime.delete(session.id)
         } else if (status.hasExited) {
           newStatus = "idle"
+          this.errorStartTime.delete(session.id)
         } else if (status.hasError) {
-          newStatus = "error"
+          // Require sustained error — agents often encounter transient tool errors
+          // (e.g. a command returning non-zero) and recover on their own
+          if (!this.errorStartTime.has(session.id)) {
+            this.errorStartTime.set(session.id, Date.now())
+          }
+          const errorDuration = Date.now() - this.errorStartTime.get(session.id)!
+          if (errorDuration >= SessionManager.MIN_ERROR_DURATION_MS) {
+            newStatus = "error"
+          } else {
+            // Keep previous status while error is not yet sustained
+            newStatus = previousStatus === "error" ? "idle" : previousStatus
+          }
         } else if (status.isBusy || isActive) {
           newStatus = "running"
+          this.errorStartTime.delete(session.id)
         } else {
           newStatus = "idle"
+          this.errorStartTime.delete(session.id)
         }
       } catch {
         // Fallback: use activity-based detection if capture fails
         newStatus = isActive ? "running" : "idle"
       }
 
-      storage.writeStatus(session.id, newStatus, session.tool)
+      // Debounce status transitions to prevent UI flickering.
+      // "waiting" is exempt — user needs to see it immediately.
+      if (newStatus !== previousStatus) {
+        if (newStatus === "waiting") {
+          // Waiting is high-priority — show immediately
+          this.pendingStatus.delete(session.id)
+          storage.writeStatus(session.id, newStatus, session.tool)
+          anyChanged = true
+        } else {
+          const pending = this.pendingStatus.get(session.id)
+          if (pending && pending.status === newStatus) {
+            // Same candidate — check if debounce period has elapsed
+            if (Date.now() - pending.since >= SessionManager.STATUS_DEBOUNCE_MS) {
+              this.pendingStatus.delete(session.id)
+              storage.writeStatus(session.id, newStatus, session.tool)
+              anyChanged = true
+            }
+            // else: still waiting, keep previous status
+          } else {
+            // New candidate — start debounce timer
+            this.pendingStatus.set(session.id, { status: newStatus, since: Date.now() })
+          }
+        }
+      } else {
+        // Status matches current — clear any pending transition
+        this.pendingStatus.delete(session.id)
+      }
 
       // Fire notifications on meaningful status changes.
       // Use lastNotifiedStatus to debounce — status detection can flicker
@@ -221,7 +278,9 @@ export class SessionManager {
       }
     }
 
-    storage.touch()
+    if (anyChanged) {
+      storage.touch()
+    }
   }
 
   /**
@@ -290,6 +349,7 @@ export class SessionManager {
       toolData,
       acknowledged: false,
       notify: false,
+      followUp: false,
       statusChangedAt: now,
       restartCount: 0,
       statusHistory: [{ status: "running" as SessionStatus, timestamp: now.getTime() }],

@@ -134,6 +134,13 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           storage.setNotify(id, !session.notify)
           storage.touch()
           refresh()
+        },
+        toggleFollowUp(id: string): void {
+          const session = store.sessions.find(s => s.id === id)
+          if (!session) return
+          storage.setFollowUp(id, !session.followUp)
+          storage.touch()
+          refresh()
         }
       },
       group: {

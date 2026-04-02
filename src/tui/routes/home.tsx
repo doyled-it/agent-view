@@ -579,6 +579,19 @@ export function Home() {
       }
     }
 
+    // i to toggle follow-up mark
+    if (evt.name === "i") {
+      const session = selectedSession()
+      if (session) {
+        sync.session.toggleFollowUp(session.id)
+        toast.show({
+          message: session.followUp ? `Follow-up cleared for ${session.title}` : `Marked for follow-up: ${session.title}`,
+          variant: "info",
+          duration: 2000
+        })
+      }
+    }
+
     // f to fork (quick)
     if (evt.name === "f" && !evt.shift) {
       log("f pressed, selectedSession:", selectedSession()?.id, selectedSession()?.tool)
@@ -724,9 +737,9 @@ export function Home() {
     const indent = props.indented ? 2 : 0
 
     // Dynamic title truncation based on available panel width
-    // Reserve space for: padding (1+indent + 1), status icon (2), notify (*1), space (1), right-side content (~20)
+    // Reserve: padding (1+indent left + 1 right), bell (1), space (1), flag (1), space (1), status (1), space (1), right content
     const rightContentWidth = useDualColumn() ? 18 : 28 // duration + timestamp (+ tool in single col)
-    const reservedChars = (1 + indent) + 1 + 2 + 1 + 1 + rightContentWidth
+    const reservedChars = (1 + indent) + 1 + 1 + 1 + 1 + 1 + 1 + 1 + rightContentWidth
     const maxTitleLen = createMemo(() => Math.max(8, leftWidth() - reservedChars))
     const title = createMemo(() => {
       const max = maxTitleLen()
@@ -753,13 +766,20 @@ export function Home() {
         }}
         onMouseOver={() => setSelectedIndex(props.index)}
       >
+        {/* Bell (notify) — fixed 1-wide slot */}
+        <text fg={isSelected() ? theme.selectedListItemText : theme.accent}>
+          {props.session.notify ? "\u237E" : " "}
+        </text>
+        <text> </text>
+        {/* Follow-up flag — fixed 1-wide slot */}
+        <text fg={isSelected() ? theme.selectedListItemText : theme.warning}>
+          {props.session.followUp ? "\u2691" : " "}
+        </text>
+        <text> </text>
         {/* Status icon */}
         <text fg={isSelected() ? theme.selectedListItemText : statusColor()}>
           {STATUS_ICONS[props.session.status]}
         </text>
-        <Show when={props.session.notify}>
-          <text fg={isSelected() ? theme.selectedListItemText : theme.accent}>*</text>
-        </Show>
         <text> </text>
 
         {/* Title */}
@@ -1116,6 +1136,10 @@ export function Home() {
         <box flexDirection="column" alignItems="center">
           <text fg={theme.text}>!</text>
           <text fg={theme.textMuted}>notify</text>
+        </box>
+        <box flexDirection="column" alignItems="center">
+          <text fg={theme.text}>i</text>
+          <text fg={theme.textMuted}>mark</text>
         </box>
         <box flexDirection="column" alignItems="center">
           <text fg={theme.text}>e</text>
