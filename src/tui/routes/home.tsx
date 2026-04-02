@@ -24,6 +24,7 @@ import type { Session, Group } from "@/core/types"
 import { formatRelativeTime, formatSmartTime, formatDurationShort, formatDuration, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
 import { sortSessionsByCreatedAt } from "@tui/util/session"
+import { getVersion } from "@/core/version"
 import {
   flattenGroupTree,
   ensureDefaultGroup,
@@ -934,9 +935,12 @@ export function Home() {
         height={1}
         backgroundColor={theme.backgroundPanel}
       >
-        <text fg={theme.primary} attributes={TextAttributes.BOLD}>
-          AGENT VIEW
-        </text>
+        <box flexDirection="row" gap={1}>
+          <text fg={theme.primary} attributes={TextAttributes.BOLD}>
+            AGENT VIEW
+          </text>
+          <text fg={theme.textMuted}>v{getVersion()}</text>
+        </box>
         <box flexDirection="row" gap={2}>
           <Show when={stats().running > 0}>
             <text fg={theme.success}>● {stats().running}</text>
