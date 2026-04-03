@@ -497,29 +497,37 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
       // Check for busy indicators (actively working)
       isBusy = CLAUDE_BUSY_PATTERNS.some(p => p.test(lastLines)) || hasSpinner(lastFewLines)
 
-      // Check for waiting indicators (needs user input)
-      isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastLines))
-
-      // Detect Claude's idle input prompt: ❯ at the start of a line means
-      // Claude finished responding and is at the prompt. This is distinct from
-      // "waiting" (which means Claude needs approval/answer to a direct question).
-      // The line may have trailing content (e.g. companion snail art) so we
-      // can't require end-of-line — just check ❯ followed by whitespace.
-      if (!isBusy && !isWaiting && !isCompacting) {
+      // Detect Claude's idle input prompt: ❯ at the start of a line.
+      // Check this BEFORE waiting patterns — if the ❯ prompt is visible,
+      // Claude is NOT in an approval state (approvals replace the prompt
+      // with a different UI), so waiting patterns would be false positives
+      // from text in Claude's conversational output.
+      if (!isBusy && !isCompacting) {
         hasIdlePrompt = /^❯\s/m.test(lastFewLines)
+      }
+
+      // Check for waiting indicators (needs user approval)
+      // Only applies when there's NO idle prompt — approval UI replaces the ❯ prompt.
+      if (!hasIdlePrompt) {
+        isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastFewLines))
+      }
+
+      if (hasIdlePrompt && !isBusy && !isCompacting) {
         if (hasIdlePrompt) {
           // Check if Claude's recent output contains a question.
           // Scan the last several content lines above the ❯ prompt —
           // the question isn't always the very last line.
-          const promptIdx = trimmedLines.findIndex(l => /^❯\s/.test(l))
+          const promptIdx = trimmedLines.findLastIndex(l => /^❯\s/.test(l))
           const linesAbovePrompt = promptIdx >= 0 ? trimmedLines.slice(Math.max(0, promptIdx - 20), promptIdx) : []
           let contentLinesChecked = 0
           for (let i = linesAbovePrompt.length - 1; i >= 0 && contentLinesChecked < 8; i--) {
             const line = linesAbovePrompt[i]!.trim()
-            // Skip non-content lines
-            if (!line || /^[─━═]+$/.test(line) || /Thistle/.test(line)) continue
+            // Skip non-content lines (separators, companion art, timing, user input)
+            if (!line || /^[─━═]{10,}/.test(line) || /Thistle/.test(line)) continue
             if (/^\.\-\-\.$/.test(line) || /^\\/.test(line) || /^\\_/.test(line) || /^~+$/.test(line)) continue
             if (/^[✻✳✽✶✢⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏·]/.test(line)) continue
+            if (/^❯/.test(line)) continue
+            if (/^⏵⏵/.test(line) || /^\? for shortcuts/.test(line)) continue
             contentLinesChecked++
             if (/\?\s*$/.test(line)) {
               hasQuestion = true
@@ -535,10 +543,10 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
     isWaiting = WAITING_PATTERNS.some(p => p.test(lastLines))
   }
 
-  // Only flag errors if the tool is NOT actively working.
-  // Transient errors (lint failures, test failures) that the agent is fixing
-  // should not show as "error" status while the agent is still busy.
-  if (!isBusy) {
+  // Only flag errors if the tool is NOT actively working and NOT at its prompt.
+  // When the ❯ prompt is visible, any error text is historical (from earlier
+  // commands) — the agent has moved past it. Same logic as WAITING exclusion.
+  if (!isBusy && !hasIdlePrompt) {
     hasError = ERROR_PATTERNS.some(p => p.test(lastLines))
   }
 
