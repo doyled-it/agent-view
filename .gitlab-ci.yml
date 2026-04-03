@@ -146,7 +146,7 @@ bump-version:
       git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
 
       git tag "v${NEW_VERSION}"
-      git push "https://oauth2:${CI_TAG_TOKEN}@gitlab.mitre.org/${CI_PROJECT_PATH}.git" main --tags
+      git push "https://oauth2:${CI_TAG_TOKEN}@gitlab.mitre.org/${CI_PROJECT_PATH}.git" main "v${NEW_VERSION}"
 
       echo "Version bumped and tagged: v${NEW_VERSION}"
   needs: []
