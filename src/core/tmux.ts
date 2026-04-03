@@ -543,10 +543,10 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
     isWaiting = WAITING_PATTERNS.some(p => p.test(lastLines))
   }
 
-  // Only flag errors if the tool is NOT actively working.
-  // Transient errors (lint failures, test failures) that the agent is fixing
-  // should not show as "error" status while the agent is still busy.
-  if (!isBusy) {
+  // Only flag errors if the tool is NOT actively working and NOT at its prompt.
+  // When the ❯ prompt is visible, any error text is historical (from earlier
+  // commands) — the agent has moved past it. Same logic as WAITING exclusion.
+  if (!isBusy && !hasIdlePrompt) {
     hasError = ERROR_PATTERNS.some(p => p.test(lastLines))
   }
 
