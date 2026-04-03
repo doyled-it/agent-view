@@ -511,7 +511,7 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
           // Check if Claude's recent output contains a question.
           // Scan the last several content lines above the ❯ prompt —
           // the question isn't always the very last line.
-          const promptIdx = trimmedLines.findIndex(l => /^❯\s/.test(l))
+          const promptIdx = trimmedLines.findLastIndex(l => /^❯\s/.test(l))
           const linesAbovePrompt = promptIdx >= 0 ? trimmedLines.slice(Math.max(0, promptIdx - 20), promptIdx) : []
           let contentLinesChecked = 0
           for (let i = linesAbovePrompt.length - 1; i >= 0 && contentLinesChecked < 8; i--) {
