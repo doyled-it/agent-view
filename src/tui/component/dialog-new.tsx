@@ -12,7 +12,8 @@ import { useConfig } from "@tui/context/config"
 import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
 import { InputAutocomplete } from "@tui/ui/input-autocomplete"
-import { attachSessionSync } from "@/core/tmux"
+import { attachSessionAsync } from "@/core/tmux"
+import { getSessionManager } from "@/core/session"
 import { isGitRepo, getRepoRoot, createWorktree, generateBranchName, generateWorktreePath, sanitizeBranchName, branchExists } from "@/core/git"
 import { HistoryManager } from "@/core/history"
 import { getStorage } from "@/core/storage"
@@ -58,7 +59,7 @@ const TOOLS: { value: Tool; label: string; description: string }[] = [
   { value: "shell", label: "Shell", description: "Plain terminal session" }
 ]
 
-type FocusField = "title" | "tool" | "resumeSession" | "customCommand" | "path" | "worktree" | "branch"
+type FocusField = "title" | "tool" | "resumeSession" | "customCommand" | "path" | "worktree" | "branch" | "notify"
 
 export function DialogNew() {
   const dialog = useDialog()
@@ -98,6 +99,9 @@ export function DialogNew() {
 
   // Claude session mode state (new or resume)
   const [claudeSessionMode, setClaudeSessionMode] = createSignal<ClaudeSessionMode>("new")
+
+  // Notification state
+  const [enableNotify, setEnableNotify] = createSignal(false)
 
   // Worktree state
   const [useWorktree, setUseWorktree] = createSignal(false)
@@ -204,6 +208,7 @@ export function DialogNew() {
         fields.push("branch")
       }
     }
+    fields.push("notify")
     return fields
   }
 
@@ -295,6 +300,11 @@ export function DialogNew() {
         branchNameHistory.addEntry(storage, worktreeBranchName)
       }
 
+      if (enableNotify()) {
+        storage.setNotify(session.id, true)
+        storage.touch()
+      }
+
       const message = useWorktree()
         ? `Created ${session.title} in worktree`
         : `Created ${session.title}`
@@ -304,7 +314,8 @@ export function DialogNew() {
       if (session.tmuxSession) {
         // Suspend TUI and attach
         renderer.suspend()
-        attachSessionSync(session.tmuxSession)
+        await attachSessionAsync(session.tmuxSession)
+        getSessionManager().suppressNotification(session.tmuxSession!)
         renderer.resume()
       }
 
@@ -391,6 +402,13 @@ export function DialogNew() {
     if (focusedField() === "resumeSession" && evt.name === "space") {
       evt.preventDefault()
       setClaudeSessionMode(claudeSessionMode() === "new" ? "resume" : "new")
+      return
+    }
+
+    // Space to toggle notify checkbox
+    if (focusedField() === "notify" && evt.name === "space") {
+      evt.preventDefault()
+      setEnableNotify(!enableNotify())
       return
     }
   })
@@ -595,6 +613,25 @@ export function DialogNew() {
           </Show>
         </box>
       </Show>
+
+      {/* Notification opt-in */}
+      <box paddingLeft={4} paddingRight={4} paddingTop={1}>
+        <box
+          flexDirection="row"
+          gap={1}
+          onMouseUp={() => {
+            setFocusedField("notify")
+            setEnableNotify(!enableNotify())
+          }}
+        >
+          <text fg={focusedField() === "notify" ? theme.primary : theme.textMuted}>
+            {enableNotify() ? "[x]" : "[ ]"}
+          </text>
+          <text fg={focusedField() === "notify" ? theme.text : theme.textMuted}>
+            Enable notifications
+          </text>
+        </box>
+      </box>
 
       {/* Error display */}
       <Show when={errorMessage()}>

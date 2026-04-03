@@ -114,6 +114,20 @@ export interface TmuxSession {
 }
 
 /**
+ * Get the set of session names that currently have a tmux client attached.
+ * Used to suppress notifications when the user is already looking at a session.
+ */
+export async function getAttachedSessions(): Promise<Set<string>> {
+  try {
+    const { stdout } = await execAsync("tmux list-clients -F '#{client_session}'")
+    const names = stdout.trim().split("\n").filter(Boolean)
+    return new Set(names)
+  } catch {
+    return new Set()
+  }
+}
+
+/**
  * Check if a session has active output (activity within last N seconds)
  */
 export function isSessionActive(name: string, thresholdSeconds = 2): boolean {
@@ -259,6 +273,17 @@ export async function capturePane(
 }
 
 /**
+ * Capture the full tmux scrollback history, stripped of ANSI codes
+ */
+export async function captureFullScrollback(name: string): Promise<string> {
+  const { stdout } = await execAsync(`tmux capture-pane -t "${name}" -p -S - -J`, {
+    timeout: 10000,
+    maxBuffer: 10 * 1024 * 1024 // 10MB
+  })
+  return stripAnsi(stdout)
+}
+
+/**
  * Get pane dimensions
  */
 export async function getPaneDimensions(name: string): Promise<{ width: number; height: number }> {
@@ -346,8 +371,12 @@ export function generateSessionName(title: string): string {
 export interface ToolStatus {
   isActive: boolean
   isWaiting: boolean
+  isCompacting: boolean
   isBusy: boolean
   hasError: boolean
+  hasExited: boolean
+  hasIdlePrompt: boolean
+  hasQuestion: boolean
 }
 
 /**
@@ -364,6 +393,7 @@ export function stripAnsi(text: string): string {
 // These indicate Claude is in the middle of processing
 const CLAUDE_BUSY_PATTERNS = [
   /ctrl\+c to interrupt/i,
+  /esc to interrupt/i,
   /….*tokens/i,  // Processing indicator with tokens count
 ]
 
@@ -396,6 +426,13 @@ const CLAUDE_EXITED_PATTERNS = [
   /Resume this session with:/i,
   /claude --resume/i,
   /Press Ctrl-C again to exit/i,
+]
+
+// Patterns indicating Claude is compacting/summarizing conversation
+const CLAUDE_COMPACTING_PATTERNS = [
+  /compacting conversation/i,
+  /summarizing conversation/i,
+  /context window.*(compact|compress)/i,
 ]
 
 // Generic waiting patterns (for other tools)
@@ -440,9 +477,12 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
   const lastFewLines = trimmedLines.slice(-10).join("\n")
 
   let isWaiting = false
+  let isCompacting = false
   let isBusy = false
   let hasError = false
   let hasExited = false
+  let hasIdlePrompt = false
+  let hasQuestion = false
 
   if (tool === "claude") {
     // Claude Code specific detection
@@ -451,11 +491,43 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
     hasExited = CLAUDE_EXITED_PATTERNS.some(p => p.test(lastLines))
 
     if (!hasExited) {
+      // Check for compacting (conversation summarization)
+      isCompacting = CLAUDE_COMPACTING_PATTERNS.some(p => p.test(lastLines))
+
       // Check for busy indicators (actively working)
       isBusy = CLAUDE_BUSY_PATTERNS.some(p => p.test(lastLines)) || hasSpinner(lastFewLines)
 
       // Check for waiting indicators (needs user input)
       isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastLines))
+
+      // Detect Claude's idle input prompt: ❯ at the start of a line means
+      // Claude finished responding and is at the prompt. This is distinct from
+      // "waiting" (which means Claude needs approval/answer to a direct question).
+      // The line may have trailing content (e.g. companion snail art) so we
+      // can't require end-of-line — just check ❯ followed by whitespace.
+      if (!isBusy && !isWaiting && !isCompacting) {
+        hasIdlePrompt = /^❯\s/m.test(lastFewLines)
+        if (hasIdlePrompt) {
+          // Check if Claude's recent output contains a question.
+          // Scan the last several content lines above the ❯ prompt —
+          // the question isn't always the very last line.
+          const promptIdx = trimmedLines.findIndex(l => /^❯\s/.test(l))
+          const linesAbovePrompt = promptIdx >= 0 ? trimmedLines.slice(Math.max(0, promptIdx - 20), promptIdx) : []
+          let contentLinesChecked = 0
+          for (let i = linesAbovePrompt.length - 1; i >= 0 && contentLinesChecked < 8; i--) {
+            const line = linesAbovePrompt[i]!.trim()
+            // Skip non-content lines
+            if (!line || /^[─━═]+$/.test(line) || /Thistle/.test(line)) continue
+            if (/^\.\-\-\.$/.test(line) || /^\\/.test(line) || /^\\_/.test(line) || /^~+$/.test(line)) continue
+            if (/^[✻✳✽✶✢⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏·]/.test(line)) continue
+            contentLinesChecked++
+            if (/\?\s*$/.test(line)) {
+              hasQuestion = true
+              break
+            }
+          }
+        }
+      }
     }
     // If Claude has exited, both isBusy and isWaiting stay false -> will become idle
   } else {
@@ -463,13 +535,22 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
     isWaiting = WAITING_PATTERNS.some(p => p.test(lastLines))
   }
 
-  hasError = ERROR_PATTERNS.some(p => p.test(lastLines))
+  // Only flag errors if the tool is NOT actively working.
+  // Transient errors (lint failures, test failures) that the agent is fixing
+  // should not show as "error" status while the agent is still busy.
+  if (!isBusy) {
+    hasError = ERROR_PATTERNS.some(p => p.test(lastLines))
+  }
 
   return {
     isActive: false, // Determined by activity timestamp
     isWaiting,
+    isCompacting,
     isBusy,
-    hasError
+    hasError,
+    hasExited,
+    hasIdlePrompt,
+    hasQuestion
   }
 }
 
@@ -550,8 +631,11 @@ export async function attachWithPty(sessionName: string): Promise<void> {
   })
 }
 
-// Signal file for command palette request
-const COMMAND_PALETTE_SIGNAL = "/tmp/agent-view-cmd-palette"
+// Signal file for command palette request (per-user to avoid conflicts)
+export function getSignalFilePath(): string {
+  const uid = typeof process.getuid === "function" ? process.getuid() : process.pid
+  return `/tmp/agent-view-cmd-palette-${uid}`
+}
 
 /**
  * Check if command palette was requested during attached session
@@ -559,8 +643,8 @@ const COMMAND_PALETTE_SIGNAL = "/tmp/agent-view-cmd-palette"
 export function wasCommandPaletteRequested(): boolean {
   const fs = require("fs")
   try {
-    if (fs.existsSync(COMMAND_PALETTE_SIGNAL)) {
-      fs.unlinkSync(COMMAND_PALETTE_SIGNAL)
+    if (fs.existsSync(getSignalFilePath())) {
+      fs.unlinkSync(getSignalFilePath())
       return true
     }
   } catch {
@@ -579,59 +663,137 @@ export function attachSessionSync(sessionName: string): void {
 
   // Clear any existing signal
   try {
-    fs.unlinkSync(COMMAND_PALETTE_SIGNAL)
+    fs.unlinkSync(getSignalFilePath())
   } catch {
     // Ignore if doesn't exist
   }
 
-  // Exit alternate screen buffer, clear screen, and show cursor immediately
-  // to avoid flashing the TUI content during tmux setup
-  process.stdout.write("\x1b[?1049l\x1b[2J\x1b[H\x1b[?25h")
+  // Clear the screen and show cursor, but stay in the alternate screen buffer.
+  // Exiting the alternate screen (\x1b[?1049l) would restore the main buffer's
+  // old scrollback, causing a visible "scroll from top" effect as tmux redraws.
+  process.stdout.write("\x1b[2J\x1b[H\x1b[?25h")
 
-  // Bind Ctrl+Q to detach in this session (C-q = ASCII 17)
-  spawnSync("tmux", ["bind-key", "-n", "C-q", "detach-client"], { stdio: "ignore" })
+  // Batch all pre-attach setup into a single tmux invocation (9 calls → 1)
+  const signalFilePath = getSignalFilePath()
+  const statusRightText = "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"
+  spawnSync("tmux", [
+    "bind-key", "-n", "C-q", "detach-client", ";",
+    "bind-key", "-n", "C-k", "run-shell", `touch ${signalFilePath} && tmux detach-client`, ";",
+    "bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}", ";",
+    "set-option", "-t", sessionName, "status", "on", ";",
+    "set-option", "-t", sessionName, "status-position", "bottom", ";",
+    "set-option", "-t", sessionName, "status-style", "bg=#1e1e2e,fg=#cdd6f4", ";",
+    "set-option", "-t", sessionName, "status-left", "", ";",
+    "set-option", "-t", sessionName, "status-right-length", "120", ";",
+    "set-option", "-t", sessionName, "status-right", statusRightText,
+  ], { stdio: "ignore" })
 
-  // Bind Ctrl+K to create signal file and detach
-  spawnSync("tmux", ["bind-key", "-n", "C-k", "run-shell", `touch ${COMMAND_PALETTE_SIGNAL}`, "\\;", "detach-client"], { stdio: "ignore" })
+  try {
+    // Attach to tmux — blocks until user detaches
+    const attachResult = spawnSync("tmux", ["attach-session", "-t", sessionName], {
+      stdio: ["inherit", "inherit", "pipe"],
+      env: process.env
+    })
 
-  // Bind Ctrl+T to open a terminal pane (split horizontally, half screen)
-  spawnSync("tmux", ["bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}"], { stdio: "ignore" })
-
-  // Configure status bar with shortcuts
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status", "on"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-position", "bottom"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-style", "bg=#1e1e2e,fg=#cdd6f4"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-left", ""], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-right-length", "120"], { stdio: "ignore" })
-  spawnSync("tmux", ["set-option", "-t", sessionName, "status-right", "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"], { stdio: "ignore" })
-
-  // Attach to tmux - this blocks until user detaches (Ctrl+Q or Ctrl+B d)
-  const attachResult = spawnSync("tmux", ["attach-session", "-t", sessionName], {
-    stdio: ["inherit", "inherit", "pipe"],
-    env: process.env
-  })
-
-  // Detect "not a terminal" error - usually caused by tmux version mismatch
-  // (e.g., tmux was upgraded via brew while old server was still running)
-  if (attachResult.status !== 0) {
-    const stderr = attachResult.stderr?.toString?.() || ""
-    if (stderr.includes("not a terminal")) {
-      throw new Error(
-        "tmux attach failed: this is usually caused by a tmux version mismatch. " +
-        "The tmux server was started with an older version. " +
-        "Run 'tmux kill-server' in a terminal to fix this. " +
-        "Agent View will recreate your sessions automatically."
-      )
+    if (attachResult.status !== 0) {
+      const stderr = attachResult.stderr?.toString?.() || ""
+      if (stderr.includes("not a terminal")) {
+        throw new Error(
+          "tmux attach failed: this is usually caused by a tmux version mismatch. " +
+          "The tmux server was started with an older version. " +
+          "Run 'tmux kill-server' in a terminal to fix this. " +
+          "Agent View will recreate your sessions automatically."
+        )
+      }
     }
+  } finally {
+    // Unbind keys in a single call, even if attach crashed
+    spawnSync("tmux", [
+      "unbind-key", "-n", "C-q", ";",
+      "unbind-key", "-n", "C-k", ";",
+      "unbind-key", "-n", "C-t",
+    ], { stdio: "ignore" })
+
+    // Clear screen for TUI — we stayed in the alternate buffer, so just clear it
+    process.stdout.write("\x1b[2J\x1b[H")
+  }
+}
+
+/**
+ * Attach to a tmux session asynchronously.
+ * Unlike attachSessionSync, this does NOT block the event loop,
+ * so setInterval-based polling (e.g. notifications) keeps running.
+ */
+export function attachSessionAsync(sessionName: string): Promise<void> {
+  const { spawnSync } = require("child_process")
+  const fs = require("fs")
+
+  // Clear any existing signal
+  try {
+    fs.unlinkSync(getSignalFilePath())
+  } catch {
+    // Ignore if doesn't exist
   }
 
+  // Clear the screen and show cursor, but stay in the alternate screen buffer.
+  // Exiting the alternate screen (\x1b[?1049l) would restore the main buffer's
+  // old scrollback, causing a visible "scroll from top" effect as tmux redraws.
+  // By staying in the alternate buffer, tmux draws directly on a clean screen.
+  process.stdout.write("\x1b[2J\x1b[H\x1b[?25h")
 
-  // Unbind session-specific keys (restore default behavior)
-  spawnSync("tmux", ["unbind-key", "-n", "C-q"], { stdio: "ignore" })
-  spawnSync("tmux", ["unbind-key", "-n", "C-k"], { stdio: "ignore" })
-  spawnSync("tmux", ["unbind-key", "-n", "C-t"], { stdio: "ignore" })
+  // Cancel copy-mode (non-fatal — may not be in copy mode)
+  spawnSync("tmux", ["send-keys", "-t", sessionName, "-X", "cancel"], { stdio: "ignore" })
 
-  // Clear screen and re-enter alternate buffer for TUI
-  process.stdout.write("\x1b[2J\x1b[H")
-  process.stdout.write("\x1b[?1049h")
+  // Batch all pre-attach setup into a single tmux invocation using ; chaining.
+  // Previously 9 separate spawnSync calls; each caused process spawn overhead and
+  // potentially a full pane re-wrap (which scales with scrollback buffer size).
+  // One call = one server round-trip, one batched redraw.
+  const signalFile = getSignalFilePath()
+  const statusRight = "#[fg=#89b4fa]Ctrl+K#[fg=#6c7086] cmd  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel"
+  spawnSync("tmux", [
+    // Key bindings
+    "bind-key", "-n", "C-q", "detach-client", ";",
+    "bind-key", "-n", "C-k", "run-shell", `touch ${signalFile} && tmux detach-client`, ";",
+    "bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}", ";",
+    // Status bar (all options in one batch → single redraw)
+    "set-option", "-t", sessionName, "status", "on", ";",
+    "set-option", "-t", sessionName, "status-position", "bottom", ";",
+    "set-option", "-t", sessionName, "status-style", "bg=#1e1e2e,fg=#cdd6f4", ";",
+    "set-option", "-t", sessionName, "status-left", "", ";",
+    "set-option", "-t", sessionName, "status-right-length", "120", ";",
+    "set-option", "-t", sessionName, "status-right", statusRight,
+  ], { stdio: "ignore" })
+
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn("tmux", ["attach-session", "-t", sessionName], {
+      stdio: ["inherit", "inherit", "pipe"],
+      env: process.env
+    })
+
+    let stderr = ""
+    child.stderr?.on("data", (data: Buffer) => { stderr += data.toString() })
+
+    child.on("close", (code) => {
+      // Unbind keys in a single call
+      spawnSync("tmux", [
+        "unbind-key", "-n", "C-q", ";",
+        "unbind-key", "-n", "C-k", ";",
+        "unbind-key", "-n", "C-t",
+      ], { stdio: "ignore" })
+
+      // Clear screen for TUI — we stayed in the alternate buffer, so just clear it
+      process.stdout.write("\x1b[2J\x1b[H")
+
+      if (code !== 0 && stderr.includes("not a terminal")) {
+        reject(new Error(
+          "tmux attach failed: this is usually caused by a tmux version mismatch. " +
+          "The tmux server was started with an older version. " +
+          "Run 'tmux kill-server' in a terminal to fix this. " +
+          "Agent View will recreate your sessions automatically."
+        ))
+      } else {
+        resolve()
+      }
+    })
+  })
 }

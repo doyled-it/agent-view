@@ -12,6 +12,23 @@ import os from "os"
 const logDir = path.join(os.homedir(), ".agent-orchestrator")
 const logFile = path.join(logDir, "debug.log")
 fs.mkdirSync(logDir, { recursive: true })
+
+// Rotate log if it exceeds 1MB — keep the most recent ~500KB
+const MAX_LOG_SIZE = 1024 * 1024 // 1MB
+const KEEP_SIZE = 512 * 1024 // 500KB
+try {
+  const stat = fs.statSync(logFile)
+  if (stat.size > MAX_LOG_SIZE) {
+    const content = fs.readFileSync(logFile, "utf-8")
+    const trimmed = content.slice(-KEEP_SIZE)
+    // Start at next newline to avoid partial line
+    const newlineIdx = trimmed.indexOf("\n")
+    fs.writeFileSync(logFile, newlineIdx >= 0 ? trimmed.slice(newlineIdx + 1) : trimmed)
+  }
+} catch {
+  // File doesn't exist or can't stat — ignore
+}
+
 function log(...args: unknown[]) {
   const msg = `[${new Date().toISOString()}] ${args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ")}\n`
   fs.appendFileSync(logFile, msg)

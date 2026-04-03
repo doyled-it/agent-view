@@ -83,6 +83,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           return {
             running: store.sessions.filter((s) => s.status === "running"),
             waiting: store.sessions.filter((s) => s.status === "waiting"),
+            paused: store.sessions.filter((s) => s.status === "paused"),
             idle: store.sessions.filter((s) => s.status === "idle"),
             stopped: store.sessions.filter((s) => s.status === "stopped"),
             error: store.sessions.filter((s) => s.status === "error")
@@ -126,6 +127,20 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         },
         moveToGroup(id: string, groupPath: string): void {
           manager.moveToGroup(id, groupPath)
+          refresh()
+        },
+        toggleNotify(id: string): void {
+          const session = store.sessions.find(s => s.id === id)
+          if (!session) return
+          storage.setNotify(id, !session.notify)
+          storage.touch()
+          refresh()
+        },
+        toggleFollowUp(id: string): void {
+          const session = store.sessions.find(s => s.id === id)
+          if (!session) return
+          storage.setFollowUp(id, !session.followUp)
+          storage.touch()
           refresh()
         }
       },

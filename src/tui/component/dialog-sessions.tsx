@@ -12,12 +12,13 @@ import { useRoute } from "@tui/context/route"
 import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
 import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
-import { attachSessionSync } from "@/core/tmux"
+import { attachSessionAsync } from "@/core/tmux"
+import { getSessionManager } from "@/core/session"
 import type { Session, SessionStatus } from "@/core/types"
 import { formatSmartTime, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
 
-const STATUS_ORDER: SessionStatus[] = ["running", "waiting", "idle", "stopped", "error"]
+const STATUS_ORDER: SessionStatus[] = ["running", "waiting", "paused", "compacting", "idle", "stopped", "error"]
 
 export function DialogSessions() {
   const dialog = useDialog()
@@ -94,7 +95,7 @@ export function DialogSessions() {
     }
   }
 
-  function handleAttach(sessionId: string) {
+  async function handleAttach(sessionId: string) {
     const session = sync.session.get(sessionId)
     if (!session) {
       toast.show({ message: "Session not found", variant: "error", duration: 2000 })
@@ -109,14 +110,13 @@ export function DialogSessions() {
     // Suspend the TUI
     renderer.suspend()
 
-    // Use sync attach - this blocks the event loop completely
-    // User detaches with standard tmux: Ctrl+B, D
     try {
-      attachSessionSync(session.tmuxSession)
+      await attachSessionAsync(session.tmuxSession)
     } catch (err) {
       console.error("Attach error:", err)
     }
 
+    getSessionManager().suppressNotification(session.tmuxSession!)
     // Resume the TUI when we return
     renderer.resume()
 
@@ -157,6 +157,8 @@ function StatusGutter(props: { status: SessionStatus; acknowledged: boolean }) {
         return theme.success
       case "waiting":
         return theme.warning
+      case "paused":
+        return theme.info
       case "error":
         return theme.error
       case "idle":
@@ -169,7 +171,7 @@ function StatusGutter(props: { status: SessionStatus; acknowledged: boolean }) {
   return (
     <text fg={color()} flexShrink={0}>
       {STATUS_ICONS[props.status]}
-      <Show when={!props.acknowledged && (props.status === "waiting" || props.status === "error")}>
+      <Show when={!props.acknowledged && (props.status === "waiting" || props.status === "paused" || props.status === "error")}>
         <span style={{ fg: theme.warning }}>!</span>
       </Show>
     </text>

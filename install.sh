@@ -249,6 +249,12 @@ download_and_install() {
 
     mv "$binary_path" "$INSTALL_DIR/$APP"
     chmod 755 "$INSTALL_DIR/$APP"
+
+    # Ad-hoc codesign on macOS to prevent "killed" on launch
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign &>/dev/null; then
+        codesign -s - "$INSTALL_DIR/$APP" 2>/dev/null || true
+    fi
+
     rm -rf "$tmp_dir"
 
     # Create short alias
@@ -259,6 +265,11 @@ install_from_binary() {
     echo -e "\n${MUTED}Installing ${NC}$APP ${MUTED}from: ${NC}$binary_path"
     cp "$binary_path" "$INSTALL_DIR/$APP"
     chmod 755 "$INSTALL_DIR/$APP"
+
+    # Ad-hoc codesign on macOS to prevent "killed" on launch
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign &>/dev/null; then
+        codesign -s - "$INSTALL_DIR/$APP" 2>/dev/null || true
+    fi
     ln -sf "$INSTALL_DIR/$APP" "$INSTALL_DIR/av"
 }
 

@@ -12,6 +12,8 @@ import path from "path"
 import fs from "fs"
 import os from "os"
 import { getClaudeSessionID, buildForkCommand, canFork, buildClaudeCommand } from "./claude"
+import { sendNotification } from "./notify"
+import { getConfig } from "./config"
 
 const logFile = path.join(os.homedir(), ".agent-orchestrator", "debug.log")
 function log(...args: unknown[]) {
@@ -40,6 +42,45 @@ function generateTitle(): string {
 
 export class SessionManager {
   private refreshInterval: NodeJS.Timeout | null = null
+  // Track last notified status per session to prevent repeated notifications
+  // from status flickering (output detection can alternate between states)
+  private lastNotifiedStatus: Map<string, SessionStatus> = new Map()
+  // Track when a session entered "running" state. Used to require sustained
+  // running before treating a transition to idle as "task completed".
+  // Prevents false notifications from brief tmux activity blips.
+  private runningStartTime: Map<string, number> = new Map()
+  // Track the last known running duration for each session (ms)
+  private lastSustainedRunning: Map<string, number> = new Map()
+  // Track when a session first entered idle — require sustained idle before
+  // firing a "completed" notification (agent may pause briefly between outputs)
+  private idleStartTime: Map<string, number> = new Map()
+  // Sessions recently detached from — suppress notifications briefly
+  // to avoid notifying about status the user just saw
+  private recentlyDetached: Map<string, number> = new Map()
+  // Minimum time (ms) a session must be "running" before an idle transition
+  // triggers a "completed" notification. Filters out activity blips.
+  private static readonly MIN_RUNNING_DURATION_MS = 10_000
+  // Minimum time (ms) a session must be idle before we consider it "completed".
+  // Agents can pause briefly between text outputs without being truly done.
+  private static readonly MIN_IDLE_DURATION_MS = 8_000
+  // Track when a session first showed error patterns — require sustained error
+  // before displaying, since agents often encounter transient tool errors and recover.
+  private errorStartTime: Map<string, number> = new Map()
+  // Minimum time (ms) error patterns must persist before showing error status.
+  // Agents typically recover from transient tool errors within a few seconds.
+  private static readonly MIN_ERROR_DURATION_MS = 5_000
+  // Debounce status transitions — track when a candidate status first appeared.
+  // Prevents UI flickering when tmux activity bounces near the threshold.
+  private pendingStatus: Map<string, { status: SessionStatus; since: number }> = new Map()
+  // Minimum time (ms) a new status must persist before the UI updates.
+  private static readonly STATUS_DEBOUNCE_MS = 2_000
+
+  /**
+   * Mark a tmux session as recently detached so we suppress the next notification.
+   */
+  suppressNotification(tmuxSession: string): void {
+    this.recentlyDetached.set(tmuxSession, Date.now())
+  }
 
   /**
    * Start the session status refresh loop
@@ -70,18 +111,28 @@ export class SessionManager {
 
     const storage = getStorage()
     const sessions = storage.loadSessions()
+    const config = getConfig()
+    // Get sessions with an attached client — skip notifications for these
+    const attachedSessions = await tmux.getAttachedSessions()
+
+    let anyChanged = false
 
     for (const session of sessions) {
       if (!session.tmuxSession) continue
 
       const exists = tmux.sessionExists(session.tmuxSession)
       if (!exists) {
-        // Session was killed externally
-        storage.writeStatus(session.id, "stopped", session.tool)
+        if (session.status !== "stopped") {
+          storage.writeStatus(session.id, "stopped", session.tool)
+          anyChanged = true
+        }
         continue
       }
 
       const isActive = tmux.isSessionActive(session.tmuxSession, 2)
+      const previousStatus = session.status
+
+      let newStatus: SessionStatus = "idle"
 
       // Always capture output and check patterns - not just when active
       // This fixes the bug where waiting sessions were incorrectly marked as idle
@@ -94,25 +145,152 @@ export class SessionManager {
         const status = tmux.parseToolStatus(output, session.tool)
 
         if (status.isWaiting) {
-          // Agent is waiting for user input (permission prompt, question, etc.)
-          storage.writeStatus(session.id, "waiting", session.tool)
+          newStatus = "waiting"
+          this.errorStartTime.delete(session.id)
+        } else if (status.isCompacting) {
+          newStatus = "compacting"
+          this.errorStartTime.delete(session.id)
+        } else if (status.hasExited) {
+          newStatus = "idle"
+          this.errorStartTime.delete(session.id)
         } else if (status.hasError) {
-          // Agent encountered an error
-          storage.writeStatus(session.id, "error", session.tool)
+          // Require sustained error — agents often encounter transient tool errors
+          // (e.g. a command returning non-zero) and recover on their own
+          if (!this.errorStartTime.has(session.id)) {
+            this.errorStartTime.set(session.id, Date.now())
+          }
+          const errorDuration = Date.now() - this.errorStartTime.get(session.id)!
+          if (errorDuration >= SessionManager.MIN_ERROR_DURATION_MS) {
+            newStatus = "error"
+          } else {
+            // Keep previous status while error is not yet sustained
+            newStatus = previousStatus === "error" ? "idle" : previousStatus
+          }
+        } else if (status.hasIdlePrompt && status.hasQuestion) {
+          // Claude asked a question and is at its prompt waiting for an answer.
+          newStatus = "paused"
+          this.errorStartTime.delete(session.id)
+        } else if (status.hasIdlePrompt) {
+          // Claude is at its prompt — finished work, no question asked.
+          // This overrides isActive (tmux activity) which can be true from
+          // TUI redraws even when Claude is idle at its prompt.
+          newStatus = "idle"
+          this.errorStartTime.delete(session.id)
         } else if (status.isBusy || isActive) {
-          // Agent is actively working (spinner visible, recent output, etc.)
-          storage.writeStatus(session.id, "running", session.tool)
+          newStatus = "running"
+          this.errorStartTime.delete(session.id)
         } else {
-          // No recent activity and no waiting prompt - idle
-          storage.writeStatus(session.id, "idle", session.tool)
+          newStatus = "idle"
+          this.errorStartTime.delete(session.id)
         }
       } catch {
         // Fallback: use activity-based detection if capture fails
-        storage.writeStatus(session.id, isActive ? "running" : "idle", session.tool)
+        newStatus = isActive ? "running" : "idle"
+      }
+
+      // Debounce status transitions to prevent UI flickering.
+      // "waiting" is exempt — user needs to see it immediately.
+      if (newStatus !== previousStatus) {
+        if (newStatus === "waiting") {
+          // Waiting is high-priority — show immediately
+          this.pendingStatus.delete(session.id)
+          storage.writeStatus(session.id, newStatus, session.tool)
+          anyChanged = true
+        } else {
+          const pending = this.pendingStatus.get(session.id)
+          if (pending && pending.status === newStatus) {
+            // Same candidate — check if debounce period has elapsed
+            if (Date.now() - pending.since >= SessionManager.STATUS_DEBOUNCE_MS) {
+              this.pendingStatus.delete(session.id)
+              storage.writeStatus(session.id, newStatus, session.tool)
+              anyChanged = true
+            }
+            // else: still waiting, keep previous status
+          } else {
+            // New candidate — start debounce timer
+            this.pendingStatus.set(session.id, { status: newStatus, since: Date.now() })
+          }
+        }
+      } else {
+        // Status matches current — clear any pending transition
+        this.pendingStatus.delete(session.id)
+      }
+
+      // Fire notifications on meaningful status changes.
+      // Use lastNotifiedStatus to debounce — status detection can flicker
+      // between states on consecutive polls due to output capture timing.
+      // Only notify once per distinct status until a genuinely different state is reached.
+      const isAttached = session.tmuxSession ? attachedSessions.has(session.tmuxSession) : false
+      // Check if recently detached (suppress for 5s after detaching)
+      const detachTime = session.tmuxSession ? this.recentlyDetached.get(session.tmuxSession) : undefined
+      const recentlyDetached = detachTime != null && Date.now() - detachTime < 5000
+      if (recentlyDetached && session.tmuxSession) {
+        // Clean up after grace period expires
+        if (Date.now() - detachTime >= 5000) this.recentlyDetached.delete(session.tmuxSession)
+      }
+      // Track running duration to filter out brief activity blips
+      if (newStatus === "running") {
+        if (!this.runningStartTime.has(session.id)) {
+          this.runningStartTime.set(session.id, Date.now())
+        }
+        this.idleStartTime.delete(session.id)
+      } else if (newStatus === "idle") {
+        if (!this.idleStartTime.has(session.id)) {
+          this.idleStartTime.set(session.id, Date.now())
+        }
+        this.runningStartTime.delete(session.id)
+      } else {
+        this.idleStartTime.delete(session.id)
+        this.runningStartTime.delete(session.id)
+      }
+
+      // Determine if idle is sustained (not a brief pause between outputs)
+      const idleStart = this.idleStartTime.get(session.id)
+      const idleDuration = idleStart ? Date.now() - idleStart : 0
+      const isSustainedIdle = idleDuration >= SessionManager.MIN_IDLE_DURATION_MS
+
+      if (session.notify && !isAttached && !recentlyDetached) {
+        const lastNotified = this.lastNotifiedStatus.get(session.id)
+        const sound = config.notifications?.sound ?? false
+        let didNotify = false
+
+        if (newStatus === "waiting" && lastNotified !== "waiting") {
+          sendNotification("Agent View", `${session.title} is waiting for input`, sound)
+          didNotify = true
+        } else if (newStatus === "idle" && lastNotified !== "idle" && isSustainedIdle) {
+          // Only notify "completed" if the session was running long enough
+          // to be doing real work AND has been idle long enough to not be
+          // a brief pause between outputs
+          const wasRunningLongEnough =
+            (this.lastSustainedRunning.get(session.id) ?? 0) >= SessionManager.MIN_RUNNING_DURATION_MS
+          if (wasRunningLongEnough) {
+            sendNotification("Agent View", `${session.title} has completed its task`, sound)
+            didNotify = true
+          }
+        } else if (newStatus === "error" && lastNotified !== "error") {
+          sendNotification("Agent View", `${session.title} was interrupted`, sound)
+          didNotify = true
+        }
+
+        if (didNotify) {
+          this.lastNotifiedStatus.set(session.id, newStatus)
+        }
+      }
+      // Reset notification tracking when session has been running for a
+      // sustained period, so the next transition triggers a fresh notification
+      if (newStatus === "running") {
+        const runStart = this.runningStartTime.get(session.id)
+        const runDuration = runStart ? Date.now() - runStart : 0
+        this.lastSustainedRunning.set(session.id, runDuration)
+        if (runDuration >= SessionManager.MIN_RUNNING_DURATION_MS) {
+          this.lastNotifiedStatus.delete(session.id)
+        }
       }
     }
 
-    storage.touch()
+    if (anyChanged) {
+      storage.touch()
+    }
   }
 
   /**
@@ -179,7 +357,12 @@ export class SessionManager {
       worktreeRepo: options.worktreeRepo || "",
       worktreeBranch: options.worktreeBranch || "",
       toolData,
-      acknowledged: false
+      acknowledged: false,
+      notify: false,
+      followUp: false,
+      statusChangedAt: now,
+      restartCount: 0,
+      statusHistory: [{ status: "running" as SessionStatus, timestamp: now.getTime() }],
     }
 
     storage.saveSession(session)
@@ -331,6 +514,7 @@ export class SessionManager {
     session.lastAccessed = new Date()
 
     storage.saveSession(session)
+    storage.incrementRestartCount(sessionId)
     storage.touch()
 
     return session

@@ -7,6 +7,8 @@ import type { SessionStatus } from "@/core/types"
 export const STATUS_ICONS: Record<SessionStatus, string> = {
   running: "●",
   waiting: "◐",
+  paused: "◆",
+  compacting: "◌",
   idle: "○",
   stopped: "◻",
   error: "✗"

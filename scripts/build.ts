@@ -6,6 +6,8 @@ import solidPlugin from "@opentui/solid/bun-plugin"
 const dir = path.resolve(import.meta.dir, "..")
 process.chdir(dir)
 
+const pkg = await Bun.file("./package.json").json()
+
 const result = await Bun.build({
   entrypoints: ["./src/index.ts"],
   outdir: "./dist",
@@ -16,6 +18,9 @@ const result = await Bun.build({
   minify: false,
   plugins: [solidPlugin],
   external: ["bun:sqlite", "node-pty"],
+  define: {
+    "__APP_VERSION__": JSON.stringify(pkg.version),
+  },
 })
 
 if (!result.success) {

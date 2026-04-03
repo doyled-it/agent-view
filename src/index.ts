@@ -4,6 +4,7 @@
  */
 
 import { tui } from "./tui/app"
+import { getVersion } from "./core/version"
 
 async function main() {
   const args = process.argv.slice(2)
@@ -32,7 +33,7 @@ Keyboard Shortcuts (in TUI):
   }
 
   if (args.includes("--version") || args.includes("-v")) {
-    console.log("agent-orchestrator v1.0.0")
+    console.log(`agent-view v${getVersion()}`)
     process.exit(0)
   }
 

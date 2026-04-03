@@ -7,6 +7,7 @@ import { createMemo, createSignal, For, Show, createEffect, onCleanup } from "so
 import { TextAttributes, ScrollBoxRenderable } from "@opentui/core"
 import { useTerminalDimensions, useKeyboard, useRenderer } from "@opentui/solid"
 import { useTheme } from "@tui/context/theme"
+import { useKV } from "@tui/context/kv"
 import { useSync } from "@tui/context/sync"
 import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
@@ -15,12 +16,15 @@ import { DialogFork } from "@tui/component/dialog-fork"
 import { DialogRename } from "@tui/component/dialog-rename"
 import { DialogGroup } from "@tui/component/dialog-group"
 import { DialogMove } from "@tui/component/dialog-move"
-import { attachSessionSync, capturePane, wasCommandPaletteRequested } from "@/core/tmux"
+import { DialogConfirm } from "@tui/component/dialog-confirm"
+import { attachSessionAsync, capturePane, captureFullScrollback, wasCommandPaletteRequested } from "@/core/tmux"
 import { canFork } from "@/core/claude"
+import { getSessionManager } from "@/core/session"
 import type { Session, Group } from "@/core/types"
-import { formatRelativeTime, formatSmartTime, truncatePath } from "@tui/util/locale"
+import { formatRelativeTime, formatSmartTime, formatDurationShort, formatDuration, truncatePath } from "@tui/util/locale"
 import { STATUS_ICONS } from "@tui/util/status"
 import { sortSessionsByCreatedAt } from "@tui/util/session"
+import { getVersion } from "@/core/version"
 import {
   flattenGroupTree,
   ensureDefaultGroup,
@@ -71,10 +75,21 @@ export function Home() {
   const dialog = useDialog()
   const toast = useToast()
   const renderer = useRenderer()
+  const kv = useKV()
 
-  const [selectedIndex, setSelectedIndex] = createSignal(0)
+  const [selectedIndex, _setSelectedIndex] = createSignal(kv.get<number>("home.selectedIndex", 0))
+  const setSelectedIndex = (v: number | ((prev: number) => number)) => {
+    const next = typeof v === "function" ? v(selectedIndex()) : v
+    _setSelectedIndex(next)
+    kv.set("home.selectedIndex", next)
+  }
   const [previewContent, setPreviewContent] = createSignal<string>("")
   const [previewLoading, setPreviewLoading] = createSignal(false)
+  const [searchActive, setSearchActive] = createSignal(false)
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [searchResults, setSearchResults] = createSignal<string[]>([])
+  const [searchMatchIndex, setSearchMatchIndex] = createSignal(0)
+  const [searchTotalMatches, setSearchTotalMatches] = createSignal(0)
   let scrollRef: ScrollBoxRenderable | undefined
   let previewDebounceTimer: ReturnType<typeof setTimeout> | undefined
   let previewFetchAbort = false
@@ -190,6 +205,7 @@ export function Home() {
     return {
       running: byStatus.running.length,
       waiting: byStatus.waiting.length,
+      paused: byStatus.paused.length,
       total: sync.session.list().length
     }
   })
@@ -214,28 +230,36 @@ export function Home() {
 
   // Handle deleting a group
   async function handleDeleteGroup(group: Group) {
-    const sessionCount = getGroupSessionCount(allSessions(), group.path)
-
-    // Don't allow deleting default group
     if (group.path === DEFAULT_GROUP_PATH) {
       toast.show({ message: "Cannot delete the default group", variant: "error", duration: 2000 })
       return
     }
 
-    // Move sessions to default group before deleting
-    if (sessionCount > 0) {
-      const sessionsInGroup = allSessions().filter(s => s.groupPath === group.path)
-      for (const session of sessionsInGroup) {
-        sync.session.moveToGroup(session.id, DEFAULT_GROUP_PATH)
-      }
-    }
+    const sessionCount = getGroupSessionCount(allSessions(), group.path)
+    const message = sessionCount > 0
+      ? `Delete group "${group.name}"? Its ${sessionCount} session(s) will be moved to the default group.`
+      : `Delete group "${group.name}"?`
 
-    sync.group.delete(group.path)
-    toast.show({ message: `Deleted group "${group.name}"`, variant: "info", duration: 2000 })
-    sync.refresh()
+    dialog.push(() => (
+      <DialogConfirm
+        title="Delete Group"
+        message={message}
+        onConfirm={() => {
+          if (sessionCount > 0) {
+            const sessionsInGroup = allSessions().filter(s => s.groupPath === group.path)
+            for (const session of sessionsInGroup) {
+              sync.session.moveToGroup(session.id, DEFAULT_GROUP_PATH)
+            }
+          }
+          sync.group.delete(group.path)
+          toast.show({ message: `Deleted group "${group.name}"`, variant: "info", duration: 2000 })
+          sync.refresh()
+        }}
+      />
+    ))
   }
 
-  function handleAttach(session: Session) {
+  async function handleAttach(session: Session) {
     if (!session.tmuxSession) {
       toast.show({ message: "Session has no tmux session", variant: "error", duration: 2000 })
       return
@@ -243,16 +267,12 @@ export function Home() {
 
     previewFetchAbort = true
     renderer.suspend()
-    let attachError: Error | undefined
     try {
-      attachSessionSync(session.tmuxSession)
+      await attachSessionAsync(session.tmuxSession)
     } catch (err) {
-      attachError = err as Error
-    }
-    renderer.resume()
-    sync.refresh()
-
-    if (attachError) {
+      renderer.resume()
+      sync.refresh()
+      const attachError = err as Error
       if (attachError.message.includes("version mismatch")) {
         toast.show({
           title: "tmux version mismatch",
@@ -265,18 +285,30 @@ export function Home() {
       }
       return
     }
+    // Suppress notifications briefly — user just saw this session's state
+    getSessionManager().suppressNotification(session.tmuxSession!)
+    renderer.resume()
+    sync.refresh()
 
     // Consume the signal file if it exists (Ctrl+K just goes home)
     wasCommandPaletteRequested()
   }
 
   async function handleDelete(session: Session) {
-    try {
-      await sync.session.delete(session.id)
-      toast.show({ message: `Deleted ${session.title}`, variant: "info", duration: 2000 })
-    } catch (err) {
-      toast.error(err as Error)
-    }
+    dialog.push(() => (
+      <DialogConfirm
+        title="Delete Session"
+        message={`Delete "${session.title}"? This will kill the tmux session.`}
+        onConfirm={async () => {
+          try {
+            await sync.session.delete(session.id)
+            toast.show({ message: `Deleted ${session.title}`, variant: "info", duration: 2000 })
+          } catch (err) {
+            toast.error(err as Error)
+          }
+        }}
+      />
+    ))
   }
 
   async function handleRestart(session: Session) {
@@ -326,9 +358,111 @@ export function Home() {
     }
   }
 
+  async function handleExport(session: Session) {
+    if (!session.tmuxSession) {
+      toast.show({ message: "Session has no tmux session", variant: "error", duration: 2000 })
+      return
+    }
+
+    try {
+      const content = await captureFullScrollback(session.tmuxSession)
+
+      const logsDir = path.join(os.homedir(), ".agent-view", "logs")
+      fs.mkdirSync(logsDir, { recursive: true })
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+      const safeName = session.title.replace(/[^a-z0-9-]/gi, "-").slice(0, 30)
+      const logPath = path.join(logsDir, `${safeName}-${timestamp}.log`)
+
+      fs.writeFileSync(logPath, content)
+
+      toast.show({
+        message: `Exported to ${logPath}`,
+        variant: "success",
+        duration: 4000
+      })
+    } catch (err) {
+      toast.error(err as Error)
+    }
+  }
+
+  async function executeSearch(query: string) {
+    const session = selectedSession()
+    if (!session?.tmuxSession || !query) {
+      setSearchResults([])
+      setSearchTotalMatches(0)
+      return
+    }
+
+    try {
+      const content = await captureFullScrollback(session.tmuxSession)
+      const lines = content.split("\n")
+      const lowerQuery = query.toLowerCase()
+
+      const matchingBlocks: string[] = []
+      let totalMatches = 0
+
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i]!.toLowerCase().includes(lowerQuery)) {
+          totalMatches++
+          const start = Math.max(0, i - 3)
+          const end = Math.min(lines.length - 1, i + 3)
+          const block = lines.slice(start, end + 1).map((line, idx) => {
+            const lineNum = start + idx
+            const prefix = lineNum === i ? ">>> " : "    "
+            return `${prefix}${line}`
+          }).join("\n")
+          matchingBlocks.push(block)
+        }
+      }
+
+      setSearchResults(matchingBlocks)
+      setSearchTotalMatches(totalMatches)
+      setSearchMatchIndex(0)
+    } catch {
+      setSearchResults([])
+      setSearchTotalMatches(0)
+    }
+  }
+
   // Keyboard navigation
   useKeyboard((evt) => {
     log("Home useKeyboard:", evt.name, "dialog.stack.length:", dialog.stack.length)
+
+    // Handle search mode — capture all input so dashboard shortcuts don't fire
+    if (searchActive()) {
+      if (evt.name === "escape") {
+        setSearchActive(false)
+        setSearchQuery("")
+        setSearchResults([])
+        return
+      }
+      if (evt.name === "return") {
+        executeSearch(searchQuery())
+        return
+      }
+      // n/N navigate matches only when results exist
+      if (evt.name === "n" && !evt.shift && searchResults().length > 0) {
+        setSearchMatchIndex((searchMatchIndex() + 1) % searchResults().length)
+        return
+      }
+      if (evt.name === "n" && evt.shift && searchResults().length > 0) {
+        setSearchMatchIndex((searchMatchIndex() - 1 + searchResults().length) % searchResults().length)
+        return
+      }
+      // Backspace
+      if (evt.name === "backspace") {
+        setSearchQuery(q => q.slice(0, -1))
+        return
+      }
+      // Printable characters — append to query
+      if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
+        setSearchQuery(q => q + evt.name)
+        return
+      }
+      // Swallow everything else so dashboard shortcuts don't fire
+      return
+    }
 
     // Skip if dialog is open
     if (dialog.stack.length > 0) return
@@ -434,6 +568,32 @@ export function Home() {
       }
     }
 
+    // ! to toggle notifications
+    if (evt.name === "!" || (evt.shift && evt.name === "1")) {
+      const session = selectedSession()
+      if (session) {
+        sync.session.toggleNotify(session.id)
+        toast.show({
+          message: session.notify ? `Notifications off for ${session.title}` : `Notifications on for ${session.title}`,
+          variant: "info",
+          duration: 2000
+        })
+      }
+    }
+
+    // i to toggle follow-up mark
+    if (evt.name === "i") {
+      const session = selectedSession()
+      if (session) {
+        sync.session.toggleFollowUp(session.id)
+        toast.show({
+          message: session.followUp ? `Follow-up cleared for ${session.title}` : `Marked for follow-up: ${session.title}`,
+          variant: "info",
+          duration: 2000
+        })
+      }
+    }
+
     // f to fork (quick)
     if (evt.name === "f" && !evt.shift) {
       log("f pressed, selectedSession:", selectedSession()?.id, selectedSession()?.tool)
@@ -454,6 +614,22 @@ export function Home() {
         }
         dialog.push(() => <DialogFork session={session} />)
       }
+    }
+
+    // e to export session log
+    if (evt.name === "e") {
+      const session = selectedSession()
+      if (session) {
+        handleExport(session)
+      }
+    }
+
+    // / to start search
+    if (evt.name === "/") {
+      setSearchActive(true)
+      setSearchQuery("")
+      setSearchResults([])
+      return
     }
   })
 
@@ -523,6 +699,12 @@ export function Home() {
           </text>
           <text> </text>
         </Show>
+        <Show when={statusSummary().compacting > 0}>
+          <text fg={isSelected() ? theme.selectedListItemText : theme.primary}>
+            {STATUS_ICONS.compacting}{statusSummary().compacting}
+          </text>
+          <text> </text>
+        </Show>
 
         {/* Session count */}
         <text fg={isSelected() ? theme.selectedListItemText : theme.textMuted}>
@@ -547,18 +729,32 @@ export function Home() {
       switch (props.session.status) {
         case "running": return theme.success
         case "waiting": return theme.warning
+        case "paused": return theme.info
+        case "compacting": return theme.primary
         case "error": return theme.error
         default: return theme.textMuted
       }
     })
 
-    const maxTitleLen = useDualColumn() ? 15 : 20
-    const title = props.session.title.length > maxTitleLen
-      ? props.session.title.slice(0, maxTitleLen - 2) + ".."
-      : props.session.title
-
     // Indentation for sessions under groups
     const indent = props.indented ? 2 : 0
+
+    // Dynamic title truncation based on available panel width
+    // Reserve: padding (1+indent left + 1 right), bell (1), space (1), flag (1), space (1), status (1), space (1), right content
+    const rightContentWidth = useDualColumn() ? 18 : 28 // duration + timestamp (+ tool in single col)
+    const reservedChars = (1 + indent) + 1 + 1 + 1 + 1 + 1 + 1 + 1 + rightContentWidth
+    const maxTitleLen = createMemo(() => Math.max(8, leftWidth() - reservedChars))
+    const title = createMemo(() => {
+      const max = maxTitleLen()
+      return props.session.title.length > max
+        ? props.session.title.slice(0, max - 2) + ".."
+        : props.session.title
+    })
+
+    const duration = createMemo(() => {
+      const elapsed = Date.now() - props.session.createdAt.getTime()
+      return formatDurationShort(elapsed)
+    })
 
     return (
       <box
@@ -573,6 +769,16 @@ export function Home() {
         }}
         onMouseOver={() => setSelectedIndex(props.index)}
       >
+        {/* Bell (notify) — fixed 1-wide slot */}
+        <text fg={isSelected() ? theme.selectedListItemText : theme.accent}>
+          {props.session.notify ? "\u237E" : " "}
+        </text>
+        <text> </text>
+        {/* Follow-up flag — fixed 1-wide slot */}
+        <text fg={isSelected() ? theme.selectedListItemText : theme.warning}>
+          {props.session.followUp ? "\u2691" : " "}
+        </text>
+        <text> </text>
         {/* Status icon */}
         <text fg={isSelected() ? theme.selectedListItemText : statusColor()}>
           {STATUS_ICONS[props.session.status]}
@@ -584,7 +790,7 @@ export function Home() {
           fg={isSelected() ? theme.selectedListItemText : theme.text}
           attributes={isSelected() ? TextAttributes.BOLD : undefined}
         >
-          {title}
+          {title()}
         </text>
 
         {/* Spacer */}
@@ -598,9 +804,18 @@ export function Home() {
           <text> </text>
         </Show>
 
-        {/* Time */}
+        {/* Duration */}
         <text fg={isSelected() ? theme.selectedListItemText : theme.textMuted}>
-          {formatSmartTime(props.session.lastAccessed)}
+          {duration()}
+        </text>
+        <text> </text>
+
+        {/* Status timestamp — show "waiting 5m ago" for non-running, normal time for running */}
+        <text fg={isSelected() ? theme.selectedListItemText : theme.textMuted}>
+          {props.session.status !== "running" && props.session.status !== "idle"
+            ? formatRelativeTime(props.session.statusChangedAt)
+            : formatSmartTime(props.session.lastAccessed)
+          }
         </text>
       </box>
     )
@@ -615,9 +830,28 @@ export function Home() {
       switch (session.status) {
         case "running": return theme.success
         case "waiting": return theme.warning
+        case "paused": return theme.info
+        case "compacting": return theme.primary
         case "error": return theme.error
         default: return theme.textMuted
       }
+    })
+
+    // Compute time-in-status from statusHistory
+    const statusTimes = createMemo(() => {
+      const history = session.statusHistory || []
+      const times: Record<string, number> = {}
+      for (let i = 0; i < history.length; i++) {
+        const entry = history[i]!
+        const nextTime = i + 1 < history.length ? history[i + 1]!.timestamp : Date.now()
+        const duration = nextTime - entry.timestamp
+        times[entry.status] = (times[entry.status] || 0) + duration
+      }
+      return times
+    })
+
+    const elapsed = createMemo(() => {
+      return formatDuration(Date.now() - session.createdAt.getTime())
     })
 
     return (
@@ -638,10 +872,16 @@ export function Home() {
           <text fg={theme.textMuted}>{truncatePath(session.projectPath, rightWidth() - 20)}</text>
         </box>
 
-        {/* More info */}
+        {/* Metrics line */}
         <box flexDirection="row" gap={2} height={1}>
           <text fg={theme.accent}>{session.tool}</text>
-          <text fg={theme.textMuted}>{formatRelativeTime(session.lastAccessed)}</text>
+          <text fg={theme.textMuted}>Duration: {elapsed()}</text>
+          <Show when={session.restartCount > 0}>
+            <text fg={theme.textMuted}>Restarts: {session.restartCount}</text>
+          </Show>
+          <Show when={statusTimes().waiting}>
+            <text fg={theme.warning}>Waiting: {formatDuration(statusTimes().waiting || 0)}</text>
+          </Show>
           <Show when={session.worktreeBranch}>
             <text fg={theme.info}>{session.worktreeBranch}</text>
           </Show>
@@ -698,15 +938,21 @@ export function Home() {
         height={1}
         backgroundColor={theme.backgroundPanel}
       >
-        <text fg={theme.primary} attributes={TextAttributes.BOLD}>
-          AGENT VIEW
-        </text>
+        <box flexDirection="row" gap={1}>
+          <text fg={theme.primary} attributes={TextAttributes.BOLD}>
+            AGENT VIEW
+          </text>
+          <text fg={theme.textMuted}>v{getVersion()}</text>
+        </box>
         <box flexDirection="row" gap={2}>
           <Show when={stats().running > 0}>
             <text fg={theme.success}>● {stats().running}</text>
           </Show>
           <Show when={stats().waiting > 0}>
             <text fg={theme.warning}>◐ {stats().waiting}</text>
+          </Show>
+          <Show when={stats().paused > 0}>
+            <text fg={theme.info}>◆ {stats().paused}</text>
           </Show>
           <text fg={theme.textMuted}>{stats().total} sessions</text>
         </box>
@@ -787,27 +1033,59 @@ export function Home() {
                 <box flexDirection="column" flexGrow={1}>
                   <PreviewHeader />
 
-                  {/* Terminal output */}
-                  <scrollbox flexGrow={1} scrollbarOptions={{ visible: true }}>
-                    <Show
-                      when={previewLines().length > 0}
-                      fallback={
-                        <box paddingLeft={1} paddingTop={1}>
-                          <text fg={theme.textMuted}>
-                            {previewLoading() ? "Loading..." : "No output yet"}
-                          </text>
-                        </box>
-                      }
-                    >
+                  {/* Terminal output OR search results */}
+                  <Show
+                    when={searchActive() && searchResults().length > 0}
+                    fallback={
+                      <scrollbox flexGrow={1} scrollbarOptions={{ visible: true }}>
+                        <Show
+                          when={previewLines().length > 0}
+                          fallback={
+                            <box paddingLeft={1} paddingTop={1}>
+                              <text fg={theme.textMuted}>
+                                {previewLoading() ? "Loading..." : "No output yet"}
+                              </text>
+                            </box>
+                          }
+                        >
+                          <box flexDirection="column" paddingLeft={1}>
+                            <For each={previewLines().slice(-50)}>
+                              {(line) => (
+                                <text fg={theme.text}>{stripAnsi(line).slice(0, rightWidth() - 4)}</text>
+                              )}
+                            </For>
+                          </box>
+                        </Show>
+                      </scrollbox>
+                    }
+                  >
+                    <scrollbox flexGrow={1} scrollbarOptions={{ visible: true }}>
                       <box flexDirection="column" paddingLeft={1}>
-                        <For each={previewLines().slice(-50)}>
+                        <For each={searchResults()[searchMatchIndex()]?.split("\n") || []}>
                           {(line) => (
-                            <text fg={theme.text}>{stripAnsi(line).slice(0, rightWidth() - 4)}</text>
+                            <text fg={line.startsWith(">>>") ? theme.warning : theme.text}>
+                              {line.slice(0, rightWidth() - 4)}
+                            </text>
                           )}
                         </For>
                       </box>
-                    </Show>
-                  </scrollbox>
+                    </scrollbox>
+                  </Show>
+                </box>
+              </Show>
+
+              {/* Search bar */}
+              <Show when={searchActive()}>
+                <box height={1} paddingLeft={1} backgroundColor={theme.backgroundElement} flexDirection="row">
+                  <text fg={theme.primary}>/</text>
+                  <text fg={theme.text}>{searchQuery()}</text>
+                  <text fg={theme.primary}>█</text>
+                  <text flexGrow={1}> </text>
+                  <Show when={searchTotalMatches() > 0}>
+                    <text fg={theme.textMuted}>
+                      Match {searchMatchIndex() + 1}/{searchTotalMatches()} (n/N)
+                    </text>
+                  </Show>
                 </box>
               </Show>
             </box>
@@ -864,6 +1142,22 @@ export function Home() {
         <box flexDirection="column" alignItems="center">
           <text fg={theme.text}>1-9</text>
           <text fg={theme.textMuted}>jump</text>
+        </box>
+        <box flexDirection="column" alignItems="center">
+          <text fg={theme.text}>!</text>
+          <text fg={theme.textMuted}>notify</text>
+        </box>
+        <box flexDirection="column" alignItems="center">
+          <text fg={theme.text}>i</text>
+          <text fg={theme.textMuted}>mark</text>
+        </box>
+        <box flexDirection="column" alignItems="center">
+          <text fg={theme.text}>e</text>
+          <text fg={theme.textMuted}>export</text>
+        </box>
+        <box flexDirection="column" alignItems="center">
+          <text fg={theme.text}>/</text>
+          <text fg={theme.textMuted}>search</text>
         </box>
         <box flexDirection="column" alignItems="center">
           <text fg={theme.text}>q</text>

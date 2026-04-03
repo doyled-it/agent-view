@@ -5,7 +5,9 @@
 
 export type SessionStatus =
   | "running"     // Agent is actively working
-  | "waiting"     // Agent needs input/approval
+  | "waiting"     // Agent needs approval (Y/n, permissions)
+  | "paused"      // Agent asked a question, waiting for answer
+  | "compacting"  // Agent is compacting/summarizing conversation
   | "idle"        // Session exists but agent is not active
   | "error"       // Session has an error
   | "stopped"     // Session was explicitly stopped
@@ -37,6 +39,11 @@ export interface Session {
   worktreeBranch: string
   toolData: Record<string, unknown>
   acknowledged: boolean
+  notify: boolean
+  followUp: boolean
+  statusChangedAt: Date
+  restartCount: number
+  statusHistory: Array<{ status: SessionStatus; timestamp: number }>
 }
 
 export interface Group {
