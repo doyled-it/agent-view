@@ -497,18 +497,22 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
       // Check for busy indicators (actively working)
       isBusy = CLAUDE_BUSY_PATTERNS.some(p => p.test(lastLines)) || hasSpinner(lastFewLines)
 
-      // Check for waiting indicators (needs user input)
-      // Only check last few lines — approval prompts appear at the bottom,
-      // not buried in conversation history within the captured output.
-      isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastFewLines))
-
-      // Detect Claude's idle input prompt: ❯ at the start of a line means
-      // Claude finished responding and is at the prompt. This is distinct from
-      // "waiting" (which means Claude needs approval/answer to a direct question).
-      // The line may have trailing content (e.g. companion snail art) so we
-      // can't require end-of-line — just check ❯ followed by whitespace.
-      if (!isBusy && !isWaiting && !isCompacting) {
+      // Detect Claude's idle input prompt: ❯ at the start of a line.
+      // Check this BEFORE waiting patterns — if the ❯ prompt is visible,
+      // Claude is NOT in an approval state (approvals replace the prompt
+      // with a different UI), so waiting patterns would be false positives
+      // from text in Claude's conversational output.
+      if (!isBusy && !isCompacting) {
         hasIdlePrompt = /^❯\s/m.test(lastFewLines)
+      }
+
+      // Check for waiting indicators (needs user approval)
+      // Only applies when there's NO idle prompt — approval UI replaces the ❯ prompt.
+      if (!hasIdlePrompt) {
+        isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastFewLines))
+      }
+
+      if (hasIdlePrompt && !isBusy && !isCompacting) {
         if (hasIdlePrompt) {
           // Check if Claude's recent output contains a question.
           // Scan the last several content lines above the ❯ prompt —

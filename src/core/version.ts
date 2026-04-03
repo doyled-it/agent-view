@@ -1,28 +1,9 @@
-// Version is injected at build time via `define` in the build script.
-// Falls back to reading package.json for development mode.
-declare const __APP_VERSION__: string | undefined
+// __APP_VERSION__ is replaced at build time by the build script's `define` option.
+// If not replaced (e.g. running directly with bun in dev), it falls back to "dev".
+const APP_VERSION: string = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"
 
-let cachedVersion: string | null = null
+declare const __APP_VERSION__: string
 
 export function getVersion(): string {
-  if (cachedVersion) return cachedVersion
-
-  // Use build-time injected version if available
-  if (typeof __APP_VERSION__ !== "undefined") {
-    cachedVersion = __APP_VERSION__
-    return cachedVersion
-  }
-
-  // Fallback: read package.json (development mode)
-  try {
-    const fs = require("fs")
-    const path = require("path")
-    const pkgPath = path.join(import.meta.dir, "..", "..", "package.json")
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"))
-    cachedVersion = pkg.version ?? "0.0.0"
-  } catch {
-    cachedVersion = "0.0.0"
-  }
-
-  return cachedVersion
+  return APP_VERSION
 }
