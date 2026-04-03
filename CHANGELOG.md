@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.1] - 2026-04-03
+
+Fixed
+- Use `findLastIndex` instead of `findIndex` so question detection uses the current prompt, not old user input (!2) (@mdoyle)
+- Skip user‑input lines and separator/companion lines during question scanning (!2) (@mdoyle)
+- Restrict WAITING pattern matching to the last 10 lines of the conversation (!2) (@mdoyle)
+- When the prompt is visible, skip WAITING patterns entirely to avoid false positives (!2) (@mdoyle)
+- Simplify `version.ts` so build‑time define injection works with the Bun bundler, fixing the displayed version (!2) (@mdoyle)
+- Write the version to the source file at build time (!2) (@mdoyle)
+- Skip error detection when the idle prompt is visible (!2) (@mdoyle)
+- Prevent false waiting detection when the idle prompt is visible (!2) (@mdoyle)
+
 ## [0.1.0] - 2026-04-03
 
 Added
