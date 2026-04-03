@@ -498,7 +498,9 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
       isBusy = CLAUDE_BUSY_PATTERNS.some(p => p.test(lastLines)) || hasSpinner(lastFewLines)
 
       // Check for waiting indicators (needs user input)
-      isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastLines))
+      // Only check last few lines — approval prompts appear at the bottom,
+      // not buried in conversation history within the captured output.
+      isWaiting = CLAUDE_WAITING_PATTERNS.some(p => p.test(lastFewLines))
 
       // Detect Claude's idle input prompt: ❯ at the start of a line means
       // Claude finished responding and is at the prompt. This is distinct from
@@ -516,10 +518,12 @@ export function parseToolStatus(output: string, tool?: string): ToolStatus {
           let contentLinesChecked = 0
           for (let i = linesAbovePrompt.length - 1; i >= 0 && contentLinesChecked < 8; i--) {
             const line = linesAbovePrompt[i]!.trim()
-            // Skip non-content lines
-            if (!line || /^[─━═]+$/.test(line) || /Thistle/.test(line)) continue
+            // Skip non-content lines (separators, companion art, timing, user input)
+            if (!line || /^[─━═]{10,}/.test(line) || /Thistle/.test(line)) continue
             if (/^\.\-\-\.$/.test(line) || /^\\/.test(line) || /^\\_/.test(line) || /^~+$/.test(line)) continue
             if (/^[✻✳✽✶✢⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏·]/.test(line)) continue
+            if (/^❯/.test(line)) continue
+            if (/^⏵⏵/.test(line) || /^\? for shortcuts/.test(line)) continue
             contentLinesChecked++
             if (/\?\s*$/.test(line)) {
               hasQuestion = true
