@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2] - 2026-04-06
+
+Added
+- Add distinct notification text for waiting (approval) status: “needs approval” (!3) (@mdoyle)
+- Add distinct notification text for paused (question) status: “asked you a question” (!3) (@mdoyle)
+- Add colored emoji indicators to notification titles (!3) (@mdoyle)
+
 ## [0.1.1] - 2026-04-03
 
 Fixed
