@@ -255,7 +255,10 @@ export class SessionManager {
         let didNotify = false
 
         if (newStatus === "waiting" && lastNotified !== "waiting") {
-          sendNotification("Agent View", `${session.title} is waiting for input`, sound)
+          sendNotification("Agent View", `${session.title} needs approval`, sound)
+          didNotify = true
+        } else if (newStatus === "paused" && lastNotified !== "paused") {
+          sendNotification("Agent View", `${session.title} asked you a question`, sound)
           didNotify = true
         } else if (newStatus === "idle" && lastNotified !== "idle" && isSustainedIdle) {
           // Only notify "completed" if the session was running long enough
