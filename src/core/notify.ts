@@ -5,6 +5,15 @@
  */
 
 import { exec, execSync } from "child_process"
+import fs from "fs"
+import path from "path"
+import os from "os"
+
+const logFile = path.join(os.homedir(), ".agent-orchestrator", "debug.log")
+function logNotify(...args: unknown[]) {
+  const msg = `[${new Date().toISOString()}] [NOTIFY] ${args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ")}\n`
+  try { fs.appendFileSync(logFile, msg) } catch {}
+}
 
 // Cache whether terminal-notifier is available
 let hasTerminalNotifier: boolean | null = null
@@ -71,18 +80,26 @@ export function sendNotification(titleOrOptions: string | NotificationOptions, b
     : titleOrOptions
 
   const cmd = buildNotificationCommand(options)
+  logNotify(`Sending: ${options.title} | ${options.body} | cmd: ${cmd.substring(0, 100)}...`)
 
-  exec(cmd, (err) => {
+  exec(cmd, (err, _stdout, stderr) => {
     if (err) {
+      logNotify(`Failed: ${err.message} | stderr: ${stderr}`)
       // If terminal-notifier fails (e.g. no NotificationCenter in tmux),
       // fall back to osascript
       if (process.platform === "darwin" && checkTerminalNotifier()) {
         const fallback = buildOsascriptCommand(options)
-        exec(fallback)
+        logNotify(`Fallback to osascript: ${fallback.substring(0, 100)}...`)
+        exec(fallback, (err2, _s, stderr2) => {
+          if (err2) logNotify(`Osascript fallback failed: ${err2.message} | ${stderr2}`)
+          else logNotify("Osascript fallback succeeded")
+        })
       }
       if (options.sound) {
         process.stdout.write("\x07")
       }
+    } else {
+      logNotify("Notification sent successfully")
     }
   })
 
