@@ -20,23 +20,33 @@ function checkTerminalNotifier(): boolean {
   return hasTerminalNotifier
 }
 
+export interface NotificationOptions {
+  title: string
+  subtitle?: string
+  body: string
+  sound?: boolean
+}
+
 export function buildNotificationCommand(
-  title: string,
-  body: string,
-  sound: boolean,
+  options: NotificationOptions,
   platform: string = process.platform
 ): string {
-  const safeTitle = title.replace(/"/g, '\\"')
-  const safeBody = body.replace(/"/g, '\\"')
+  const safeTitle = options.title.replace(/"/g, '\\"')
+  const safeBody = options.body.replace(/"/g, '\\"')
+  const safeSubtitle = options.subtitle?.replace(/"/g, '\\"')
 
   if (platform === "darwin") {
     // Prefer terminal-notifier for persistent (alert-style) notifications
     if (checkTerminalNotifier()) {
-      const soundFlag = sound ? ' -sound default' : ""
-      return `terminal-notifier -title "${safeTitle}" -message "${safeBody}" -timeout 0${soundFlag}`
+      const soundFlag = options.sound ? ' -sound default' : ""
+      const subtitleFlag = safeSubtitle ? ` -subtitle "${safeSubtitle}"` : ""
+      // -timeout 30: keep notification visible for 30 seconds
+      // -group: allows replacing stale notifications from the same session
+      return `terminal-notifier -title "${safeTitle}" -message "${safeBody}"${subtitleFlag} -timeout 30${soundFlag}`
     }
-    const soundClause = sound ? ' sound name "default"' : ""
-    return `osascript -e 'display notification "${safeBody}" with title "${safeTitle}"${soundClause}'`
+    const soundClause = options.sound ? ' sound name "default"' : ""
+    const subtitleClause = safeSubtitle ? ` subtitle "${safeSubtitle}"` : ""
+    return `osascript -e 'display notification "${safeBody}" with title "${safeTitle}"${subtitleClause}${soundClause}'`
   }
 
   // Linux: -u critical makes notifications persistent until dismissed
@@ -44,16 +54,22 @@ export function buildNotificationCommand(
   return `notify-send ${urgency} "${safeTitle}" "${safeBody}"`
 }
 
-export function sendNotification(title: string, body: string, sound: boolean = false): void {
-  const cmd = buildNotificationCommand(title, body, sound)
+export function sendNotification(title: string, body: string, sound?: boolean): void
+export function sendNotification(options: NotificationOptions): void
+export function sendNotification(titleOrOptions: string | NotificationOptions, body?: string, sound?: boolean): void {
+  const options: NotificationOptions = typeof titleOrOptions === "string"
+    ? { title: titleOrOptions, body: body!, sound }
+    : titleOrOptions
+
+  const cmd = buildNotificationCommand(options)
 
   exec(cmd, (err) => {
-    if (err && sound) {
+    if (err && options.sound) {
       process.stdout.write("\x07")
     }
   })
 
-  if (process.platform === "linux" && sound) {
+  if (process.platform === "linux" && options.sound) {
     process.stdout.write("\x07")
   }
 }
