@@ -20,6 +20,15 @@ function checkTerminalNotifier(): boolean {
   return hasTerminalNotifier
 }
 
+function buildOsascriptCommand(options: NotificationOptions): string {
+  const safeTitle = options.title.replace(/"/g, '\\"')
+  const safeBody = options.body.replace(/"/g, '\\"')
+  const safeSubtitle = options.subtitle?.replace(/"/g, '\\"')
+  const soundClause = options.sound ? ' sound name "default"' : ""
+  const subtitleClause = safeSubtitle ? ` subtitle "${safeSubtitle}"` : ""
+  return `osascript -e 'display notification "${safeBody}" with title "${safeTitle}"${subtitleClause}${soundClause}'`
+}
+
 export interface NotificationOptions {
   title: string
   subtitle?: string
@@ -64,8 +73,16 @@ export function sendNotification(titleOrOptions: string | NotificationOptions, b
   const cmd = buildNotificationCommand(options)
 
   exec(cmd, (err) => {
-    if (err && options.sound) {
-      process.stdout.write("\x07")
+    if (err) {
+      // If terminal-notifier fails (e.g. no NotificationCenter in tmux),
+      // fall back to osascript
+      if (process.platform === "darwin" && checkTerminalNotifier()) {
+        const fallback = buildOsascriptCommand(options)
+        exec(fallback)
+      }
+      if (options.sound) {
+        process.stdout.write("\x07")
+      }
     }
   })
 
