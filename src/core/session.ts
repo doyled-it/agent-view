@@ -255,10 +255,10 @@ export class SessionManager {
         let didNotify = false
 
         if (newStatus === "waiting" && lastNotified !== "waiting") {
-          sendNotification({ title: `\u{1F7E1} ${session.title}`, subtitle: "Agent View", body: "Needs approval", sound })
+          sendNotification({ title: `\u{1F7E1} ${session.title}`, body: "Needs approval", sound })
           didNotify = true
         } else if (newStatus === "paused" && lastNotified !== "paused") {
-          sendNotification({ title: `\u{1F535} ${session.title}`, subtitle: "Agent View", body: "Asked you a question", sound })
+          sendNotification({ title: `\u{1F535} ${session.title}`, body: "Asked you a question", sound })
           didNotify = true
         } else if (newStatus === "idle" && lastNotified !== "idle" && isSustainedIdle) {
           // Only notify "completed" if the session was running long enough
@@ -267,11 +267,11 @@ export class SessionManager {
           const wasRunningLongEnough =
             (this.lastSustainedRunning.get(session.id) ?? 0) >= SessionManager.MIN_RUNNING_DURATION_MS
           if (wasRunningLongEnough) {
-            sendNotification({ title: `\u{2705} ${session.title}`, subtitle: "Agent View", body: "Completed its task", sound })
+            sendNotification({ title: `\u{2705} ${session.title}`, body: "Completed its task", sound })
             didNotify = true
           }
         } else if (newStatus === "error" && lastNotified !== "error") {
-          sendNotification({ title: `\u{1F534} ${session.title}`, subtitle: "Agent View", body: "Was interrupted", sound })
+          sendNotification({ title: `\u{1F534} ${session.title}`, body: "Was interrupted", sound })
           didNotify = true
         }
 
