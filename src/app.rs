@@ -46,6 +46,7 @@ pub struct App {
     pub selected_index: usize,
     pub overlay: Overlay,
     pub should_quit: bool,
+    pub returning_from_attach: bool,
     pub last_status_refresh: std::time::Instant,
     pub attach_session: Option<String>,
 }
@@ -57,6 +58,7 @@ impl App {
             selected_index: 0,
             overlay: Overlay::None,
             should_quit: false,
+            returning_from_attach: false,
             last_status_refresh: std::time::Instant::now(),
             attach_session: None,
         }

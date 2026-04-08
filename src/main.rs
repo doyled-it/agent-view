@@ -227,6 +227,12 @@ fn run_tui(
             break;
         }
 
+        // After returning from attach, discard stale status results
+        if app.returning_from_attach {
+            while status_rx.try_recv().is_ok() {}
+            app.returning_from_attach = false;
+        }
+
         // Apply status updates from background thread (non-blocking)
         // Batch all pending results, only reload DB once at the end
         let mut any_changed = false;
@@ -312,12 +318,15 @@ fn handle_main_key(
                     let _ = crate::core::tmux::attach_session_sync(&tmux_name);
                     session_manager.suppress_notification(&tmux_name);
 
+                    // Signal main loop to drain stale status results
+                    app.returning_from_attach = true;
+
                     // Re-enter TUI
                     enable_raw_mode()?;
                     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
                     terminal.clear()?;
 
-                    // Refresh sessions after returning
+                    // Fresh reload after returning
                     if let Ok(sessions) = storage.load_sessions() {
                         app.sessions = sessions;
                         app.clamp_selection();
