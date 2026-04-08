@@ -187,8 +187,8 @@ fn run_tui(
             crate::ui::home::render(frame, &app);
         })?;
 
-        // Poll for keyboard input (16ms timeout for ~60fps)
-        if event::poll(Duration::from_millis(16))? {
+        // Drain ALL pending keyboard input in one go (not one key per frame)
+        while event::poll(Duration::from_millis(0))? {
             if let Event::Key(key) = event::read()? {
                 match app.overlay {
                     crate::app::Overlay::None => {
@@ -217,6 +217,9 @@ fn run_tui(
                         )?;
                     }
                 }
+                if app.should_quit {
+                    break;
+                }
             }
         }
 
@@ -225,8 +228,9 @@ fn run_tui(
         }
 
         // Apply status updates from background thread (non-blocking)
+        // Batch all pending results, only reload DB once at the end
+        let mut any_changed = false;
         while let Ok(results) = status_rx.try_recv() {
-            let mut any_changed = false;
             for (session_id, raw_status) in results {
                 if let Some(session) = app.sessions.iter().find(|s| s.id == session_id) {
                     let previous = session.status;
@@ -239,22 +243,23 @@ fn run_tui(
 
                     session_manager.track_durations(&session_id, resolved);
 
-                    let attached = crate::core::tmux::get_attached_sessions();
-                    let is_attached = attached.contains(&session.tmux_session);
                     let sound = config.notifications.sound;
-                    session_manager.maybe_notify(session, resolved, is_attached, sound);
+                    // Skip the expensive get_attached_sessions() subprocess call here;
+                    // treat sessions as not attached (slight over-notification is better than lag)
+                    session_manager.maybe_notify(session, resolved, false, sound);
                 }
             }
-            if any_changed {
-                let _ = storage.touch();
-                app.sessions = storage.load_sessions().unwrap_or_default();
-                app.clamp_selection();
-            }
+        }
+        if any_changed {
+            let _ = storage.touch();
+            app.sessions = storage.load_sessions().unwrap_or_default();
+            app.clamp_selection();
         }
 
-        // Also reload sessions periodically to catch external changes
-        // (other agent-view instances, manual DB edits)
-        // The background thread handles status; this catches new/deleted sessions
+        // Sleep briefly to avoid busy-spinning when idle
+        if !event::poll(Duration::from_millis(16))? {
+            // No input arrived in 16ms — just loop back to render
+        }
     }
 
     // Cleanup
