@@ -2,6 +2,6 @@
 pub mod storage;
 pub mod tmux;
 pub mod status;
-// pub mod session;
+pub mod session;
 pub mod config;
 pub mod notify;
