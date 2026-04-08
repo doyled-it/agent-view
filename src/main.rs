@@ -146,16 +146,20 @@ fn run_tui(
             break;
         }
 
-        // Status refresh every 500ms
+        // Status refresh every 500ms — only if no key was just pressed
+        // (prioritize input responsiveness over status freshness)
         if last_status_check.elapsed() >= status_interval {
-            last_status_check = Instant::now();
-            refresh_statuses(
-                &mut app,
-                &storage,
-                &mut session_cache,
-                &mut session_manager,
-                &config,
-            );
+            if !event::poll(Duration::from_millis(0))? {
+                // No pending input — safe to do the refresh
+                last_status_check = Instant::now();
+                refresh_statuses(
+                    &mut app,
+                    &storage,
+                    &mut session_cache,
+                    &mut session_manager,
+                    &config,
+                );
+            }
         }
     }
 
@@ -397,7 +401,34 @@ fn refresh_statuses(
 
     let mut any_changed = false;
 
-    for session in &app.sessions {
+    // Batch capture: collect all tmux session names, then capture in parallel
+    // This avoids N sequential subprocess spawns blocking the render loop
+    let captures: Vec<(usize, String)> = app
+        .sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !s.tmux_session.is_empty() && session_cache.session_exists(&s.tmux_session))
+        .map(|(i, s)| (i, s.tmux_session.clone()))
+        .collect();
+
+    // Capture all panes up front (still sequential but grouped)
+    let pane_outputs: Vec<(usize, Option<String>)> = captures
+        .iter()
+        .map(|(i, tmux_name)| {
+            let output = crate::core::tmux::capture_pane(tmux_name, Some(-100)).ok();
+            (*i, output)
+        })
+        .collect();
+
+    // Build a lookup from session index to captured output
+    let mut capture_map: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+    for (i, output) in pane_outputs {
+        if let Some(text) = output {
+            capture_map.insert(i, text);
+        }
+    }
+
+    for (idx, session) in app.sessions.iter().enumerate() {
         if session.tmux_session.is_empty() {
             continue;
         }
@@ -418,15 +449,15 @@ fn refresh_statuses(
         let is_active = session_cache.is_session_active(&session.tmux_session, 2);
         let previous_status = session.status;
 
-        // Capture pane output and parse status
-        let raw_status = match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100)) {
-            Ok(output) => {
+        // Use pre-captured pane output (avoids duplicate subprocess spawn)
+        let raw_status = match capture_map.get(&idx) {
+            Some(output) => {
                 let tool_str = if session.tool == crate::types::Tool::Claude {
                     Some("claude")
                 } else {
                     None
                 };
-                let parsed = crate::core::status::parse_tool_status(&output, tool_str);
+                let parsed = crate::core::status::parse_tool_status(output, tool_str);
 
                 if parsed.is_waiting {
                     crate::types::SessionStatus::Waiting
@@ -446,7 +477,7 @@ fn refresh_statuses(
                     crate::types::SessionStatus::Idle
                 }
             }
-            Err(_) => {
+            None => {
                 if is_active {
                     crate::types::SessionStatus::Running
                 } else {
