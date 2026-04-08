@@ -76,23 +76,104 @@ fn run_tui(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut session_cache = crate::core::tmux::SessionCache::new();
     let mut session_manager = crate::core::session::SessionManager::new();
-    let status_interval = Duration::from_millis(500);
-    let mut last_status_check = Instant::now();
+
+    // Background thread for status polling — never blocks the UI
+    use std::sync::mpsc;
+    let (status_tx, status_rx) = mpsc::channel::<Vec<(String, crate::types::SessionStatus)>>();
+
+    // Collect session info for the background thread
+    let sessions_for_bg: Vec<(String, String, crate::types::Tool)> = app
+        .sessions
+        .iter()
+        .map(|s| (s.id.clone(), s.tmux_session.clone(), s.tool))
+        .collect();
+
+    let bg_handle = std::thread::spawn(move || {
+        let mut cache = crate::core::tmux::SessionCache::new();
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+
+            cache.refresh();
+            let mut results = Vec::new();
+
+            // Read fresh session list from storage each tick
+            let bg_storage = match crate::core::storage::Storage::open_default() {
+                Ok(s) => { let _ = s.migrate(); s }
+                Err(_) => continue,
+            };
+            let sessions = bg_storage.load_sessions().unwrap_or_default();
+
+            for session in &sessions {
+                if session.tmux_session.is_empty() {
+                    continue;
+                }
+
+                let exists = cache.session_exists(&session.tmux_session);
+                if !exists {
+                    if session.status != crate::types::SessionStatus::Stopped {
+                        results.push((session.id.clone(), crate::types::SessionStatus::Stopped));
+                    }
+                    continue;
+                }
+
+                let is_active = cache.is_session_active(&session.tmux_session, 2);
+
+                let raw_status = match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100)) {
+                    Ok(output) => {
+                        let tool_str = if session.tool == crate::types::Tool::Claude {
+                            Some("claude")
+                        } else {
+                            None
+                        };
+                        let parsed = crate::core::status::parse_tool_status(&output, tool_str);
+
+                        if parsed.is_waiting {
+                            crate::types::SessionStatus::Waiting
+                        } else if parsed.is_compacting {
+                            crate::types::SessionStatus::Compacting
+                        } else if parsed.has_exited {
+                            crate::types::SessionStatus::Idle
+                        } else if parsed.has_error {
+                            crate::types::SessionStatus::Error
+                        } else if parsed.has_idle_prompt && parsed.has_question {
+                            crate::types::SessionStatus::Paused
+                        } else if parsed.has_idle_prompt {
+                            crate::types::SessionStatus::Idle
+                        } else if parsed.is_busy || is_active {
+                            crate::types::SessionStatus::Running
+                        } else {
+                            crate::types::SessionStatus::Idle
+                        }
+                    }
+                    Err(_) => {
+                        if is_active {
+                            crate::types::SessionStatus::Running
+                        } else {
+                            crate::types::SessionStatus::Idle
+                        }
+                    }
+                };
+
+                results.push((session.id.clone(), raw_status));
+            }
+
+            if status_tx.send(results).is_err() {
+                break; // Main thread dropped the receiver — exit
+            }
+        }
+    });
 
     // Handle --attach: immediately attach to the session
     if let Some(session_id) = app.attach_session.take() {
         if let Some(session) = app.sessions.iter().find(|s| s.id == session_id) {
             if !session.tmux_session.is_empty() {
-                // Temporarily leave TUI for attach
                 disable_raw_mode()?;
                 execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
                 let tmux_name = session.tmux_session.clone();
                 let _ = crate::core::tmux::attach_session_sync(&tmux_name);
 
-                // Re-enter TUI
                 enable_raw_mode()?;
                 execute!(terminal.backend_mut(), EnterAlternateScreen)?;
                 terminal.clear()?;
@@ -106,7 +187,7 @@ fn run_tui(
             crate::ui::home::render(frame, &app);
         })?;
 
-        // Poll for events (16ms timeout for ~60fps input responsiveness)
+        // Poll for keyboard input (16ms timeout for ~60fps)
         if event::poll(Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
                 match app.overlay {
@@ -115,7 +196,6 @@ fn run_tui(
                             &mut app,
                             key,
                             &storage,
-                            &mut session_cache,
                             &mut session_manager,
                             &mut terminal,
                         )?;
@@ -125,7 +205,6 @@ fn run_tui(
                             &mut app,
                             key,
                             &storage,
-                            &mut session_cache,
                             &session_manager,
                         )?;
                     }
@@ -134,7 +213,6 @@ fn run_tui(
                             &mut app,
                             key,
                             &storage,
-                            &mut session_cache,
                             &session_manager,
                         )?;
                     }
@@ -146,21 +224,37 @@ fn run_tui(
             break;
         }
 
-        // Status refresh every 500ms — only if no key was just pressed
-        // (prioritize input responsiveness over status freshness)
-        if last_status_check.elapsed() >= status_interval {
-            if !event::poll(Duration::from_millis(0))? {
-                // No pending input — safe to do the refresh
-                last_status_check = Instant::now();
-                refresh_statuses(
-                    &mut app,
-                    &storage,
-                    &mut session_cache,
-                    &mut session_manager,
-                    &config,
-                );
+        // Apply status updates from background thread (non-blocking)
+        while let Ok(results) = status_rx.try_recv() {
+            let mut any_changed = false;
+            for (session_id, raw_status) in results {
+                if let Some(session) = app.sessions.iter().find(|s| s.id == session_id) {
+                    let previous = session.status;
+                    let resolved = session_manager.resolve_status(&session_id, raw_status, previous);
+
+                    if resolved != previous {
+                        let _ = storage.write_status(&session_id, resolved, session.tool);
+                        any_changed = true;
+                    }
+
+                    session_manager.track_durations(&session_id, resolved);
+
+                    let attached = crate::core::tmux::get_attached_sessions();
+                    let is_attached = attached.contains(&session.tmux_session);
+                    let sound = config.notifications.sound;
+                    session_manager.maybe_notify(session, resolved, is_attached, sound);
+                }
+            }
+            if any_changed {
+                let _ = storage.touch();
+                app.sessions = storage.load_sessions().unwrap_or_default();
+                app.clamp_selection();
             }
         }
+
+        // Also reload sessions periodically to catch external changes
+        // (other agent-view instances, manual DB edits)
+        // The background thread handles status; this catches new/deleted sessions
     }
 
     // Cleanup
@@ -174,7 +268,6 @@ fn handle_main_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
     storage: &crate::core::storage::Storage,
-    session_cache: &mut crate::core::tmux::SessionCache,
     session_manager: &mut crate::core::session::SessionManager,
     terminal: &mut ratatui::Terminal<ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -253,7 +346,8 @@ fn handle_main_key(
             // Restart selected session
             if let Some(session) = app.selected_session() {
                 let id = session.id.clone();
-                let _ = session_manager.restart_session(storage, session_cache, &id);
+                let mut cache = crate::core::tmux::SessionCache::new();
+                let _ = session_manager.restart_session(storage, &mut cache, &id);
                 if let Ok(sessions) = storage.load_sessions() {
                     app.sessions = sessions;
                     app.clamp_selection();
@@ -282,7 +376,6 @@ fn handle_new_session_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
     storage: &crate::core::storage::Storage,
-    session_cache: &mut crate::core::tmux::SessionCache,
     session_manager: &crate::core::session::SessionManager,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::KeyCode;
@@ -314,7 +407,8 @@ fn handle_new_session_key(
                     command: None,
                 };
 
-                match session_manager.create_session(storage, session_cache, options) {
+                let mut cache = crate::core::tmux::SessionCache::new();
+                match session_manager.create_session(storage, &mut cache, options) {
                     Ok(_) => {
                         if let Ok(sessions) = storage.load_sessions() {
                             app.sessions = sessions;
@@ -355,7 +449,6 @@ fn handle_confirm_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
     storage: &crate::core::storage::Storage,
-    session_cache: &mut crate::core::tmux::SessionCache,
     session_manager: &crate::core::session::SessionManager,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::KeyCode;
@@ -365,7 +458,8 @@ fn handle_confirm_key(
             KeyCode::Char('y') | KeyCode::Enter => {
                 match &dialog.action {
                     crate::app::ConfirmAction::DeleteSession(id) => {
-                        let _ = session_manager.delete_session(storage, session_cache, id);
+                        let mut cache = crate::core::tmux::SessionCache::new();
+                        let _ = session_manager.delete_session(storage, &mut cache, id);
                     }
                     crate::app::ConfirmAction::StopSession(id) => {
                         let _ = session_manager.stop_session(storage, id);
@@ -388,127 +482,4 @@ fn handle_confirm_key(
     Ok(())
 }
 
-fn refresh_statuses(
-    app: &mut crate::app::App,
-    storage: &crate::core::storage::Storage,
-    session_cache: &mut crate::core::tmux::SessionCache,
-    session_manager: &mut crate::core::session::SessionManager,
-    config: &crate::core::config::AppConfig,
-) {
-    session_cache.refresh();
-    let attached = crate::core::tmux::get_attached_sessions();
-    let sound = config.notifications.sound;
-
-    let mut any_changed = false;
-
-    // Batch capture: collect all tmux session names, then capture in parallel
-    // This avoids N sequential subprocess spawns blocking the render loop
-    let captures: Vec<(usize, String)> = app
-        .sessions
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| !s.tmux_session.is_empty() && session_cache.session_exists(&s.tmux_session))
-        .map(|(i, s)| (i, s.tmux_session.clone()))
-        .collect();
-
-    // Capture all panes up front (still sequential but grouped)
-    let pane_outputs: Vec<(usize, Option<String>)> = captures
-        .iter()
-        .map(|(i, tmux_name)| {
-            let output = crate::core::tmux::capture_pane(tmux_name, Some(-100)).ok();
-            (*i, output)
-        })
-        .collect();
-
-    // Build a lookup from session index to captured output
-    let mut capture_map: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
-    for (i, output) in pane_outputs {
-        if let Some(text) = output {
-            capture_map.insert(i, text);
-        }
-    }
-
-    for (idx, session) in app.sessions.iter().enumerate() {
-        if session.tmux_session.is_empty() {
-            continue;
-        }
-
-        let exists = session_cache.session_exists(&session.tmux_session);
-        if !exists {
-            if session.status != crate::types::SessionStatus::Stopped {
-                let _ = storage.write_status(
-                    &session.id,
-                    crate::types::SessionStatus::Stopped,
-                    session.tool,
-                );
-                any_changed = true;
-            }
-            continue;
-        }
-
-        let is_active = session_cache.is_session_active(&session.tmux_session, 2);
-        let previous_status = session.status;
-
-        // Use pre-captured pane output (avoids duplicate subprocess spawn)
-        let raw_status = match capture_map.get(&idx) {
-            Some(output) => {
-                let tool_str = if session.tool == crate::types::Tool::Claude {
-                    Some("claude")
-                } else {
-                    None
-                };
-                let parsed = crate::core::status::parse_tool_status(output, tool_str);
-
-                if parsed.is_waiting {
-                    crate::types::SessionStatus::Waiting
-                } else if parsed.is_compacting {
-                    crate::types::SessionStatus::Compacting
-                } else if parsed.has_exited {
-                    crate::types::SessionStatus::Idle
-                } else if parsed.has_error {
-                    crate::types::SessionStatus::Error
-                } else if parsed.has_idle_prompt && parsed.has_question {
-                    crate::types::SessionStatus::Paused
-                } else if parsed.has_idle_prompt {
-                    crate::types::SessionStatus::Idle
-                } else if parsed.is_busy || is_active {
-                    crate::types::SessionStatus::Running
-                } else {
-                    crate::types::SessionStatus::Idle
-                }
-            }
-            None => {
-                if is_active {
-                    crate::types::SessionStatus::Running
-                } else {
-                    crate::types::SessionStatus::Idle
-                }
-            }
-        };
-
-        // Apply debouncing and error hysteresis
-        let resolved = session_manager.resolve_status(&session.id, raw_status, previous_status);
-
-        if resolved != previous_status {
-            let _ = storage.write_status(&session.id, resolved, session.tool);
-            any_changed = true;
-        }
-
-        // Track durations for notification logic
-        session_manager.track_durations(&session.id, resolved);
-
-        // Fire notifications
-        let is_attached = attached.contains(&session.tmux_session);
-        session_manager.maybe_notify(session, resolved, is_attached, sound);
-    }
-
-    if any_changed {
-        let _ = storage.touch();
-    }
-
-    // Reload sessions to pick up changes
-    if let Ok(sessions) = storage.load_sessions() {
-        app.sessions = sessions;
-        app.clamp_selection();
-    }
-}
+// refresh_statuses is now handled by the background thread in run_tui()
