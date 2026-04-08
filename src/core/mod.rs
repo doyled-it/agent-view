@@ -4,4 +4,4 @@ pub mod tmux;
 pub mod status;
 // pub mod session;
 pub mod config;
-// pub mod notify;
+pub mod notify;
