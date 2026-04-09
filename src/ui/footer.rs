@@ -5,6 +5,20 @@ use ratatui::prelude::*;
 use ratatui::widgets::*;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+
+    // Show toast if active and not expired
+    if let Some(ref msg) = app.toast_message {
+        if app.toast_expire.map_or(false, |t| t > std::time::Instant::now()) {
+            let toast = Line::from(Span::styled(
+                msg.as_str(),
+                Style::default().fg(theme.info).bold(),
+            ));
+            frame.render_widget(Paragraph::new(toast), area);
+            return;
+        }
+    }
+
     let hints: Vec<(&str, &str)> = match &app.overlay {
         Overlay::None => {
             if app.sessions.is_empty() {
@@ -14,6 +28,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ("j/k", "navigate"),
                     ("Enter", "attach"),
                     ("n", "new"),
+                    ("e", "export"),
                     ("s", "stop"),
                     ("r", "restart"),
                     ("d", "delete"),
@@ -36,7 +51,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let len = hints.len();
-    let theme = &app.theme;
     let spans: Vec<Span> = hints
         .iter()
         .enumerate()
