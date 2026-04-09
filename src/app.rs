@@ -69,14 +69,24 @@ impl App {
     }
 
     pub fn move_selection_up(&mut self) {
+        if self.sessions.is_empty() {
+            return;
+        }
         if self.selected_index > 0 {
             self.selected_index -= 1;
+        } else {
+            self.selected_index = self.sessions.len() - 1;
         }
     }
 
     pub fn move_selection_down(&mut self) {
-        if !self.sessions.is_empty() && self.selected_index < self.sessions.len() - 1 {
+        if self.sessions.is_empty() {
+            return;
+        }
+        if self.selected_index < self.sessions.len() - 1 {
             self.selected_index += 1;
+        } else {
+            self.selected_index = 0;
         }
     }
 
