@@ -1,6 +1,7 @@
 //! Application state and event dispatch
 
 use crate::types::Session;
+use crate::ui::theme::Theme;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
@@ -49,10 +50,11 @@ pub struct App {
     pub returning_from_attach: bool,
     pub last_status_refresh: std::time::Instant,
     pub attach_session: Option<String>,
+    pub theme: Theme,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(light: bool) -> Self {
         Self {
             sessions: Vec::new(),
             selected_index: 0,
@@ -61,6 +63,7 @@ impl App {
             returning_from_attach: false,
             last_status_refresh: std::time::Instant::now(),
             attach_session: None,
+            theme: if light { Theme::light() } else { Theme::dark() },
         }
     }
 

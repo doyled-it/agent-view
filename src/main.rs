@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = crate::core::config::load_config();
 
     // Initialize app state
-    let mut app = crate::app::App::new();
+    let mut app = crate::app::App::new(cli.light);
 
     // Load sessions from storage
     app.sessions = storage.load_sessions()?;

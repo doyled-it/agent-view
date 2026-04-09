@@ -5,7 +5,12 @@ use ratatui::prelude::*;
 use ratatui::widgets::*;
 
 /// Render the new session creation form as a centered overlay
-pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm) {
+pub fn render_new_session(
+    frame: &mut Frame,
+    area: Rect,
+    form: &NewSessionForm,
+    theme: &crate::ui::theme::Theme,
+) {
     let overlay_width = 60u16.min(area.width.saturating_sub(4));
     let overlay_height = 9u16.min(area.height.saturating_sub(4));
 
@@ -18,9 +23,9 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm) 
 
     let block = Block::default()
         .title(" New Session ")
-        .title_style(Style::default().fg(Color::Cyan).bold())
+        .title_style(Style::default().fg(theme.primary).bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.border_active));
 
     let inner = block.inner(overlay_area);
     frame.render_widget(block, overlay_area);
@@ -39,9 +44,9 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm) 
 
     // Title field
     let title_style = if form.focused_field == 0 {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(theme.primary)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme.text_muted)
     };
     frame.render_widget(
         Paragraph::new("Title (leave empty for random):").style(title_style),
@@ -58,15 +63,15 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm) 
         form.title.clone()
     };
     frame.render_widget(
-        Paragraph::new(title_display).style(Style::default().fg(Color::White)),
+        Paragraph::new(title_display).style(Style::default().fg(theme.text)),
         chunks[1],
     );
 
     // Project path field
     let path_style = if form.focused_field == 1 {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(theme.primary)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme.text_muted)
     };
     frame.render_widget(
         Paragraph::new("Project Path:").style(path_style),
@@ -79,13 +84,18 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm) 
         form.project_path.clone()
     };
     frame.render_widget(
-        Paragraph::new(path_display).style(Style::default().fg(Color::White)),
+        Paragraph::new(path_display).style(Style::default().fg(theme.text)),
         chunks[4],
     );
 }
 
 /// Render a confirmation dialog as a centered overlay
-pub fn render_confirm(frame: &mut Frame, area: Rect, dialog: &ConfirmDialog) {
+pub fn render_confirm(
+    frame: &mut Frame,
+    area: Rect,
+    dialog: &ConfirmDialog,
+    theme: &crate::ui::theme::Theme,
+) {
     let overlay_width = 50u16.min(area.width.saturating_sub(4));
     let overlay_height = 5u16.min(area.height.saturating_sub(4));
 
@@ -97,9 +107,9 @@ pub fn render_confirm(frame: &mut Frame, area: Rect, dialog: &ConfirmDialog) {
 
     let block = Block::default()
         .title(" Confirm ")
-        .title_style(Style::default().fg(Color::Yellow).bold())
+        .title_style(Style::default().fg(theme.warning).bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(theme.warning));
 
     let inner = block.inner(overlay_area);
     frame.render_widget(block, overlay_area);
@@ -110,12 +120,12 @@ pub fn render_confirm(frame: &mut Frame, area: Rect, dialog: &ConfirmDialog) {
         .split(inner);
 
     frame.render_widget(
-        Paragraph::new(dialog.message.as_str()).style(Style::default().fg(Color::White)),
+        Paragraph::new(dialog.message.as_str()).style(Style::default().fg(theme.text)),
         chunks[0],
     );
 
     frame.render_widget(
-        Paragraph::new("y/Enter = yes, n/Esc = no").style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new("y/Enter = yes, n/Esc = no").style(Style::default().fg(theme.text_muted)),
         chunks[1],
     );
 }

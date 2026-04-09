@@ -19,35 +19,37 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(area);
 
-    render_header(frame, chunks[0]);
+    render_header(frame, chunks[0], &app.theme);
     render_session_list(frame, chunks[1], app);
     crate::ui::footer::render(frame, chunks[2], app);
 
     // Render overlay on top if active
     match &app.overlay {
         Overlay::NewSession(form) => {
-            crate::ui::overlay::render_new_session(frame, area, form);
+            crate::ui::overlay::render_new_session(frame, area, form, &app.theme);
         }
         Overlay::Confirm(dialog) => {
-            crate::ui::overlay::render_confirm(frame, area, dialog);
+            crate::ui::overlay::render_confirm(frame, area, dialog, &app.theme);
         }
         Overlay::None => {}
     }
 }
 
-fn render_header(frame: &mut Frame, area: Rect) {
+fn render_header(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
     let version = env!("CARGO_PKG_VERSION");
     let header = Line::from(vec![
-        Span::styled("agent-view ", Style::default().fg(Color::Cyan).bold()),
-        Span::styled(format!("v{}", version), Style::default().fg(Color::DarkGray)),
+        Span::styled("agent-view ", Style::default().fg(theme.primary).bold()),
+        Span::styled(format!("v{}", version), Style::default().fg(theme.text_muted)),
     ]);
     frame.render_widget(Paragraph::new(header), area);
 }
 
 fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+
     if app.sessions.is_empty() {
         let msg = Paragraph::new("No sessions. Press 'n' to create one.")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme.text_muted))
             .alignment(Alignment::Center);
         frame.render_widget(msg, area);
         return;
@@ -59,7 +61,7 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
         .enumerate()
         .map(|(i, session)| {
             let status_icon = session.status.icon();
-            let status_color = status_color(session.status);
+            let sc = crate::ui::theme::status_color(theme, session.status);
 
             let notify_indicator = if session.notify { " !" } else { "  " };
             let follow_up_indicator = if session.follow_up { "F " } else { "  " };
@@ -70,24 +72,26 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                 Span::raw(follow_up_indicator),
                 Span::styled(
                     format!(" {} ", status_icon),
-                    Style::default().fg(status_color),
+                    Style::default().fg(sc),
                 ),
-                Span::styled(notify_indicator, Style::default().fg(Color::Yellow)),
+                Span::styled(notify_indicator, Style::default().fg(theme.warning)),
                 Span::styled(
                     session.title.clone(),
-                    Style::default().fg(Color::White).bold(),
+                    Style::default().fg(theme.text).bold(),
                 ),
                 Span::raw("  "),
                 Span::styled(
                     truncate_path(&session.project_path, 30),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.text_muted),
                 ),
                 Span::raw("  "),
-                Span::styled(age, Style::default().fg(Color::DarkGray)),
+                Span::styled(age, Style::default().fg(theme.text_muted)),
             ]);
 
             let style = if i == app.selected_index {
-                Style::default().bg(Color::DarkGray)
+                Style::default()
+                    .bg(theme.background_element)
+                    .fg(theme.selected_item_text)
             } else {
                 Style::default()
             };
@@ -96,20 +100,9 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let list = List::new(items).highlight_style(Style::default().bg(Color::DarkGray));
+    let list = List::new(items)
+        .highlight_style(Style::default().bg(theme.background_element));
     frame.render_widget(list, area);
-}
-
-fn status_color(status: SessionStatus) -> Color {
-    match status {
-        SessionStatus::Running => Color::Green,
-        SessionStatus::Waiting => Color::Yellow,
-        SessionStatus::Paused => Color::Blue,
-        SessionStatus::Compacting => Color::Magenta,
-        SessionStatus::Idle => Color::DarkGray,
-        SessionStatus::Error => Color::Red,
-        SessionStatus::Stopped => Color::DarkGray,
-    }
 }
 
 /// Format a millisecond timestamp as a human-readable age
@@ -192,13 +185,17 @@ mod tests {
 
     #[test]
     fn test_status_colors_are_distinct() {
+        let theme = crate::ui::theme::Theme::dark();
         let statuses = [
             SessionStatus::Running,
             SessionStatus::Waiting,
             SessionStatus::Paused,
             SessionStatus::Error,
         ];
-        let colors: Vec<Color> = statuses.iter().map(|s| status_color(*s)).collect();
+        let colors: Vec<Color> = statuses
+            .iter()
+            .map(|s| crate::ui::theme::status_color(&theme, *s))
+            .collect();
         // Running, Waiting, Paused, Error should all be different colors
         for i in 0..colors.len() {
             for j in i + 1..colors.len() {

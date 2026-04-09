@@ -35,6 +35,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let len = hints.len();
+    let theme = &app.theme;
     let spans: Vec<Span> = hints
         .iter()
         .enumerate()
@@ -42,15 +43,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let mut v = vec![
                 Span::styled(
                     format!(" {} ", key),
-                    Style::default().fg(Color::Cyan).bold(),
+                    Style::default().fg(theme.secondary).bold(),
                 ),
                 Span::styled(
                     format!("{} ", action),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.text_muted),
                 ),
             ];
             if i < len - 1 {
-                v.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
+                v.push(Span::styled(" ", Style::default().fg(theme.text_muted)));
             }
             v
         })
