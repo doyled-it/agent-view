@@ -54,6 +54,9 @@ pub struct App {
     pub last_status_refresh: std::time::Instant,
     pub attach_session: Option<String>,
     pub theme: Theme,
+    pub search_query: Option<String>,
+    pub toast_message: Option<String>,
+    pub toast_expire: Option<std::time::Instant>,
 }
 
 impl App {
@@ -69,6 +72,9 @@ impl App {
             last_status_refresh: std::time::Instant::now(),
             attach_session: None,
             theme: if light { Theme::light() } else { Theme::dark() },
+            search_query: None,
+            toast_message: None,
+            toast_expire: None,
         }
     }
 
@@ -113,6 +119,24 @@ impl App {
         } else {
             self.selected_index = 0;
         }
+    }
+
+    /// Get the indices of list_rows entries (sessions) matching the current search query.
+    /// Returns an empty Vec when no search is active or the query is empty.
+    pub fn search_matches(&self) -> Vec<usize> {
+        let query = match &self.search_query {
+            Some(q) if !q.is_empty() => q.to_lowercase(),
+            _ => return Vec::new(),
+        };
+
+        self.list_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| match row {
+                ListRow::Session(s) if s.title.to_lowercase().contains(&query) => Some(i),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn clamp_selection(&mut self) {

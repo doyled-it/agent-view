@@ -302,6 +302,14 @@ fn run_tui(
             app.rebuild_list_rows();
         }
 
+        // Clear expired toasts
+        if let Some(expire) = app.toast_expire {
+            if expire < Instant::now() {
+                app.toast_message = None;
+                app.toast_expire = None;
+            }
+        }
+
         // Sleep briefly to avoid busy-spinning when idle
         if !event::poll(Duration::from_millis(16))? {
             // No input arrived in 16ms — just loop back to render

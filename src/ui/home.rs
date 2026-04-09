@@ -20,7 +20,26 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     render_header(frame, chunks[0], &app.theme);
     render_session_list(frame, chunks[1], app);
-    crate::ui::footer::render(frame, chunks[2], app);
+    if let Some(ref query) = app.search_query {
+        let matches = app.search_matches();
+        let match_count = matches.len();
+        let search_line = Line::from(vec![
+            Span::styled(" / ", Style::default().fg(app.theme.primary).bold()),
+            Span::styled(query.as_str(), Style::default().fg(app.theme.text)),
+            Span::styled("\u{2588}", Style::default().fg(app.theme.primary)),
+            Span::styled(
+                format!(
+                    "  {} match{}",
+                    match_count,
+                    if match_count == 1 { "" } else { "es" }
+                ),
+                Style::default().fg(app.theme.text_muted),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(search_line), chunks[2]);
+    } else {
+        crate::ui::footer::render(frame, chunks[2], app);
+    }
 
     // Render overlay on top if active
     match &app.overlay {
@@ -54,12 +73,15 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let search_matches = app.search_matches();
+
     let items: Vec<ListItem> = app
         .list_rows
         .iter()
         .enumerate()
         .map(|(i, row)| {
             let is_selected = i == app.selected_index;
+            let is_search_match = !search_matches.is_empty() && search_matches.contains(&i);
             match row {
                 crate::core::groups::ListRow::Group {
                     group,
@@ -127,6 +149,13 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     let follow_up_indicator = if session.follow_up { "F " } else { "  " };
                     let age = format_age(session.created_at);
 
+                    // When this session matches the search, highlight the title in the info color
+                    let title_color = if is_search_match {
+                        theme.info
+                    } else {
+                        theme.text
+                    };
+
                     let line = Line::from(vec![
                         Span::raw(follow_up_indicator),
                         Span::styled(
@@ -134,7 +163,7 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                             Style::default().fg(status_color),
                         ),
                         Span::styled(notify_indicator, Style::default().fg(theme.warning)),
-                        Span::styled(session.title.clone(), Style::default().fg(theme.text).bold()),
+                        Span::styled(session.title.clone(), Style::default().fg(title_color).bold()),
                         Span::raw("  "),
                         Span::styled(
                             truncate_path(&session.project_path, 30),
