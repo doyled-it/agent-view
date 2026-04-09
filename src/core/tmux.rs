@@ -244,9 +244,11 @@ pub fn attach_session_sync(session_name: &str) -> Result<bool, String> {
     // Clear any existing signal
     let _ = std::fs::remove_file(&signal_file);
 
-    // Clear screen, show cursor, stay in alternate buffer
-    let _ = std::io::stdout().write_all(b"\x1b[2J\x1b[H\x1b[?25h");
+    // Clear screen + scrollback + show cursor
+    // Use both ANSI sequences and the `clear` command for maximum compatibility
+    let _ = std::io::stdout().write_all(b"\x1b[3J\x1b[2J\x1b[H\x1b[?25h");
     let _ = std::io::stdout().flush();
+    let _ = Command::new("clear").status();
 
     // Cancel copy-mode (non-fatal)
     let _ = Command::new("tmux")
