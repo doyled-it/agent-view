@@ -311,16 +311,14 @@ fn handle_main_key(
                 {
                     let tmux_name = session.tmux_session.clone();
 
-                    // Leave TUI for attach — DON'T leave alternate screen.
-                    // Leaving it restores the main buffer's scrollback,
-                    // causing a slow scroll-to-bottom effect when tmux attaches.
-                    // Instead: disable raw mode, clear the alternate screen,
-                    // and let tmux take it over directly.
+                    // Leave TUI for attach
                     disable_raw_mode()?;
-                    // Clear screen + show cursor (stay in alternate buffer)
+                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                    // Clear screen AND scrollback to prevent scroll-to-bottom
+                    // \x1b[3J clears scrollback, \x1b[2J clears screen, \x1b[H homes cursor
                     let _ = std::io::Write::write_all(
                         &mut std::io::stdout(),
-                        b"\x1b[2J\x1b[H\x1b[?25h",
+                        b"\x1b[3J\x1b[2J\x1b[H\x1b[?25h",
                     );
                     let _ = std::io::Write::flush(&mut std::io::stdout());
 
@@ -330,14 +328,9 @@ fn handle_main_key(
                     // Signal main loop to drain stale status results
                     app.returning_from_attach = true;
 
-                    // Re-enter TUI — clear and redraw
+                    // Re-enter TUI
                     enable_raw_mode()?;
-                    // Write a clean screen for ratatui to draw on
-                    let _ = std::io::Write::write_all(
-                        &mut std::io::stdout(),
-                        b"\x1b[2J\x1b[H",
-                    );
-                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
                     terminal.clear()?;
 
                     // Fresh reload after returning
