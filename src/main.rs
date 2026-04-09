@@ -465,12 +465,20 @@ fn handle_main_key(
             if let Some(session) = app.selected_session() {
                 let new_val = !session.notify;
                 let id = session.id.clone();
+                let title = session.title.clone();
                 let _ = storage.set_notify(&id, new_val);
                 if let Ok(sessions) = storage.load_sessions() {
                     app.sessions = sessions;
                     app.groups = storage.load_groups().unwrap_or_default();
                     app.rebuild_list_rows();
                 }
+                let msg = if new_val {
+                    format!("Notifications on: {}", title)
+                } else {
+                    format!("Notifications off: {}", title)
+                };
+                app.toast_message = Some(msg);
+                app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('i')) => {
