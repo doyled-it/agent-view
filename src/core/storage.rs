@@ -390,6 +390,76 @@ impl Storage {
         Ok(())
     }
 
+    /// Load all groups ordered by sort_order
+    pub fn load_groups(&self) -> SqlResult<Vec<crate::types::Group>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, name, expanded, sort_order, default_path
+             FROM groups ORDER BY sort_order",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(crate::types::Group {
+                path: row.get(0)?,
+                name: row.get(1)?,
+                expanded: row.get::<_, i32>(2)? == 1,
+                order: row.get(3)?,
+                default_path: row.get(4)?,
+            })
+        })?;
+
+        rows.collect()
+    }
+
+    /// Save a group (insert or replace)
+    pub fn save_group(&self, group: &crate::types::Group) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO groups (path, name, expanded, sort_order, default_path)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                group.path,
+                group.name,
+                group.expanded as i32,
+                group.order,
+                group.default_path,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a group by path
+    pub fn delete_group(&self, path: &str) -> SqlResult<()> {
+        self.conn
+            .execute("DELETE FROM groups WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
+    /// Toggle the expanded state of a group
+    pub fn toggle_group_expanded(&self, path: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE groups SET expanded = CASE WHEN expanded = 1 THEN 0 ELSE 1 END WHERE path = ?1",
+            params![path],
+        )?;
+        Ok(())
+    }
+
+    /// Rename a session
+    pub fn rename_session(&self, id: &str, new_title: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET title = ?1 WHERE id = ?2",
+            params![new_title, id],
+        )?;
+        Ok(())
+    }
+
+    /// Move a session to a different group
+    pub fn move_session_to_group(&self, id: &str, group_path: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET group_path = ?1 WHERE id = ?2",
+            params![group_path, id],
+        )?;
+        Ok(())
+    }
+
     pub fn close(self) -> SqlResult<()> {
         self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
         Ok(())
@@ -670,5 +740,75 @@ mod tests {
             .unwrap();
 
         assert_eq!(follow_up, 1);
+    }
+
+    #[test]
+    fn test_save_and_load_groups() {
+        let (storage, _dir) = test_storage();
+        let group = crate::types::Group {
+            path: "work".to_string(),
+            name: "Work".to_string(),
+            expanded: true,
+            order: 1,
+            default_path: String::new(),
+        };
+        storage.save_group(&group).unwrap();
+
+        let groups = storage.load_groups().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "Work");
+        assert!(groups[0].expanded);
+    }
+
+    #[test]
+    fn test_delete_group() {
+        let (storage, _dir) = test_storage();
+        let group = crate::types::Group {
+            path: "work".to_string(),
+            name: "Work".to_string(),
+            expanded: true,
+            order: 1,
+            default_path: String::new(),
+        };
+        storage.save_group(&group).unwrap();
+        storage.delete_group("work").unwrap();
+        let groups = storage.load_groups().unwrap();
+        assert_eq!(groups.len(), 0);
+    }
+
+    #[test]
+    fn test_toggle_group_expanded() {
+        let (storage, _dir) = test_storage();
+        let group = crate::types::Group {
+            path: "work".to_string(),
+            name: "Work".to_string(),
+            expanded: true,
+            order: 1,
+            default_path: String::new(),
+        };
+        storage.save_group(&group).unwrap();
+        storage.toggle_group_expanded("work").unwrap();
+        let groups = storage.load_groups().unwrap();
+        assert!(!groups[0].expanded);
+    }
+
+    #[test]
+    fn test_rename_session() {
+        let (storage, _dir) = test_storage();
+        let session = make_test_session("s1");
+        storage.save_session(&session).unwrap();
+        storage.rename_session("s1", "New Name").unwrap();
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert_eq!(loaded.title, "New Name");
+    }
+
+    #[test]
+    fn test_move_session_to_group() {
+        let (storage, _dir) = test_storage();
+        let session = make_test_session("s1");
+        storage.save_session(&session).unwrap();
+        storage.move_session_to_group("s1", "work").unwrap();
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert_eq!(loaded.group_path, "work");
     }
 }
