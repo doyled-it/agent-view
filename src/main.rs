@@ -191,31 +191,69 @@ fn run_tui(
         // Drain ALL pending keyboard input in one go (not one key per frame)
         while event::poll(Duration::from_millis(0))? {
             if let Event::Key(key) = event::read()? {
-                match app.overlay {
-                    crate::app::Overlay::None => {
-                        handle_main_key(
-                            &mut app,
-                            key,
-                            &storage,
-                            &mut session_manager,
-                            &mut terminal,
-                        )?;
+                use crossterm::event::KeyCode as KC;
+                if app.search_query.is_some() {
+                    match key.code {
+                        KC::Esc => {
+                            app.search_query = None;
+                        }
+                        KC::Enter => {
+                            // Jump to first match then close search
+                            let matches = app.search_matches();
+                            if let Some(&idx) = matches.first() {
+                                app.selected_index = idx;
+                            }
+                            app.search_query = None;
+                        }
+                        KC::Backspace => {
+                            if let Some(ref mut q) = app.search_query {
+                                q.pop();
+                            }
+                        }
+                        KC::Char(c) => {
+                            if let Some(ref mut q) = app.search_query {
+                                q.push(c);
+                                // Auto-jump to first match as user types
+                                let query = q.to_lowercase();
+                                for (i, row) in app.list_rows.iter().enumerate() {
+                                    if let crate::core::groups::ListRow::Session(s) = row {
+                                        if s.title.to_lowercase().contains(&query) {
+                                            app.selected_index = i;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    crate::app::Overlay::NewSession(_) => {
-                        handle_new_session_key(
-                            &mut app,
-                            key,
-                            &storage,
-                            &session_manager,
-                        )?;
-                    }
-                    crate::app::Overlay::Confirm(_) => {
-                        handle_confirm_key(
-                            &mut app,
-                            key,
-                            &storage,
-                            &session_manager,
-                        )?;
+                } else {
+                    match app.overlay {
+                        crate::app::Overlay::None => {
+                            handle_main_key(
+                                &mut app,
+                                key,
+                                &storage,
+                                &mut session_manager,
+                                &mut terminal,
+                            )?;
+                        }
+                        crate::app::Overlay::NewSession(_) => {
+                            handle_new_session_key(
+                                &mut app,
+                                key,
+                                &storage,
+                                &session_manager,
+                            )?;
+                        }
+                        crate::app::Overlay::Confirm(_) => {
+                            handle_confirm_key(
+                                &mut app,
+                                key,
+                                &storage,
+                                &session_manager,
+                            )?;
+                        }
                     }
                 }
                 if app.should_quit {
@@ -418,10 +456,66 @@ fn handle_main_key(
                 }
             }
         }
+        (KeyModifiers::NONE, KeyCode::Char('i')) => {
+            // Toggle follow-up mark for selected session
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.follow_up;
+                let id = session.id.clone();
+                let _ = storage.set_follow_up(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Char('e')) => {
+            if let Some(session) = app.selected_session() {
+                if !session.tmux_session.is_empty() {
+                    let tmux_name = session.tmux_session.clone();
+                    let title = session.title.clone();
+                    match export_session_log(&tmux_name, &title) {
+                        Ok(path) => {
+                            app.toast_message = Some(format!("Exported to {}", path));
+                        }
+                        Err(e) => {
+                            app.toast_message = Some(format!("Export failed: {}", e));
+                        }
+                    }
+                    app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                }
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Char('/')) => {
+            app.search_query = Some(String::new());
+        }
         _ => {}
     }
 
     Ok(())
+}
+
+fn export_session_log(tmux_session: &str, title: &str) -> Result<String, String> {
+    let output = crate::core::tmux::capture_pane(tmux_session, Some(-10000))
+        .map_err(|e| format!("Capture failed: {}", e))?;
+
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let logs_dir = home.join(".agent-view").join("logs");
+    std::fs::create_dir_all(&logs_dir).map_err(|e| format!("Cannot create logs dir: {}", e))?;
+
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let safe_name: String = title
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .take(30)
+        .collect();
+    let filename = format!("{}-{}.log", safe_name, timestamp);
+    let filepath = logs_dir.join(&filename);
+
+    std::fs::write(&filepath, &output)
+        .map_err(|e| format!("Write failed: {}", e))?;
+
+    Ok(filepath.to_string_lossy().to_string())
 }
 
 fn handle_new_session_key(

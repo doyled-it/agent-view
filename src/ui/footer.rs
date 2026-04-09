@@ -18,6 +18,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ("r", "restart"),
                     ("d", "delete"),
                     ("!", "notify"),
+                    ("i", "follow-up"),
                     ("q", "quit"),
                 ]
             }
