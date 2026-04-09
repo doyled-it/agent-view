@@ -8,6 +8,18 @@ use ratatui::widgets::*;
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
+    // When the terminal is wide enough, split horizontally: list on left, detail on right
+    let (list_area, detail_area) =
+        if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(0), Constraint::Length(36)])
+                .split(area);
+            (cols[0], Some(cols[1]))
+        } else {
+            (area, None)
+        };
+
     // Layout: header (1), body (fill), footer (1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -16,7 +28,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Constraint::Min(0),
             Constraint::Length(1),
         ])
-        .split(area);
+        .split(list_area);
 
     render_header(frame, chunks[0], &app.theme);
     render_session_list(frame, chunks[1], app);
@@ -39,6 +51,13 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(search_line), chunks[2]);
     } else {
         crate::ui::footer::render(frame, chunks[2], app);
+    }
+
+    // Render detail panel for selected session when wide enough
+    if let Some(detail_rect) = detail_area {
+        if let Some(session) = app.selected_session() {
+            crate::ui::detail::render(frame, detail_rect, session, &app.theme);
+        }
     }
 
     // Render overlay on top if active

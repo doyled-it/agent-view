@@ -22,18 +22,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let hints: Vec<(&str, &str)> = match &app.overlay {
         Overlay::None => {
             if app.sessions.is_empty() {
-                vec![("n", "new"), ("q", "quit")]
+                vec![("n", "new"), ("g", "group"), ("q", "quit")]
             } else {
                 vec![
                     ("j/k", "navigate"),
                     ("Enter", "attach"),
                     ("n", "new"),
-                    ("e", "export"),
+                    ("g", "group"),
+                    ("m", "move"),
+                    ("R", "rename"),
+                    ("d", "delete"),
                     ("s", "stop"),
                     ("r", "restart"),
-                    ("d", "delete"),
-                    ("!", "notify"),
                     ("i", "follow-up"),
+                    ("!", "notify"),
+                    ("e", "export"),
+                    ("/", "search"),
+                    ("C-k", "commands"),
                     ("q", "quit"),
                 ]
             }
