@@ -1,6 +1,6 @@
 //! Overlay rendering for new session form and confirm dialogs
 
-use crate::app::{ConfirmDialog, NewSessionForm};
+use crate::app::{ConfirmDialog, GroupForm, MoveForm, NewSessionForm, RenameForm};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
@@ -89,6 +89,50 @@ pub fn render_new_session(
     );
 }
 
+/// Render the rename overlay for sessions and groups
+pub fn render_rename(
+    frame: &mut Frame,
+    area: Rect,
+    form: &RenameForm,
+    theme: &crate::ui::theme::Theme,
+) {
+    let overlay_width = 50u16.min(area.width.saturating_sub(4));
+    let overlay_height = 5u16.min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(overlay_width)) / 2;
+    let y = (area.height.saturating_sub(overlay_height)) / 2;
+    let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let title = match form.target_type {
+        crate::app::RenameTarget::Session => " Rename Session ",
+        crate::app::RenameTarget::Group => " Rename Group ",
+    };
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new("New name:").style(Style::default().fg(theme.text_muted)),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(format!("{}\u{2588}", form.input))
+            .style(Style::default().fg(theme.text)),
+        chunks[1],
+    );
+}
+
 /// Render a confirmation dialog as a centered overlay
 pub fn render_confirm(
     frame: &mut Frame,
@@ -126,6 +170,87 @@ pub fn render_confirm(
 
     frame.render_widget(
         Paragraph::new("y/Enter = yes, n/Esc = no").style(Style::default().fg(theme.text_muted)),
+        chunks[1],
+    );
+}
+
+/// Render the move session overlay — list of groups to choose from
+pub fn render_move(
+    frame: &mut Frame,
+    area: Rect,
+    form: &MoveForm,
+    theme: &crate::ui::theme::Theme,
+) {
+    let overlay_height = (form.groups.len() as u16 + 4).min(area.height.saturating_sub(4));
+    let overlay_width = 50u16.min(area.width.saturating_sub(4));
+    let x = (area.width.saturating_sub(overlay_width)) / 2;
+    let y = (area.height.saturating_sub(overlay_height)) / 2;
+    let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let title = format!(" Move \"{}\" ", form.session_title);
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let items: Vec<ListItem> = form
+        .groups
+        .iter()
+        .enumerate()
+        .map(|(i, (_, name))| {
+            let style = if i == form.selected {
+                Style::default().bg(theme.primary).fg(theme.selected_item_text)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            ListItem::new(format!("  {}", name)).style(style)
+        })
+        .collect();
+
+    frame.render_widget(List::new(items), inner);
+}
+
+/// Render the group creation overlay
+pub fn render_group_manage(
+    frame: &mut Frame,
+    area: Rect,
+    form: &GroupForm,
+    theme: &crate::ui::theme::Theme,
+) {
+    let overlay_width = 50u16.min(area.width.saturating_sub(4));
+    let overlay_height = 5u16.min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(overlay_width)) / 2;
+    let y = (area.height.saturating_sub(overlay_height)) / 2;
+    let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let block = Block::default()
+        .title(" New Group ")
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new("Group name:").style(Style::default().fg(theme.text_muted)),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(format!("{}\u{2588}", form.name)).style(Style::default().fg(theme.text)),
         chunks[1],
     );
 }

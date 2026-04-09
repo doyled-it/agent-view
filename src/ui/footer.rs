@@ -48,6 +48,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Overlay::Confirm(_) => {
             vec![("y", "confirm"), ("n/Esc", "cancel")]
         }
+        Overlay::Rename(_) => {
+            vec![("Enter", "confirm"), ("Esc", "cancel")]
+        }
+        Overlay::Move(_) => {
+            vec![("j/k", "navigate"), ("Enter", "move"), ("Esc", "cancel")]
+        }
+        Overlay::GroupManage(_) => {
+            vec![("Enter", "create"), ("Esc", "cancel")]
+        }
     };
 
     let len = hints.len();

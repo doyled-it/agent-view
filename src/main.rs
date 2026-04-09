@@ -254,6 +254,15 @@ fn run_tui(
                                 &session_manager,
                             )?;
                         }
+                        crate::app::Overlay::Rename(_) => {
+                            handle_rename_key(&mut app, key, &storage)?;
+                        }
+                        crate::app::Overlay::Move(_) => {
+                            handle_move_key(&mut app, key, &storage)?;
+                        }
+                        crate::app::Overlay::GroupManage(_) => {
+                            handle_group_key(&mut app, key, &storage)?;
+                        }
                     }
                 }
                 if app.should_quit {
@@ -497,6 +506,41 @@ fn handle_main_key(
         (KeyModifiers::NONE, KeyCode::Char('/')) => {
             app.search_query = Some(String::new());
         }
+        (KeyModifiers::NONE, KeyCode::Char('m')) => {
+            if let Some(session) = app.selected_session() {
+                let groups: Vec<(String, String)> = app.groups.iter()
+                    .map(|g| (g.path.clone(), g.name.clone()))
+                    .collect();
+                if !groups.is_empty() {
+                    app.overlay = crate::app::Overlay::Move(crate::app::MoveForm {
+                        session_id: session.id.clone(),
+                        session_title: session.title.clone(),
+                        groups,
+                        selected: 0,
+                    });
+                }
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Char('g')) => {
+            app.overlay = crate::app::Overlay::GroupManage(crate::app::GroupForm {
+                name: String::new(),
+            });
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
+            if let Some(session) = app.selected_session() {
+                app.overlay = crate::app::Overlay::Rename(crate::app::RenameForm {
+                    target_id: session.id.clone(),
+                    target_type: crate::app::RenameTarget::Session,
+                    input: session.title.clone(),
+                });
+            } else if let Some(group) = app.selected_group() {
+                app.overlay = crate::app::Overlay::Rename(crate::app::RenameForm {
+                    target_id: group.path.clone(),
+                    target_type: crate::app::RenameTarget::Group,
+                    input: group.name.clone(),
+                });
+            }
+        }
         _ => {}
     }
 
@@ -636,6 +680,143 @@ fn handle_confirm_key(
         }
     }
 
+    Ok(())
+}
+
+fn handle_rename_key(
+    app: &mut crate::app::App,
+    key: crossterm::event::KeyEvent,
+    storage: &crate::core::storage::Storage,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::KeyCode;
+
+    if let crate::app::Overlay::Rename(ref mut form) = app.overlay {
+        match key.code {
+            KeyCode::Esc => {
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Enter => {
+                let new_name = form.input.trim().to_string();
+                if !new_name.is_empty() {
+                    match form.target_type {
+                        crate::app::RenameTarget::Session => {
+                            let _ = storage.rename_session(&form.target_id, &new_name);
+                        }
+                        crate::app::RenameTarget::Group => {
+                            if let Ok(groups) = storage.load_groups() {
+                                if let Some(mut group) = groups.into_iter().find(|g| g.path == form.target_id) {
+                                    group.name = new_name;
+                                    let _ = storage.save_group(&group);
+                                }
+                            }
+                        }
+                    }
+                    if let Ok(sessions) = storage.load_sessions() {
+                        app.sessions = sessions;
+                    }
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Backspace => {
+                form.input.pop();
+            }
+            KeyCode::Char(c) => {
+                form.input.push(c);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn handle_move_key(
+    app: &mut crate::app::App,
+    key: crossterm::event::KeyEvent,
+    storage: &crate::core::storage::Storage,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::KeyCode;
+
+    if let crate::app::Overlay::Move(ref mut form) = app.overlay {
+        match key.code {
+            KeyCode::Esc => {
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if form.selected > 0 {
+                    form.selected -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if form.selected < form.groups.len().saturating_sub(1) {
+                    form.selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some((ref path, ref name)) = form.groups.get(form.selected).cloned() {
+                    let _ = storage.move_session_to_group(&form.session_id.clone(), &path);
+                    if let Ok(sessions) = storage.load_sessions() {
+                        app.sessions = sessions;
+                    }
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                    app.toast_message = Some(format!("Moved to {}", name));
+                    app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                }
+                app.overlay = crate::app::Overlay::None;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn handle_group_key(
+    app: &mut crate::app::App,
+    key: crossterm::event::KeyEvent,
+    storage: &crate::core::storage::Storage,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::KeyCode;
+
+    if let crate::app::Overlay::GroupManage(ref mut form) = app.overlay {
+        match key.code {
+            KeyCode::Esc => {
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Enter => {
+                let name = form.name.trim().to_string();
+                if !name.is_empty() {
+                    let path = name
+                        .to_lowercase()
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                        .collect::<String>();
+                    let path = path.trim_matches('-').to_string();
+
+                    let order = app.groups.len() as i32;
+                    let group = crate::types::Group {
+                        path,
+                        name,
+                        expanded: true,
+                        order,
+                        default_path: String::new(),
+                    };
+                    let _ = storage.save_group(&group);
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Backspace => {
+                form.name.pop();
+            }
+            KeyCode::Char(c) => {
+                form.name.push(c);
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
 

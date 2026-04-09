@@ -9,6 +9,35 @@ pub enum Overlay {
     None,
     NewSession(NewSessionForm),
     Confirm(ConfirmDialog),
+    Rename(RenameForm),
+    Move(MoveForm),
+    GroupManage(GroupForm),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoveForm {
+    pub session_id: String,
+    pub session_title: String,
+    pub groups: Vec<(String, String)>, // (path, name)
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupForm {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenameForm {
+    pub target_id: String,
+    pub target_type: RenameTarget,
+    pub input: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RenameTarget {
+    Session,
+    Group,
 }
 
 #[derive(Debug, Clone, PartialEq)]

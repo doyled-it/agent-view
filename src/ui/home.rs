@@ -49,6 +49,15 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::Confirm(dialog) => {
             crate::ui::overlay::render_confirm(frame, area, dialog, &app.theme);
         }
+        Overlay::Rename(form) => {
+            crate::ui::overlay::render_rename(frame, area, form, &app.theme);
+        }
+        Overlay::Move(form) => {
+            crate::ui::overlay::render_move(frame, area, form, &app.theme);
+        }
+        Overlay::GroupManage(form) => {
+            crate::ui::overlay::render_group_manage(frame, area, form, &app.theme);
+        }
         Overlay::None => {}
     }
 }
