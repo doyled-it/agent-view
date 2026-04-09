@@ -313,12 +313,13 @@ fn handle_main_key(
 
                     // Leave TUI for attach
                     disable_raw_mode()?;
-                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                    // Clear screen AND scrollback to prevent scroll-to-bottom
-                    // \x1b[3J clears scrollback, \x1b[2J clears screen, \x1b[H homes cursor
+                    // Full terminal reset (\033c) clears screen, scrollback,
+                    // alternate screen state, and all attributes in one shot.
+                    // This prevents the scroll-to-bottom effect while also
+                    // restoring normal terminal mode for paste etc.
                     let _ = std::io::Write::write_all(
                         &mut std::io::stdout(),
-                        b"\x1b[3J\x1b[2J\x1b[H\x1b[?25h",
+                        b"\x1bc",
                     );
                     let _ = std::io::Write::flush(&mut std::io::stdout());
 
