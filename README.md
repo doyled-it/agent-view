@@ -55,26 +55,24 @@ Agent View monitors your sessions and shows real-time status indicators:
 
 ## Installation
 
-### Quick Install — Linux x64 (MITRE)
+### Quick Install
 
 Pre-built binary via `curl | sh`:
 
 ```bash
-curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/install.sh | bash
 ```
 
 Install a specific version:
 
 ```bash
-curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash -s -- -v 1.0.0
+curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/install.sh | bash -s -- -v 1.0.0
 ```
 
-### Install from Source — All Platforms
-
-For macOS, Linux ARM64, or WSL:
+### Install from Source
 
 ```bash
-git clone git@gitlab.mitre.org:mdoyle/agent-view.git
+git clone https://github.com/doyled-it/agent-view.git
 cd agent-view
 bun install
 bun run compile

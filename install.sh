@@ -7,7 +7,7 @@
 set -euo pipefail
 
 APP=agent-view
-REPO="frayo44/agent-view"
+REPO="doyled-it/agent-view"
 
 # Colors
 MUTED='\033[0;2m'
