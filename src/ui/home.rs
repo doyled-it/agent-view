@@ -58,8 +58,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::GroupManage(form) => {
             crate::ui::overlay::render_group_manage(frame, area, form, &app.theme);
         }
-        Overlay::CommandPalette(_) => {
-            // Rendered separately; placeholder for now
+        Overlay::CommandPalette(palette) => {
+            crate::ui::overlay::render_command_palette(frame, area, palette, &app.theme);
         }
         Overlay::None => {}
     }

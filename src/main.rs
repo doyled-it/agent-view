@@ -264,7 +264,12 @@ fn run_tui(
                             handle_group_key(&mut app, key, &storage)?;
                         }
                         crate::app::Overlay::CommandPalette(_) => {
-                            // Command palette key handling placeholder
+                            handle_palette_key(
+                                &mut app,
+                                key,
+                                &storage,
+                                &mut session_manager,
+                            )?;
                         }
                     }
                 }
@@ -829,6 +834,168 @@ fn handle_group_key(
                 form.name.push(c);
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn handle_palette_key(
+    app: &mut crate::app::App,
+    key: crossterm::event::KeyEvent,
+    storage: &crate::core::storage::Storage,
+    session_manager: &mut crate::core::session::SessionManager,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::KeyCode;
+
+    if let crate::app::Overlay::CommandPalette(ref mut palette) = app.overlay {
+        match key.code {
+            KeyCode::Esc => {
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Up | KeyCode::BackTab => {
+                if palette.selected > 0 {
+                    palette.selected -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                if palette.selected < palette.filtered.len().saturating_sub(1) {
+                    palette.selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(&idx) = palette.filtered.get(palette.selected) {
+                    let action = palette.items[idx].action.clone();
+                    app.overlay = crate::app::Overlay::None;
+                    execute_command_action(app, action, storage, session_manager)?;
+                }
+            }
+            KeyCode::Backspace => {
+                palette.query.pop();
+                palette.filter();
+            }
+            KeyCode::Char(c) => {
+                palette.query.push(c);
+                palette.filter();
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn execute_command_action(
+    app: &mut crate::app::App,
+    action: crate::app::CommandAction,
+    storage: &crate::core::storage::Storage,
+    session_manager: &mut crate::core::session::SessionManager,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::app::{CommandAction, Overlay};
+
+    match action {
+        CommandAction::NewSession => {
+            app.overlay = Overlay::NewSession(crate::app::NewSessionForm::new());
+        }
+        CommandAction::Search => {
+            app.search_query = Some(String::new());
+        }
+        CommandAction::CreateGroup => {
+            app.overlay = Overlay::GroupManage(crate::app::GroupForm { name: String::new() });
+        }
+        CommandAction::Quit => {
+            app.should_quit = true;
+        }
+        CommandAction::StopSession => {
+            if let Some(session) = app.selected_session() {
+                let msg = format!("Stop session \"{}\"?", session.title);
+                app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
+                    message: msg,
+                    action: crate::app::ConfirmAction::StopSession(session.id.clone()),
+                });
+            }
+        }
+        CommandAction::DeleteSession => {
+            if let Some(session) = app.selected_session() {
+                let msg = format!("Delete session \"{}\"?", session.title);
+                app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
+                    message: msg,
+                    action: crate::app::ConfirmAction::DeleteSession(session.id.clone()),
+                });
+            }
+        }
+        CommandAction::RestartSession => {
+            if let Some(session) = app.selected_session() {
+                let id = session.id.clone();
+                let mut cache = crate::core::tmux::SessionCache::new();
+                let _ = session_manager.restart_session(storage, &mut cache, &id);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.rebuild_list_rows();
+                }
+            }
+        }
+        CommandAction::RenameSession => {
+            if let Some(session) = app.selected_session() {
+                app.overlay = Overlay::Rename(crate::app::RenameForm {
+                    target_id: session.id.clone(),
+                    target_type: crate::app::RenameTarget::Session,
+                    input: session.title.clone(),
+                });
+            }
+        }
+        CommandAction::MoveSession => {
+            if let Some(session) = app.selected_session() {
+                let groups: Vec<(String, String)> = app.groups.iter()
+                    .map(|g| (g.path.clone(), g.name.clone()))
+                    .collect();
+                if !groups.is_empty() {
+                    app.overlay = Overlay::Move(crate::app::MoveForm {
+                        session_id: session.id.clone(),
+                        session_title: session.title.clone(),
+                        groups,
+                        selected: 0,
+                    });
+                }
+            }
+        }
+        CommandAction::ToggleNotify => {
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.notify;
+                let id = session.id.clone();
+                let _ = storage.set_notify(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.rebuild_list_rows();
+                }
+            }
+        }
+        CommandAction::ToggleFollowUp => {
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.follow_up;
+                let id = session.id.clone();
+                let _ = storage.set_follow_up(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.rebuild_list_rows();
+                }
+            }
+        }
+        CommandAction::ExportLog => {
+            if let Some(session) = app.selected_session() {
+                if !session.tmux_session.is_empty() {
+                    let tmux_name = session.tmux_session.clone();
+                    let title = session.title.clone();
+                    match export_session_log(&tmux_name, &title) {
+                        Ok(path) => {
+                            app.toast_message = Some(format!("Exported to {}", path));
+                            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                        }
+                        Err(e) => {
+                            app.toast_message = Some(format!("Export failed: {}", e));
+                            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())
