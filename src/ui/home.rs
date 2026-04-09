@@ -1,7 +1,6 @@
 //! Home screen rendering — session list with status icons
 
 use crate::app::{App, Overlay};
-use crate::types::SessionStatus;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
@@ -47,7 +46,7 @@ fn render_header(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme)
 fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
-    if app.sessions.is_empty() {
+    if app.list_rows.is_empty() {
         let msg = Paragraph::new("No sessions. Press 'n' to create one.")
             .style(Style::default().fg(theme.text_muted))
             .alignment(Alignment::Center);
@@ -56,52 +55,107 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let items: Vec<ListItem> = app
-        .sessions
+        .list_rows
         .iter()
         .enumerate()
-        .map(|(i, session)| {
-            let status_icon = session.status.icon();
-            let sc = crate::ui::theme::status_color(theme, session.status);
+        .map(|(i, row)| {
+            let is_selected = i == app.selected_index;
+            match row {
+                crate::core::groups::ListRow::Group {
+                    group,
+                    session_count,
+                    running_count,
+                    waiting_count,
+                } => {
+                    let arrow = if group.expanded { "\u{25BC}" } else { "\u{25B6}" };
+                    let mut spans = vec![
+                        Span::styled(
+                            format!(" {} ", arrow),
+                            Style::default().fg(if is_selected {
+                                theme.selected_item_text
+                            } else {
+                                theme.accent
+                            }),
+                        ),
+                        Span::styled(
+                            group.name.clone(),
+                            Style::default()
+                                .fg(if is_selected { theme.selected_item_text } else { theme.text })
+                                .bold(),
+                        ),
+                        Span::styled(
+                            format!("  ({})", session_count),
+                            Style::default().fg(if is_selected {
+                                theme.selected_item_text
+                            } else {
+                                theme.text_muted
+                            }),
+                        ),
+                    ];
 
-            let notify_indicator = if session.notify { " !" } else { "  " };
-            let follow_up_indicator = if session.follow_up { "F " } else { "  " };
+                    if *running_count > 0 {
+                        spans.push(Span::styled(
+                            format!("  \u{25CF}{}", running_count),
+                            Style::default().fg(if is_selected {
+                                theme.selected_item_text
+                            } else {
+                                theme.success
+                            }),
+                        ));
+                    }
+                    if *waiting_count > 0 {
+                        spans.push(Span::styled(
+                            format!("  \u{25D0}{}", waiting_count),
+                            Style::default().fg(if is_selected {
+                                theme.selected_item_text
+                            } else {
+                                theme.warning
+                            }),
+                        ));
+                    }
 
-            let age = format_age(session.created_at);
+                    let bg = if is_selected {
+                        theme.primary
+                    } else {
+                        theme.background_element
+                    };
+                    ListItem::new(Line::from(spans)).style(Style::default().bg(bg))
+                }
+                crate::core::groups::ListRow::Session(session) => {
+                    let status_color = crate::ui::theme::status_color(theme, session.status);
+                    let notify_indicator = if session.notify { " !" } else { "  " };
+                    let follow_up_indicator = if session.follow_up { "F " } else { "  " };
+                    let age = format_age(session.created_at);
 
-            let line = Line::from(vec![
-                Span::raw(follow_up_indicator),
-                Span::styled(
-                    format!(" {} ", status_icon),
-                    Style::default().fg(sc),
-                ),
-                Span::styled(notify_indicator, Style::default().fg(theme.warning)),
-                Span::styled(
-                    session.title.clone(),
-                    Style::default().fg(theme.text).bold(),
-                ),
-                Span::raw("  "),
-                Span::styled(
-                    truncate_path(&session.project_path, 30),
-                    Style::default().fg(theme.text_muted),
-                ),
-                Span::raw("  "),
-                Span::styled(age, Style::default().fg(theme.text_muted)),
-            ]);
+                    let line = Line::from(vec![
+                        Span::raw(follow_up_indicator),
+                        Span::styled(
+                            format!("   {} ", session.status.icon()),
+                            Style::default().fg(status_color),
+                        ),
+                        Span::styled(notify_indicator, Style::default().fg(theme.warning)),
+                        Span::styled(session.title.clone(), Style::default().fg(theme.text).bold()),
+                        Span::raw("  "),
+                        Span::styled(
+                            truncate_path(&session.project_path, 30),
+                            Style::default().fg(theme.text_muted),
+                        ),
+                        Span::raw("  "),
+                        Span::styled(age, Style::default().fg(theme.text_muted)),
+                    ]);
 
-            let style = if i == app.selected_index {
-                Style::default()
-                    .bg(theme.background_element)
-                    .fg(theme.selected_item_text)
-            } else {
-                Style::default()
-            };
-
-            ListItem::new(line).style(style)
+                    let bg = if is_selected {
+                        theme.background_element
+                    } else {
+                        theme.background
+                    };
+                    ListItem::new(line).style(Style::default().bg(bg))
+                }
+            }
         })
         .collect();
 
-    let list = List::new(items)
-        .highlight_style(Style::default().bg(theme.background_element));
+    let list = List::new(items);
     frame.render_widget(list, area);
 }
 
@@ -142,6 +196,7 @@ fn truncate_path(path: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::SessionStatus;
 
     #[test]
     fn test_format_age_days() {

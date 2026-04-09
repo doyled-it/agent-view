@@ -1,6 +1,7 @@
 //! Application state and event dispatch
 
-use crate::types::Session;
+use crate::core::groups::ListRow;
+use crate::types::{Group, Session};
 use crate::ui::theme::Theme;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,6 +45,8 @@ pub enum ConfirmAction {
 
 pub struct App {
     pub sessions: Vec<Session>,
+    pub groups: Vec<Group>,
+    pub list_rows: Vec<ListRow>,
     pub selected_index: usize,
     pub overlay: Overlay,
     pub should_quit: bool,
@@ -57,6 +60,8 @@ impl App {
     pub fn new(light: bool) -> Self {
         Self {
             sessions: Vec::new(),
+            groups: Vec::new(),
+            list_rows: Vec::new(),
             selected_index: 0,
             overlay: Overlay::None,
             should_quit: false,
@@ -67,26 +72,43 @@ impl App {
         }
     }
 
+    /// Rebuild the flattened list from current sessions and groups
+    pub fn rebuild_list_rows(&mut self) {
+        let groups = crate::core::groups::ensure_default_group(&self.groups);
+        self.list_rows = crate::core::groups::flatten_group_tree(&self.sessions, &groups);
+        self.clamp_selection();
+    }
+
     pub fn selected_session(&self) -> Option<&Session> {
-        self.sessions.get(self.selected_index)
+        match self.list_rows.get(self.selected_index) {
+            Some(ListRow::Session(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn selected_group(&self) -> Option<&Group> {
+        match self.list_rows.get(self.selected_index) {
+            Some(ListRow::Group { group, .. }) => Some(group),
+            _ => None,
+        }
     }
 
     pub fn move_selection_up(&mut self) {
-        if self.sessions.is_empty() {
+        if self.list_rows.is_empty() {
             return;
         }
         if self.selected_index > 0 {
             self.selected_index -= 1;
         } else {
-            self.selected_index = self.sessions.len() - 1;
+            self.selected_index = self.list_rows.len() - 1;
         }
     }
 
     pub fn move_selection_down(&mut self) {
-        if self.sessions.is_empty() {
+        if self.list_rows.is_empty() {
             return;
         }
-        if self.selected_index < self.sessions.len() - 1 {
+        if self.selected_index < self.list_rows.len() - 1 {
             self.selected_index += 1;
         } else {
             self.selected_index = 0;
@@ -94,10 +116,10 @@ impl App {
     }
 
     pub fn clamp_selection(&mut self) {
-        if self.sessions.is_empty() {
+        if self.list_rows.is_empty() {
             self.selected_index = 0;
-        } else if self.selected_index >= self.sessions.len() {
-            self.selected_index = self.sessions.len() - 1;
+        } else if self.selected_index >= self.list_rows.len() {
+            self.selected_index = self.list_rows.len() - 1;
         }
     }
 }

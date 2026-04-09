@@ -42,7 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load sessions from storage
     app.sessions = storage.load_sessions()?;
-    app.clamp_selection();
+    app.groups = storage.load_groups().unwrap_or_default();
+    app.rebuild_list_rows();
 
     // If --attach was passed, store for immediate attach after TUI starts
     if let Some(ref session_id) = cli.attach {
@@ -259,7 +260,8 @@ fn run_tui(
         if any_changed {
             let _ = storage.touch();
             app.sessions = storage.load_sessions().unwrap_or_default();
-            app.clamp_selection();
+            app.groups = storage.load_groups().unwrap_or_default();
+            app.rebuild_list_rows();
         }
 
         // Sleep briefly to avoid busy-spinning when idle
@@ -303,9 +305,34 @@ fn handle_main_key(
             app.overlay =
                 crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
         }
+        (KeyModifiers::NONE, KeyCode::Right) | (KeyModifiers::NONE, KeyCode::Char('l')) => {
+            if let Some(group) = app.selected_group() {
+                if !group.expanded {
+                    let path = group.path.clone();
+                    let _ = storage.toggle_group_expanded(&path);
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Left) | (KeyModifiers::NONE, KeyCode::Char('h')) => {
+            if let Some(group) = app.selected_group() {
+                if group.expanded {
+                    let path = group.path.clone();
+                    let _ = storage.toggle_group_expanded(&path);
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+            }
+        }
         (KeyModifiers::NONE, KeyCode::Enter) => {
-            // Attach to selected session
-            if let Some(session) = app.selected_session() {
+            // Toggle group expand/collapse, or attach to selected session
+            if let Some(group) = app.selected_group() {
+                let path = group.path.clone();
+                let _ = storage.toggle_group_expanded(&path);
+                app.groups = storage.load_groups().unwrap_or_default();
+                app.rebuild_list_rows();
+            } else if let Some(session) = app.selected_session() {
                 if !session.tmux_session.is_empty()
                     && session.status != crate::types::SessionStatus::Stopped
                 {
@@ -337,7 +364,8 @@ fn handle_main_key(
                     // Fresh reload after returning
                     if let Ok(sessions) = storage.load_sessions() {
                         app.sessions = sessions;
-                        app.clamp_selection();
+                        app.groups = storage.load_groups().unwrap_or_default();
+                        app.rebuild_list_rows();
                     }
                 }
             }
@@ -372,7 +400,8 @@ fn handle_main_key(
                 let _ = session_manager.restart_session(storage, &mut cache, &id);
                 if let Ok(sessions) = storage.load_sessions() {
                     app.sessions = sessions;
-                    app.clamp_selection();
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
                 }
             }
         }
@@ -384,7 +413,8 @@ fn handle_main_key(
                 let _ = storage.set_notify(&id, new_val);
                 if let Ok(sessions) = storage.load_sessions() {
                     app.sessions = sessions;
-                    app.clamp_selection();
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
                 }
             }
         }
@@ -434,9 +464,11 @@ fn handle_new_session_key(
                     Ok(_) => {
                         if let Ok(sessions) = storage.load_sessions() {
                             app.sessions = sessions;
-                            // Select the newly created session (last one)
-                            if !app.sessions.is_empty() {
-                                app.selected_index = app.sessions.len() - 1;
+                            app.groups = storage.load_groups().unwrap_or_default();
+                            app.rebuild_list_rows();
+                            // Select the newly created session (last row)
+                            if !app.list_rows.is_empty() {
+                                app.selected_index = app.list_rows.len() - 1;
                             }
                         }
                     }
@@ -490,7 +522,8 @@ fn handle_confirm_key(
                 // Refresh sessions
                 if let Ok(sessions) = storage.load_sessions() {
                     app.sessions = sessions;
-                    app.clamp_selection();
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
                 }
                 app.overlay = crate::app::Overlay::None;
             }
