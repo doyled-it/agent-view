@@ -57,6 +57,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Overlay::GroupManage(_) => {
             vec![("Enter", "create"), ("Esc", "cancel")]
         }
+        Overlay::CommandPalette(_) => {
+            vec![("Tab/arrows", "navigate"), ("Enter", "execute"), ("Esc", "close")]
+        }
     };
 
     let len = hints.len();

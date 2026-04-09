@@ -263,6 +263,9 @@ fn run_tui(
                         crate::app::Overlay::GroupManage(_) => {
                             handle_group_key(&mut app, key, &storage)?;
                         }
+                        crate::app::Overlay::CommandPalette(_) => {
+                            // Command palette key handling placeholder
+                        }
                     }
                 }
                 if app.should_quit {
@@ -533,6 +536,9 @@ fn handle_main_key(
             app.overlay = crate::app::Overlay::GroupManage(crate::app::GroupForm {
                 name: String::new(),
             });
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+            app.overlay = crate::app::Overlay::CommandPalette(crate::app::CommandPalette::new());
         }
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
             if let Some(session) = app.selected_session() {
