@@ -283,9 +283,10 @@ fn run_tui(
             break;
         }
 
-        // After returning from attach, discard stale status results
+        // After returning from attach, process pending results (don't discard them).
+        // The attached session's notifications were already suppressed during the
+        // normal processing loop below — we just need to clear the flag.
         if app.returning_from_attach {
-            while status_rx.try_recv().is_ok() {}
             app.returning_from_attach = false;
         }
 
@@ -308,7 +309,12 @@ fn run_tui(
                     let sound = config.notifications.sound;
                     // Skip the expensive get_attached_sessions() subprocess call here;
                     // treat sessions as not attached (slight over-notification is better than lag)
-                    session_manager.maybe_notify(session, resolved, None, sound);
+                    session_manager.maybe_notify(
+                        session,
+                        resolved,
+                        app.attached_tmux_session.as_deref(),
+                        sound,
+                    );
                 }
             }
         }
@@ -400,6 +406,7 @@ fn handle_main_key(
                     && session.status != crate::types::SessionStatus::Stopped
                 {
                     let tmux_name = session.tmux_session.clone();
+                    app.attached_tmux_session = Some(tmux_name.clone());
 
                     // Leave TUI for attach
                     disable_raw_mode()?;
@@ -416,8 +423,9 @@ fn handle_main_key(
                     let _ = crate::core::tmux::attach_session_sync(&tmux_name);
                     session_manager.suppress_notification(&tmux_name);
 
-                    // Signal main loop to drain stale status results
+                    // Signal main loop to process pending results (not drain them)
                     app.returning_from_attach = true;
+                    app.attached_tmux_session = None;
 
                     // Re-enter TUI
                     enable_raw_mode()?;
