@@ -169,11 +169,16 @@ fn run_tui(
     if let Some(session_id) = app.attach_session.take() {
         if let Some(session) = app.sessions.iter().find(|s| s.id == session_id) {
             if !session.tmux_session.is_empty() {
+                let tmux_name = session.tmux_session.clone();
+                app.attached_tmux_session = Some(tmux_name.clone());
+
                 disable_raw_mode()?;
                 execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-                let tmux_name = session.tmux_session.clone();
                 let _ = crate::core::tmux::attach_session_sync(&tmux_name);
+                session_manager.suppress_notification(&tmux_name);
+
+                app.attached_tmux_session = None;
 
                 enable_raw_mode()?;
                 execute!(terminal.backend_mut(), EnterAlternateScreen)?;
