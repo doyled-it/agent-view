@@ -58,7 +58,7 @@ const MIN_IDLE_DURATION_MS: u128 = 8_000;
 /// Minimum time (ms) error patterns must persist before showing error status
 const MIN_ERROR_DURATION_MS: u128 = 5_000;
 /// Minimum time (ms) a new status must persist before the UI updates
-const STATUS_DEBOUNCE_MS: u128 = 2_000;
+const STATUS_DEBOUNCE_MS: u128 = 750;
 
 impl SessionManager {
     pub fn new() -> Self {
@@ -111,9 +111,12 @@ impl SessionManager {
             self.error_start_time.remove(session_id);
         }
 
-        // Debounce: "waiting" bypasses debounce (immediate)
+        // Debounce: statuses that need user attention bypass debounce (immediate)
         if raw_status != previous_status {
-            if raw_status == SessionStatus::Waiting {
+            if matches!(
+                raw_status,
+                SessionStatus::Waiting | SessionStatus::Paused | SessionStatus::Error
+            ) {
                 self.pending_status.remove(session_id);
                 return raw_status;
             }
