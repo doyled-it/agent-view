@@ -494,6 +494,16 @@ impl Storage {
         let now = chrono::Utc::now().timestamp_millis();
         self.set_meta("last_modified", &now.to_string())
     }
+
+    /// Read the last_modified timestamp from metadata.
+    /// Returns 0 if not set.
+    pub fn last_modified(&self) -> i64 {
+        self.get_meta("last_modified")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
