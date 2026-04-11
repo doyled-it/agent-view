@@ -185,11 +185,17 @@ impl SessionManager {
         &mut self,
         session: &Session,
         new_status: SessionStatus,
-        is_attached: bool,
+        attached_session: Option<&str>,
         sound: bool,
     ) -> bool {
-        if !session.notify || is_attached {
+        if !session.notify {
             return false;
+        }
+        // Suppress notifications for the session the user is currently looking at
+        if let Some(attached) = attached_session {
+            if session.tmux_session == attached {
+                return false;
+            }
         }
 
         // Check recently detached
@@ -513,7 +519,7 @@ mod tests {
     fn test_maybe_notify_returns_false_when_not_enabled() {
         let mut mgr = SessionManager::new();
         let session = make_test_session("s1", false); // notify = false
-        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, false, false);
+        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, None, false);
         assert!(!result);
     }
 
@@ -521,7 +527,7 @@ mod tests {
     fn test_maybe_notify_returns_false_when_attached() {
         let mut mgr = SessionManager::new();
         let session = make_test_session("s1", true);
-        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, true, false);
+        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
         assert!(!result);
     }
 
@@ -549,5 +555,32 @@ mod tests {
         mgr.track_durations("s1", SessionStatus::Waiting);
         assert!(!mgr.running_start_time.contains_key("s1"));
         assert!(!mgr.idle_start_time.contains_key("s1"));
+    }
+
+    #[test]
+    fn test_maybe_notify_suppresses_attached_session() {
+        let mut mgr = SessionManager::new();
+        let session = make_test_session("s1", true);
+        // Attached to this exact session — should suppress
+        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_maybe_notify_allows_other_sessions_when_attached() {
+        let mut mgr = SessionManager::new();
+        let session = make_test_session("s2", true);
+        // Attached to a DIFFERENT session — should allow notification
+        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_maybe_notify_allows_all_when_not_attached() {
+        let mut mgr = SessionManager::new();
+        let session = make_test_session("s1", true);
+        // Not attached to anything — should allow notification
+        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, None, false);
+        assert!(result);
     }
 }

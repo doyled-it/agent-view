@@ -308,7 +308,7 @@ fn run_tui(
                     let sound = config.notifications.sound;
                     // Skip the expensive get_attached_sessions() subprocess call here;
                     // treat sessions as not attached (slight over-notification is better than lag)
-                    session_manager.maybe_notify(session, resolved, false, sound);
+                    session_manager.maybe_notify(session, resolved, None, sound);
                 }
             }
         }
