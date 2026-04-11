@@ -79,19 +79,21 @@ fn run_tui(
 
     let mut session_manager = crate::core::session::SessionManager::new();
 
+    // Shared attached session name — background thread reads this to fire
+    // notifications for OTHER sessions while the user is inside one.
+    use std::sync::{Arc, Mutex, mpsc};
+    let attached_session_shared: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let attached_for_bg = Arc::clone(&attached_session_shared);
+
     // Background thread for status polling — never blocks the UI
-    use std::sync::mpsc;
     let (status_tx, status_rx) = mpsc::channel::<Vec<(String, crate::types::SessionStatus)>>();
 
-    // Collect session info for the background thread
-    let sessions_for_bg: Vec<(String, String, crate::types::Tool)> = app
-        .sessions
-        .iter()
-        .map(|s| (s.id.clone(), s.tmux_session.clone(), s.tool))
-        .collect();
-
+    let bg_sound = config.notifications.sound;
     let bg_handle = std::thread::spawn(move || {
         let mut cache = crate::core::tmux::SessionCache::new();
+        // Track last notified status per session to avoid repeated notifications
+        let mut bg_last_notified: std::collections::HashMap<String, crate::types::SessionStatus> =
+            std::collections::HashMap::new();
         loop {
             std::thread::sleep(Duration::from_millis(500));
 
@@ -104,6 +106,9 @@ fn run_tui(
                 Err(_) => continue,
             };
             let sessions = bg_storage.load_sessions().unwrap_or_default();
+
+            // Check if user is currently attached to a session
+            let attached = attached_for_bg.lock().ok().and_then(|g| g.clone());
 
             for session in &sessions {
                 if session.tmux_session.is_empty() {
@@ -156,7 +161,63 @@ fn run_tui(
                     }
                 };
 
+                // Fire notifications directly from the background thread when user
+                // is attached to a DIFFERENT session. The main loop is blocked during
+                // attach, so it can't fire notifications — we do it here instead.
+                if let Some(ref attached_name) = attached {
+                    if session.notify
+                        && session.tmux_session != *attached_name
+                        && raw_status != session.status
+                        && bg_last_notified.get(&session.id) != Some(&raw_status)
+                    {
+                        let fired = match raw_status {
+                            crate::types::SessionStatus::Waiting => {
+                                crate::core::notify::send_notification(
+                                    crate::core::notify::NotificationOptions {
+                                        title: format!("\u{1F7E1} {}", session.title),
+                                        body: "Needs approval".to_string(),
+                                        subtitle: None,
+                                        sound: bg_sound,
+                                    },
+                                );
+                                true
+                            }
+                            crate::types::SessionStatus::Paused => {
+                                crate::core::notify::send_notification(
+                                    crate::core::notify::NotificationOptions {
+                                        title: format!("\u{1F535} {}", session.title),
+                                        body: "Asked you a question".to_string(),
+                                        subtitle: None,
+                                        sound: bg_sound,
+                                    },
+                                );
+                                true
+                            }
+                            crate::types::SessionStatus::Error => {
+                                crate::core::notify::send_notification(
+                                    crate::core::notify::NotificationOptions {
+                                        title: format!("\u{1F534} {}", session.title),
+                                        body: "Was interrupted".to_string(),
+                                        subtitle: None,
+                                        sound: bg_sound,
+                                    },
+                                );
+                                true
+                            }
+                            _ => false,
+                        };
+                        if fired {
+                            bg_last_notified.insert(session.id.clone(), raw_status);
+                        }
+                    }
+                }
+
                 results.push((session.id.clone(), raw_status));
+            }
+
+            // Clear stale entries from bg_last_notified when not attached
+            if attached.is_none() {
+                bg_last_notified.clear();
             }
 
             if status_tx.send(results).is_err() {
@@ -171,6 +232,9 @@ fn run_tui(
             if !session.tmux_session.is_empty() {
                 let tmux_name = session.tmux_session.clone();
                 app.attached_tmux_session = Some(tmux_name.clone());
+                if let Ok(mut guard) = attached_session_shared.lock() {
+                    *guard = Some(tmux_name.clone());
+                }
 
                 disable_raw_mode()?;
                 execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -179,6 +243,9 @@ fn run_tui(
                 session_manager.suppress_notification(&tmux_name);
 
                 app.attached_tmux_session = None;
+                if let Ok(mut guard) = attached_session_shared.lock() {
+                    *guard = None;
+                }
 
                 enable_raw_mode()?;
                 execute!(terminal.backend_mut(), EnterAlternateScreen)?;
@@ -241,6 +308,7 @@ fn run_tui(
                                 &storage,
                                 &mut session_manager,
                                 &mut terminal,
+                                &attached_session_shared,
                             )?;
                         }
                         crate::app::Overlay::NewSession(_) => {
@@ -357,6 +425,7 @@ fn handle_main_key(
     storage: &crate::core::storage::Storage,
     session_manager: &mut crate::core::session::SessionManager,
     terminal: &mut ratatui::Terminal<ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
+    attached_session_shared: &std::sync::Arc<std::sync::Mutex<Option<String>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::{KeyCode, KeyModifiers};
     use crossterm::{
@@ -412,6 +481,10 @@ fn handle_main_key(
                 {
                     let tmux_name = session.tmux_session.clone();
                     app.attached_tmux_session = Some(tmux_name.clone());
+                    // Tell the background thread which session we're in
+                    if let Ok(mut guard) = attached_session_shared.lock() {
+                        *guard = Some(tmux_name.clone());
+                    }
 
                     // Leave TUI for attach
                     disable_raw_mode()?;
@@ -431,6 +504,10 @@ fn handle_main_key(
                     // Signal main loop to process pending results (not drain them)
                     app.returning_from_attach = true;
                     app.attached_tmux_session = None;
+                    // Tell the background thread we're no longer attached
+                    if let Ok(mut guard) = attached_session_shared.lock() {
+                        *guard = None;
+                    }
 
                     // Re-enter TUI
                     enable_raw_mode()?;
