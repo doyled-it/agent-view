@@ -10,6 +10,7 @@ import type { Session, SessionStatus } from "@/core/types"
 const STATUS_LABELS: Record<SessionStatus, { icon: string; label: string }> = {
   running: { icon: "●", label: "Running" },
   waiting: { icon: "◐", label: "Waiting" },
+  paused: { icon: "◆", label: "Paused" },
   compacting: { icon: "◌", label: "Compacting" },
   idle: { icon: "○", label: "Idle" },
   stopped: { icon: "◻", label: "Stopped" },

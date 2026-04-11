@@ -22,6 +22,11 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
     worktreeBranch: "",
     toolData: {},
     acknowledged: false,
+    notify: false,
+    followUp: false,
+    statusChangedAt: new Date("2024-01-01T10:00:00Z"),
+    restartCount: 0,
+    statusHistory: [],
     ...overrides,
   }
 }

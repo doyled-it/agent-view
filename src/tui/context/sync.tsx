@@ -84,6 +84,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             running: store.sessions.filter((s) => s.status === "running"),
             waiting: store.sessions.filter((s) => s.status === "waiting"),
             paused: store.sessions.filter((s) => s.status === "paused"),
+            compacting: store.sessions.filter((s) => s.status === "compacting"),
             idle: store.sessions.filter((s) => s.status === "idle"),
             stopped: store.sessions.filter((s) => s.status === "stopped"),
             error: store.sessions.filter((s) => s.status === "error")
