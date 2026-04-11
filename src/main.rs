@@ -360,7 +360,7 @@ fn handle_main_key(
     use crossterm::event::{KeyCode, KeyModifiers};
     use crossterm::{
         execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen},
     };
 
     match (key.modifiers, key.code) {
