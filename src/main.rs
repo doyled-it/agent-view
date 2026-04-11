@@ -77,7 +77,8 @@ fn run_tui(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut session_manager = crate::core::session::SessionManager::new();
+    let mut session_manager = crate::core::session::StatusProcessor::new();
+    let session_ops = crate::core::session::SessionOps;
 
     // Shared attached session name — background thread reads this to fire
     // notifications for OTHER sessions while the user is inside one.
@@ -307,6 +308,7 @@ fn run_tui(
                                 key,
                                 &storage,
                                 &mut session_manager,
+                                &session_ops,
                                 &mut terminal,
                                 &attached_session_shared,
                             )?;
@@ -316,7 +318,7 @@ fn run_tui(
                                 &mut app,
                                 key,
                                 &storage,
-                                &session_manager,
+                                &session_ops,
                             )?;
                         }
                         crate::app::Overlay::Confirm(_) => {
@@ -324,7 +326,7 @@ fn run_tui(
                                 &mut app,
                                 key,
                                 &storage,
-                                &session_manager,
+                                &session_ops,
                             )?;
                         }
                         crate::app::Overlay::Rename(_) => {
@@ -341,7 +343,7 @@ fn run_tui(
                                 &mut app,
                                 key,
                                 &storage,
-                                &mut session_manager,
+                                &session_ops,
                             )?;
                         }
                     }
@@ -423,7 +425,8 @@ fn handle_main_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
     storage: &crate::core::storage::Storage,
-    session_manager: &mut crate::core::session::SessionManager,
+    session_manager: &mut crate::core::session::StatusProcessor,
+    session_ops: &crate::core::session::SessionOps,
     terminal: &mut ratatui::Terminal<ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
     attached_session_shared: &std::sync::Arc<std::sync::Mutex<Option<String>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -550,7 +553,7 @@ fn handle_main_key(
             if let Some(session) = app.selected_session() {
                 let id = session.id.clone();
                 let mut cache = crate::core::tmux::SessionCache::new();
-                let _ = session_manager.restart_session(storage, &mut cache, &id);
+                let _ = session_ops.restart_session(storage, &mut cache, &id);
                 if let Ok(sessions) = storage.load_sessions() {
                     app.sessions = sessions;
                     app.groups = storage.load_groups().unwrap_or_default();
@@ -683,7 +686,7 @@ fn handle_new_session_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
     storage: &crate::core::storage::Storage,
-    session_manager: &crate::core::session::SessionManager,
+    session_ops: &crate::core::session::SessionOps,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::KeyCode;
 
@@ -715,7 +718,7 @@ fn handle_new_session_key(
                 };
 
                 let mut cache = crate::core::tmux::SessionCache::new();
-                match session_manager.create_session(storage, &mut cache, options) {
+                match session_ops.create_session(storage, &mut cache, options) {
                     Ok(_) => {
                         if let Ok(sessions) = storage.load_sessions() {
                             app.sessions = sessions;
@@ -758,7 +761,7 @@ fn handle_confirm_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
     storage: &crate::core::storage::Storage,
-    session_manager: &crate::core::session::SessionManager,
+    session_ops: &crate::core::session::SessionOps,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::KeyCode;
 
@@ -768,10 +771,10 @@ fn handle_confirm_key(
                 match &dialog.action {
                     crate::app::ConfirmAction::DeleteSession(id) => {
                         let mut cache = crate::core::tmux::SessionCache::new();
-                        let _ = session_manager.delete_session(storage, &mut cache, id);
+                        let _ = session_ops.delete_session(storage, &mut cache, id);
                     }
                     crate::app::ConfirmAction::StopSession(id) => {
-                        let _ = session_manager.stop_session(storage, id);
+                        let _ = session_ops.stop_session(storage, id);
                     }
                 }
                 // Refresh sessions
@@ -933,7 +936,7 @@ fn handle_palette_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
     storage: &crate::core::storage::Storage,
-    session_manager: &mut crate::core::session::SessionManager,
+    session_ops: &crate::core::session::SessionOps,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::KeyCode;
 
@@ -956,7 +959,7 @@ fn handle_palette_key(
                 if let Some(&idx) = palette.filtered.get(palette.selected) {
                     let action = palette.items[idx].action.clone();
                     app.overlay = crate::app::Overlay::None;
-                    execute_command_action(app, action, storage, session_manager)?;
+                    execute_command_action(app, action, storage, session_ops)?;
                 }
             }
             KeyCode::Backspace => {
@@ -977,7 +980,7 @@ fn execute_command_action(
     app: &mut crate::app::App,
     action: crate::app::CommandAction,
     storage: &crate::core::storage::Storage,
-    session_manager: &mut crate::core::session::SessionManager,
+    session_ops: &crate::core::session::SessionOps,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::app::{CommandAction, Overlay};
 
@@ -1016,7 +1019,7 @@ fn execute_command_action(
             if let Some(session) = app.selected_session() {
                 let id = session.id.clone();
                 let mut cache = crate::core::tmux::SessionCache::new();
-                let _ = session_manager.restart_session(storage, &mut cache, &id);
+                let _ = session_ops.restart_session(storage, &mut cache, &id);
                 if let Ok(sessions) = storage.load_sessions() {
                     app.sessions = sessions;
                     app.rebuild_list_rows();

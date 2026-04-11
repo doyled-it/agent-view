@@ -33,8 +33,9 @@ fn generate_title() -> String {
     format!("{}-{}", adj, noun)
 }
 
-/// Tracks debounce and notification state for status management
-pub struct SessionManager {
+/// Tracks debounce and notification state for status processing.
+/// Lives in the background thread.
+pub struct StatusProcessor {
     /// Last status we notified about per session (prevents repeated notifications)
     last_notified_status: HashMap<String, SessionStatus>,
     /// When a session entered "running" state
@@ -60,7 +61,7 @@ const MIN_ERROR_DURATION_MS: u128 = 5_000;
 /// Minimum time (ms) a new status must persist before the UI updates
 const STATUS_DEBOUNCE_MS: u128 = 750;
 
-impl SessionManager {
+impl StatusProcessor {
     pub fn new() -> Self {
         Self {
             last_notified_status: HashMap::new(),
@@ -276,6 +277,13 @@ impl SessionManager {
         notified
     }
 
+}
+
+/// Session lifecycle operations (create, stop, delete, restart).
+/// Stateless — lives on the main thread.
+pub struct SessionOps;
+
+impl SessionOps {
     /// Create a new session (creates tmux session and saves to storage)
     pub fn create_session(
         &self,
@@ -469,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_resolve_status_debounces_non_waiting() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         // First call: starts debounce timer, returns previous
         let result = mgr.resolve_status("s1", SessionStatus::Idle, SessionStatus::Running);
         assert_eq!(result, SessionStatus::Running); // still debouncing
@@ -477,14 +485,14 @@ mod tests {
 
     #[test]
     fn test_resolve_status_waiting_is_immediate() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         let result = mgr.resolve_status("s1", SessionStatus::Waiting, SessionStatus::Running);
         assert_eq!(result, SessionStatus::Waiting); // immediate
     }
 
     #[test]
     fn test_resolve_status_same_status_clears_pending() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         // Start a pending transition
         mgr.resolve_status("s1", SessionStatus::Idle, SessionStatus::Running);
         assert!(mgr.pending_status.contains_key("s1"));
@@ -496,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_resolve_status_error_hysteresis() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         // Error just started — should not immediately show
         let result = mgr.resolve_status("s1", SessionStatus::Error, SessionStatus::Running);
         assert_eq!(result, SessionStatus::Running); // error not sustained yet
@@ -513,14 +521,14 @@ mod tests {
 
     #[test]
     fn test_suppress_notification() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         mgr.suppress_notification("agentorch_test");
         assert!(mgr.recently_detached.contains_key("agentorch_test"));
     }
 
     #[test]
     fn test_maybe_notify_returns_false_when_not_enabled() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         let session = make_test_session("s1", false); // notify = false
         let result = mgr.maybe_notify(&session, SessionStatus::Waiting, None, false);
         assert!(!result);
@@ -528,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_maybe_notify_returns_false_when_attached() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         let session = make_test_session("s1", true);
         let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
         assert!(!result);
@@ -536,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_track_durations_running() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         mgr.track_durations("s1", SessionStatus::Running);
         assert!(mgr.running_start_time.contains_key("s1"));
         assert!(!mgr.idle_start_time.contains_key("s1"));
@@ -544,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_track_durations_idle_clears_running() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         mgr.track_durations("s1", SessionStatus::Running);
         mgr.track_durations("s1", SessionStatus::Idle);
         assert!(!mgr.running_start_time.contains_key("s1"));
@@ -553,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_track_durations_other_clears_both() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         mgr.track_durations("s1", SessionStatus::Running);
         mgr.track_durations("s1", SessionStatus::Waiting);
         assert!(!mgr.running_start_time.contains_key("s1"));
@@ -562,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_maybe_notify_suppresses_attached_session() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         let session = make_test_session("s1", true);
         // Attached to this exact session — should suppress
         let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
@@ -571,7 +579,7 @@ mod tests {
 
     #[test]
     fn test_maybe_notify_allows_other_sessions_when_attached() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         let session = make_test_session("s2", true);
         // Attached to a DIFFERENT session — should allow notification
         let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
@@ -580,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_maybe_notify_allows_all_when_not_attached() {
-        let mut mgr = SessionManager::new();
+        let mut mgr = StatusProcessor::new();
         let session = make_test_session("s1", true);
         // Not attached to anything — should allow notification
         let result = mgr.maybe_notify(&session, SessionStatus::Waiting, None, false);
