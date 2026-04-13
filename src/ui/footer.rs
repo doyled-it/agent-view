@@ -36,6 +36,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ("r", "restart"),
                     ("S", "sort"),
                     ("i", "follow-up"),
+                    ("p", "pin"),
                     ("!", "notify"),
                     ("e", "export"),
                     ("/", "search"),

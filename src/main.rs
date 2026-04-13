@@ -566,6 +566,26 @@ fn handle_main_key(
             app.toast_message = Some(format!("Sort: {}", label));
             app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         }
+        (KeyModifiers::NONE, KeyCode::Char('p')) => {
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.pinned;
+                let id = session.id.clone();
+                let title = session.title.clone();
+                let _ = storage.set_pinned(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+                let msg = if new_val {
+                    format!("Pinned: {}", title)
+                } else {
+                    format!("Unpinned: {}", title)
+                };
+                app.toast_message = Some(msg);
+                app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            }
+        }
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
             if let Some(session) = app.selected_session() {
                 app.overlay = crate::app::Overlay::Rename(crate::app::RenameForm {
@@ -1024,6 +1044,26 @@ fn execute_command_action(
             let label = app.sort_mode.label();
             app.toast_message = Some(format!("Sort: {}", label));
             app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+        }
+        CommandAction::PinSession => {
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.pinned;
+                let id = session.id.clone();
+                let title = session.title.clone();
+                let _ = storage.set_pinned(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+                let msg = if new_val {
+                    format!("Pinned: {}", title)
+                } else {
+                    format!("Unpinned: {}", title)
+                };
+                app.toast_message = Some(msg);
+                app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            }
         }
     }
     Ok(())

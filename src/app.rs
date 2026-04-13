@@ -44,6 +44,7 @@ pub enum CommandAction {
     CreateGroup,
     Search,
     CycleSort,
+    PinSession,
     Quit,
 }
 
@@ -62,6 +63,7 @@ impl CommandPalette {
             CommandItem { label: "Create Group".to_string(), key_hint: "g".to_string(), action: CommandAction::CreateGroup },
             CommandItem { label: "Search Sessions".to_string(), key_hint: "/".to_string(), action: CommandAction::Search },
             CommandItem { label: "Cycle Sort Mode".to_string(), key_hint: "S".to_string(), action: CommandAction::CycleSort },
+            CommandItem { label: "Pin/Unpin Session".to_string(), key_hint: "p".to_string(), action: CommandAction::PinSession },
             CommandItem { label: "Quit".to_string(), key_hint: "q".to_string(), action: CommandAction::Quit },
         ];
         let filtered: Vec<usize> = (0..items.len()).collect();

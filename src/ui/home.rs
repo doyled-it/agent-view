@@ -178,6 +178,7 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     let status_color = crate::ui::theme::status_color(theme, session.status);
                     let notify_indicator = if session.notify { " !" } else { "  " };
                     let follow_up_indicator = if session.follow_up { "F " } else { "  " };
+                    let pin_indicator = if session.pinned { "^ " } else { "  " };
                     let age = format_age(session.created_at);
 
                     // When this session matches the search, highlight the title in the info color
@@ -188,6 +189,7 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     };
 
                     let line = Line::from(vec![
+                        Span::styled(pin_indicator, Style::default().fg(theme.accent)),
                         Span::raw(follow_up_indicator),
                         Span::styled(
                             format!("   {} ", session.status.icon()),

@@ -43,21 +43,22 @@ pub fn ensure_default_group(groups: &[Group]) -> Vec<Group> {
 }
 
 /// Sort a slice of session references according to the given sort mode.
+/// Pinned sessions always float to the top regardless of sort mode.
 pub fn sort_sessions(sessions: &mut [&Session], mode: crate::types::SortMode) {
-    match mode {
-        crate::types::SortMode::StatusPriority => {
-            sessions.sort_by_key(|s| s.status.sort_priority());
+    sessions.sort_by(|a, b| {
+        // Pinned sessions always come first
+        match (b.pinned, a.pinned) {
+            (true, false) => return std::cmp::Ordering::Greater,
+            (false, true) => return std::cmp::Ordering::Less,
+            _ => {}
         }
-        crate::types::SortMode::LastActivity => {
-            sessions.sort_by(|a, b| b.status_changed_at.cmp(&a.status_changed_at));
+        match mode {
+            crate::types::SortMode::StatusPriority => a.status.sort_priority().cmp(&b.status.sort_priority()),
+            crate::types::SortMode::LastActivity => b.status_changed_at.cmp(&a.status_changed_at),
+            crate::types::SortMode::Name => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+            crate::types::SortMode::Created => b.created_at.cmp(&a.created_at),
         }
-        crate::types::SortMode::Name => {
-            sessions.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
-        }
-        crate::types::SortMode::Created => {
-            sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        }
-    }
+    });
 }
 
 /// Flatten groups and sessions into a navigable list.
@@ -278,6 +279,22 @@ mod tests {
             assert_eq!(*session_count, 3);
         } else {
             panic!("Expected group row");
+        }
+    }
+
+    #[test]
+    fn test_pinned_sessions_sort_first() {
+        let s1 = make_session("s1", "work", SessionStatus::Idle);
+        let mut s2 = make_session("s2", "work", SessionStatus::Idle);
+        s2.pinned = true;
+        let groups = vec![make_group("work", "Work", 0)];
+        let rows = flatten_group_tree(&[s1, s2], &groups, SortMode::Created);
+        // s2 is pinned so should appear first after group header
+        if let ListRow::Session(first) = &rows[1] {
+            assert_eq!(first.id, "s2");
+            assert!(first.pinned);
+        } else {
+            panic!("Expected session row");
         }
     }
 
