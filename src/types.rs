@@ -143,6 +143,8 @@ pub struct Session {
     pub status_changed_at: i64,
     pub restart_count: i32,
     pub status_history: Vec<StatusHistoryEntry>,
+    pub pinned: bool,
+    pub tokens_used: i64,
 }
 
 impl Session {

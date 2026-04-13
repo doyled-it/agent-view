@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, Result as SqlResult};
 use std::fs;
 use std::path::PathBuf;
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 pub struct Storage {
     conn: Connection,
@@ -117,6 +117,18 @@ impl Storage {
             );
         }
 
+        // v3 -> v4
+        if version < 4 {
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -135,8 +147,9 @@ impl Storage {
                 created_at, last_accessed,
                 parent_session_id, worktree_path, worktree_repo, worktree_branch,
                 tool_data, acknowledged,
-                notify, follow_up, status_changed_at, restart_count, status_history
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                notify, follow_up, status_changed_at, restart_count, status_history,
+                pinned, tokens_used
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 session.id,
                 session.title,
@@ -161,6 +174,8 @@ impl Storage {
                 session.status_changed_at,
                 session.restart_count,
                 session.status_history_json(),
+                session.pinned as i32,
+                session.tokens_used,
             ],
         )?;
         Ok(())
@@ -174,7 +189,8 @@ impl Storage {
                     created_at, last_accessed,
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
-                    notify, follow_up, status_changed_at, restart_count, status_history
+                    notify, follow_up, status_changed_at, restart_count, status_history,
+                    pinned, tokens_used
              FROM sessions ORDER BY sort_order",
         )?;
 
@@ -213,6 +229,8 @@ impl Storage {
                 },
                 restart_count: row.get(21)?,
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
+                pinned: row.get::<_, i32>(23)? == 1,
+                tokens_used: row.get(24)?,
             })
         })?;
 
@@ -227,7 +245,8 @@ impl Storage {
                     created_at, last_accessed,
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
-                    notify, follow_up, status_changed_at, restart_count, status_history
+                    notify, follow_up, status_changed_at, restart_count, status_history,
+                    pinned, tokens_used
              FROM sessions WHERE id = ?1",
         )?;
 
@@ -266,6 +285,8 @@ impl Storage {
                 },
                 restart_count: row.get(21)?,
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
+                pinned: row.get::<_, i32>(23)? == 1,
+                tokens_used: row.get(24)?,
             })
         });
 
@@ -328,6 +349,24 @@ impl Storage {
         self.conn.execute(
             "UPDATE sessions SET follow_up = ?1 WHERE id = ?2",
             params![follow_up as i32, id],
+        )?;
+        Ok(())
+    }
+
+    /// Set the pinned flag
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET pinned = ?1 WHERE id = ?2",
+            params![pinned as i32, id],
+        )?;
+        Ok(())
+    }
+
+    /// Add tokens to a session's token count
+    pub fn add_tokens(&self, id: &str, tokens: i64) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET tokens_used = tokens_used + ?1 WHERE id = ?2",
+            params![tokens, id],
         )?;
         Ok(())
     }
@@ -539,7 +578,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("3".to_string()));
+        assert_eq!(version, Some("4".to_string()));
     }
 
     #[test]
@@ -547,7 +586,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("3".to_string()));
+        assert_eq!(version, Some("4".to_string()));
     }
 
     #[test]
@@ -612,6 +651,8 @@ mod tests {
             status_changed_at: 1700000000000,
             restart_count: 0,
             status_history: vec![],
+            pinned: false,
+            tokens_used: 0,
         }
     }
 
@@ -750,6 +791,47 @@ mod tests {
             .unwrap();
 
         assert_eq!(follow_up, 1);
+    }
+
+    #[test]
+    fn test_v4_columns_exist() {
+        let (storage, _dir) = test_storage();
+        let mut session = make_test_session("s1");
+        session.pinned = true;
+        session.tokens_used = 5000;
+        storage.save_session(&session).unwrap();
+
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert!(loaded.pinned);
+        assert_eq!(loaded.tokens_used, 5000);
+    }
+
+    #[test]
+    fn test_set_pinned() {
+        let (storage, _dir) = test_storage();
+        let session = make_test_session("s1");
+        storage.save_session(&session).unwrap();
+
+        storage.set_pinned("s1", true).unwrap();
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert!(loaded.pinned);
+
+        storage.set_pinned("s1", false).unwrap();
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert!(!loaded.pinned);
+    }
+
+    #[test]
+    fn test_add_tokens() {
+        let (storage, _dir) = test_storage();
+        let session = make_test_session("s1");
+        storage.save_session(&session).unwrap();
+
+        storage.add_tokens("s1", 1000).unwrap();
+        storage.add_tokens("s1", 2500).unwrap();
+
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert_eq!(loaded.tokens_used, 3500);
     }
 
     #[test]

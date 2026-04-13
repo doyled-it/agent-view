@@ -166,6 +166,8 @@ mod tests {
             status_changed_at: 0,
             restart_count: 0,
             status_history: vec![],
+            pinned: false,
+            tokens_used: 0,
         }
     }
 
