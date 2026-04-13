@@ -34,6 +34,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ("d", "delete"),
                     ("s", "stop"),
                     ("r", "restart"),
+                    ("S", "sort"),
                     ("i", "follow-up"),
                     ("!", "notify"),
                     ("e", "export"),

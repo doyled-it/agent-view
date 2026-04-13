@@ -42,10 +42,28 @@ pub fn ensure_default_group(groups: &[Group]) -> Vec<Group> {
     result
 }
 
+/// Sort a slice of session references according to the given sort mode.
+pub fn sort_sessions(sessions: &mut [&Session], mode: crate::types::SortMode) {
+    match mode {
+        crate::types::SortMode::StatusPriority => {
+            sessions.sort_by_key(|s| s.status.sort_priority());
+        }
+        crate::types::SortMode::LastActivity => {
+            sessions.sort_by(|a, b| b.status_changed_at.cmp(&a.status_changed_at));
+        }
+        crate::types::SortMode::Name => {
+            sessions.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        }
+        crate::types::SortMode::Created => {
+            sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        }
+    }
+}
+
 /// Flatten groups and sessions into a navigable list.
 /// Groups appear as headers; if expanded, their sessions follow.
 /// Orphan sessions (in groups that don't exist) get an implicit group.
-pub fn flatten_group_tree(sessions: &[Session], groups: &[Group]) -> Vec<ListRow> {
+pub fn flatten_group_tree(sessions: &[Session], groups: &[Group], sort_mode: crate::types::SortMode) -> Vec<ListRow> {
     let mut result = Vec::new();
 
     let mut sorted_groups = groups.to_vec();
@@ -62,9 +80,9 @@ pub fn flatten_group_tree(sessions: &[Session], groups: &[Group]) -> Vec<ListRow
         by_group.entry(path).or_default().push(session);
     }
 
-    // Sort sessions within each group by created_at descending
+    // Sort sessions within each group by the requested sort mode
     for group_sessions in by_group.values_mut() {
-        group_sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        sort_sessions(group_sessions, sort_mode);
     }
 
     let known_paths: std::collections::HashSet<&str> =
@@ -139,7 +157,7 @@ pub fn flatten_group_tree(sessions: &[Session], groups: &[Group]) -> Vec<ListRow
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{SessionStatus, Tool};
+    use crate::types::{SessionStatus, SortMode, Tool};
 
     fn make_session(id: &str, group: &str, status: SessionStatus) -> Session {
         Session {
@@ -203,7 +221,7 @@ mod tests {
             make_session("s1", "work", SessionStatus::Running),
             make_session("s2", "work", SessionStatus::Idle),
         ];
-        let rows = flatten_group_tree(&sessions, &groups);
+        let rows = flatten_group_tree(&sessions, &groups, SortMode::Created);
         assert_eq!(rows.len(), 3); // 1 group header + 2 sessions
         assert!(matches!(rows[0], ListRow::Group { .. }));
         assert!(matches!(rows[1], ListRow::Session(_)));
@@ -214,7 +232,7 @@ mod tests {
         let mut group = make_group("work", "Work", 0);
         group.expanded = false;
         let sessions = vec![make_session("s1", "work", SessionStatus::Idle)];
-        let rows = flatten_group_tree(&sessions, &[group]);
+        let rows = flatten_group_tree(&sessions, &[group], SortMode::Created);
         assert_eq!(rows.len(), 1); // only group header
     }
 
@@ -222,7 +240,7 @@ mod tests {
     fn test_flatten_orphan_sessions_get_implicit_group() {
         let groups = vec![make_group("work", "Work", 0)];
         let sessions = vec![make_session("s1", "unknown", SessionStatus::Idle)];
-        let rows = flatten_group_tree(&sessions, &groups);
+        let rows = flatten_group_tree(&sessions, &groups, SortMode::Created);
         // work group (empty, but it's not default so still shows) + unknown group + session
         assert!(rows.len() >= 2);
     }
@@ -234,7 +252,7 @@ mod tests {
             make_group("work", "Work", 1),
         ];
         let sessions = vec![make_session("s1", "work", SessionStatus::Idle)];
-        let rows = flatten_group_tree(&sessions, &groups);
+        let rows = flatten_group_tree(&sessions, &groups, SortMode::Created);
         // Default group hidden (empty), work group + session
         assert_eq!(rows.len(), 2);
     }
@@ -247,7 +265,7 @@ mod tests {
             make_session("s2", "work", SessionStatus::Waiting),
             make_session("s3", "work", SessionStatus::Idle),
         ];
-        let rows = flatten_group_tree(&sessions, &groups);
+        let rows = flatten_group_tree(&sessions, &groups, SortMode::Created);
         if let ListRow::Group {
             running_count,
             waiting_count,
@@ -261,5 +279,21 @@ mod tests {
         } else {
             panic!("Expected group row");
         }
+    }
+
+    #[test]
+    fn test_sort_sessions_by_status_priority() {
+        let mut s1 = make_session("s1", "work", SessionStatus::Idle);
+        s1.created_at = 1700000000003;
+        let mut s2 = make_session("s2", "work", SessionStatus::Waiting);
+        s2.created_at = 1700000000002;
+        let mut s3 = make_session("s3", "work", SessionStatus::Running);
+        s3.created_at = 1700000000001;
+        let groups = vec![make_group("work", "Work", 0)];
+        let rows = flatten_group_tree(&[s1, s2, s3], &groups, SortMode::StatusPriority);
+        // Group header + 3 sessions
+        if let ListRow::Session(first) = &rows[1] { assert_eq!(first.id, "s2"); } // waiting first
+        if let ListRow::Session(second) = &rows[2] { assert_eq!(second.id, "s3"); } // running second
+        if let ListRow::Session(third) = &rows[3] { assert_eq!(third.id, "s1"); } // idle last
     }
 }

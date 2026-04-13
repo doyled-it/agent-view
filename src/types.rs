@@ -15,6 +15,18 @@ pub enum SessionStatus {
 }
 
 impl SessionStatus {
+    pub fn sort_priority(&self) -> u8 {
+        match self {
+            Self::Waiting => 0,
+            Self::Paused => 1,
+            Self::Running => 2,
+            Self::Compacting => 3,
+            Self::Idle => 4,
+            Self::Stopped => 5,
+            Self::Error => 6,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Running => "running",
@@ -160,6 +172,34 @@ pub struct Group {
     pub expanded: bool,
     pub order: i32,
     pub default_path: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    StatusPriority,
+    LastActivity,
+    Name,
+    Created,
+}
+
+impl SortMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::StatusPriority => Self::LastActivity,
+            Self::LastActivity => Self::Name,
+            Self::Name => Self::Created,
+            Self::Created => Self::StatusPriority,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::StatusPriority => "status",
+            Self::LastActivity => "activity",
+            Self::Name => "name",
+            Self::Created => "created",
+        }
+    }
 }
 
 pub struct SessionCreateOptions {

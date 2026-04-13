@@ -559,6 +559,13 @@ fn handle_main_key(
         (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
             app.overlay = crate::app::Overlay::CommandPalette(crate::app::CommandPalette::new());
         }
+        (KeyModifiers::SHIFT, KeyCode::Char('S')) => {
+            app.sort_mode = app.sort_mode.next();
+            app.rebuild_list_rows();
+            let label = app.sort_mode.label();
+            app.toast_message = Some(format!("Sort: {}", label));
+            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+        }
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
             if let Some(session) = app.selected_session() {
                 app.overlay = crate::app::Overlay::Rename(crate::app::RenameForm {
@@ -1010,6 +1017,13 @@ fn execute_command_action(
                     }
                 }
             }
+        }
+        CommandAction::CycleSort => {
+            app.sort_mode = app.sort_mode.next();
+            app.rebuild_list_rows();
+            let label = app.sort_mode.label();
+            app.toast_message = Some(format!("Sort: {}", label));
+            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         }
     }
     Ok(())

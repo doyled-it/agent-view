@@ -43,6 +43,7 @@ pub enum CommandAction {
     ExportLog,
     CreateGroup,
     Search,
+    CycleSort,
     Quit,
 }
 
@@ -60,6 +61,7 @@ impl CommandPalette {
             CommandItem { label: "Export Log".to_string(), key_hint: "e".to_string(), action: CommandAction::ExportLog },
             CommandItem { label: "Create Group".to_string(), key_hint: "g".to_string(), action: CommandAction::CreateGroup },
             CommandItem { label: "Search Sessions".to_string(), key_hint: "/".to_string(), action: CommandAction::Search },
+            CommandItem { label: "Cycle Sort Mode".to_string(), key_hint: "S".to_string(), action: CommandAction::CycleSort },
             CommandItem { label: "Quit".to_string(), key_hint: "q".to_string(), action: CommandAction::Quit },
         ];
         let filtered: Vec<usize> = (0..items.len()).collect();
@@ -151,6 +153,7 @@ pub struct App {
     pub search_query: Option<String>,
     pub toast_message: Option<String>,
     pub toast_expire: Option<std::time::Instant>,
+    pub sort_mode: crate::types::SortMode,
 }
 
 impl App {
@@ -168,13 +171,14 @@ impl App {
             search_query: None,
             toast_message: None,
             toast_expire: None,
+            sort_mode: crate::types::SortMode::StatusPriority,
         }
     }
 
     /// Rebuild the flattened list from current sessions and groups
     pub fn rebuild_list_rows(&mut self) {
         let groups = crate::core::groups::ensure_default_group(&self.groups);
-        self.list_rows = crate::core::groups::flatten_group_tree(&self.sessions, &groups);
+        self.list_rows = crate::core::groups::flatten_group_tree(&self.sessions, &groups, self.sort_mode);
         self.clamp_selection();
     }
 
