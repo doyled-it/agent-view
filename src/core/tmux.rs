@@ -92,6 +92,17 @@ impl SessionCache {
     }
 }
 
+/// Check if a tmux session exists
+pub fn session_exists(name: &str) -> bool {
+    std::process::Command::new("tmux")
+        .args(["has-session", "-t", name])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Check if tmux is available on the system
 pub fn is_tmux_available() -> bool {
     Command::new("tmux")
@@ -460,5 +471,10 @@ mod tests {
         cache.register("test");
         cache.remove("test");
         assert!(!cache.session_exists("test"));
+    }
+
+    #[test]
+    fn test_session_exists_nonexistent() {
+        assert!(!session_exists("agentorch_nonexistent_test_session_xyz"));
     }
 }

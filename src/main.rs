@@ -52,6 +52,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.groups = storage.load_groups().unwrap_or_default();
     app.rebuild_list_rows();
 
+    // Detect crashed sessions (tmux died since last run)
+    let crashed_ids = crate::core::session::detect_crashed_statuses(&app.sessions);
+    for id in &crashed_ids {
+        let tool = app
+            .sessions
+            .iter()
+            .find(|s| s.id == *id)
+            .map(|s| s.tool)
+            .unwrap_or(crate::types::Tool::Claude);
+        let _ = storage.write_status(id, crate::types::SessionStatus::Crashed, tool);
+    }
+    if !crashed_ids.is_empty() {
+        app.sessions = storage.load_sessions().unwrap_or_default();
+        app.rebuild_list_rows();
+    }
+
     // If --attach was passed, store for immediate attach after TUI starts
     if let Some(ref session_id) = cli.attach {
         app.attach_session = Some(session_id.clone());
@@ -155,8 +171,10 @@ fn run_tui(
 
                 // Detect raw status
                 let raw_status = if !cache.session_exists(&session.tmux_session) {
-                    if session.status != crate::types::SessionStatus::Stopped {
-                        crate::types::SessionStatus::Stopped
+                    if session.status != crate::types::SessionStatus::Stopped
+                        && session.status != crate::types::SessionStatus::Crashed
+                    {
+                        crate::types::SessionStatus::Crashed
                     } else {
                         continue;
                     }

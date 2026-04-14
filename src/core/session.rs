@@ -277,6 +277,25 @@ impl StatusProcessor {
     }
 }
 
+/// Detect sessions whose tmux sessions no longer exist.
+/// Returns IDs of sessions that should be marked as Crashed.
+pub fn detect_crashed_statuses(sessions: &[crate::types::Session]) -> Vec<String> {
+    sessions
+        .iter()
+        .filter(|s| {
+            matches!(
+                s.status,
+                crate::types::SessionStatus::Running
+                    | crate::types::SessionStatus::Waiting
+                    | crate::types::SessionStatus::Paused
+                    | crate::types::SessionStatus::Compacting
+            ) && !s.tmux_session.is_empty()
+                && !crate::core::tmux::session_exists(&s.tmux_session)
+        })
+        .map(|s| s.id.clone())
+        .collect()
+}
+
 /// Session lifecycle operations (create, stop, delete, restart).
 /// Stateless — lives on the main thread.
 pub struct SessionOps;
@@ -615,5 +634,30 @@ mod tests {
         // Not attached to anything — should allow notification
         let result = mgr.maybe_notify(&session, SessionStatus::Waiting, None, false);
         assert!(result);
+    }
+
+    #[test]
+    fn test_detect_crashed_sessions() {
+        use crate::types::SessionStatus;
+
+        let mut session = make_test_session("crash-test", false);
+        session.status = SessionStatus::Running;
+        session.tmux_session = "agentorch_nonexistent_session_xyz".to_string();
+
+        let crashed = detect_crashed_statuses(&[session]);
+        assert_eq!(crashed.len(), 1);
+        assert_eq!(crashed[0], "crash-test");
+    }
+
+    #[test]
+    fn test_stopped_sessions_not_detected_as_crashed() {
+        use crate::types::SessionStatus;
+
+        let mut session = make_test_session("stopped-test", false);
+        session.status = SessionStatus::Stopped;
+        session.tmux_session = "agentorch_nonexistent_session_xyz".to_string();
+
+        let crashed = detect_crashed_statuses(&[session]);
+        assert!(crashed.is_empty());
     }
 }
