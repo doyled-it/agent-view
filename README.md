@@ -4,7 +4,9 @@
 
 Run multiple AI coding agents in parallel and manage them from a single terminal UI. Agent View is a tmux session manager built for AI-assisted development workflows -- monitor agent status in real-time, get notifications when agents finish or need input, and seamlessly switch between sessions.
 
-Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command.
+Forked from [Frayo44/agent-view](https://github.com/Frayo44/agent-view) (the original TypeScript implementation) and rewritten in Rust. The TypeScript version with additional features is preserved on the [`legacy/typescript`](https://github.com/doyled-it/agent-view/tree/legacy/typescript) branch.
+
+Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command. Note: advanced features like status detection, token tracking, and smart notifications are optimized for **Claude Code** -- other tools get basic session management.
 
 ## Supported Platforms
 
@@ -168,7 +170,7 @@ Config lives at `~/.agent-view/config.json`:
 
 ## Acknowledgments
 
-This project is inspired by [agent-deck](https://github.com/asheshgoplani/agent-deck).
+Forked from [Frayo44/agent-view](https://github.com/Frayo44/agent-view), which was inspired by [agent-deck](https://github.com/asheshgoplani/agent-deck). The original TypeScript implementation was extended with additional features and then rewritten from scratch in Rust for this version.
 
 ## License
 
