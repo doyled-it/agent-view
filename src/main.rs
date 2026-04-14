@@ -465,8 +465,13 @@ fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('s')) => {
-            // Stop selected session
-            if let Some(session) = app.selected_session() {
+            if !app.bulk_selected.is_empty() {
+                let count = app.bulk_selected.len();
+                app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
+                    message: format!("Stop {} selected sessions?", count),
+                    action: crate::app::ConfirmAction::BulkStop,
+                });
+            } else if let Some(session) = app.selected_session() {
                 if session.status != crate::types::SessionStatus::Stopped {
                     let msg = format!("Stop session \"{}\"?", session.title);
                     app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
@@ -477,13 +482,32 @@ fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('d')) => {
-            // Delete selected session
-            if let Some(session) = app.selected_session() {
+            if !app.bulk_selected.is_empty() {
+                let count = app.bulk_selected.len();
+                app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
+                    message: format!("Delete {} selected sessions?", count),
+                    action: crate::app::ConfirmAction::BulkDelete,
+                });
+            } else if let Some(session) = app.selected_session() {
                 let msg = format!("Delete session \"{}\"?", session.title);
                 app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
                     message: msg,
                     action: crate::app::ConfirmAction::DeleteSession(session.id.clone()),
                 });
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Char(' ')) => {
+            if let Some(session) = app.selected_session() {
+                let id = session.id.clone();
+                app.toggle_bulk_select(&id);
+            }
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
+            app.select_all_visible();
+        }
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            if !app.bulk_selected.is_empty() {
+                app.clear_bulk_selection();
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('r')) => {
@@ -775,6 +799,21 @@ fn handle_confirm_key(
                     }
                     crate::app::ConfirmAction::StopSession(id) => {
                         let _ = session_ops.stop_session(storage, id);
+                    }
+                    crate::app::ConfirmAction::BulkDelete => {
+                        let ids: Vec<String> = app.bulk_selected.iter().cloned().collect();
+                        let mut cache = crate::core::tmux::SessionCache::new();
+                        for id in &ids {
+                            let _ = session_ops.delete_session(storage, &mut cache, id);
+                        }
+                        app.clear_bulk_selection();
+                    }
+                    crate::app::ConfirmAction::BulkStop => {
+                        let ids: Vec<String> = app.bulk_selected.iter().cloned().collect();
+                        for id in &ids {
+                            let _ = session_ops.stop_session(storage, id);
+                        }
+                        app.clear_bulk_selection();
                     }
                 }
                 // Refresh sessions

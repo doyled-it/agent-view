@@ -233,6 +233,7 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     ListItem::new(Line::from(spans)).style(Style::default().bg(bg))
                 }
                 crate::core::groups::ListRow::Session(session) => {
+                    let is_bulk_selected = app.bulk_selected.contains(&session.id);
                     let status_color = crate::ui::theme::status_color(theme, session.status);
                     let notify_indicator = if session.notify { " !" } else { "  " };
                     let follow_up_indicator = if session.follow_up { "F " } else { "  " };
@@ -271,6 +272,8 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
 
                     let bg = if is_selected {
                         theme.background_element
+                    } else if is_bulk_selected {
+                        theme.secondary
                     } else {
                         theme.background
                     };

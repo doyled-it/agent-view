@@ -3,6 +3,7 @@
 use crate::core::groups::ListRow;
 use crate::types::{Group, Session};
 use crate::ui::theme::Theme;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +142,8 @@ pub struct ConfirmDialog {
 pub enum ConfirmAction {
     DeleteSession(String),
     StopSession(String),
+    BulkDelete,
+    BulkStop,
 }
 
 pub struct App {
@@ -159,6 +162,7 @@ pub struct App {
     pub sort_mode: crate::types::SortMode,
     pub activity_feed: VecDeque<crate::types::ActivityEvent>,
     pub show_activity_feed: bool,
+    pub bulk_selected: HashSet<String>,
 }
 
 impl App {
@@ -179,6 +183,7 @@ impl App {
             sort_mode: crate::types::SortMode::StatusPriority,
             activity_feed: VecDeque::new(),
             show_activity_feed: true,
+            bulk_selected: HashSet::new(),
         }
     }
 
@@ -186,6 +191,26 @@ impl App {
         self.activity_feed.push_front(event);
         if self.activity_feed.len() > 100 {
             self.activity_feed.pop_back();
+        }
+    }
+
+    pub fn toggle_bulk_select(&mut self, session_id: &str) {
+        if self.bulk_selected.contains(session_id) {
+            self.bulk_selected.remove(session_id);
+        } else {
+            self.bulk_selected.insert(session_id.to_string());
+        }
+    }
+
+    pub fn clear_bulk_selection(&mut self) {
+        self.bulk_selected.clear();
+    }
+
+    pub fn select_all_visible(&mut self) {
+        for row in &self.list_rows {
+            if let crate::core::groups::ListRow::Session(s) = row {
+                self.bulk_selected.insert(s.id.clone());
+            }
         }
     }
 
@@ -256,5 +281,28 @@ impl App {
         } else if self.selected_index >= self.list_rows.len() {
             self.selected_index = self.list_rows.len() - 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_toggle_bulk_selection() {
+        let mut app = App::new(false);
+        app.toggle_bulk_select("s1");
+        assert!(app.bulk_selected.contains("s1"));
+        app.toggle_bulk_select("s1");
+        assert!(!app.bulk_selected.contains("s1"));
+    }
+
+    #[test]
+    fn test_clear_bulk_selection() {
+        let mut app = App::new(false);
+        app.toggle_bulk_select("s1");
+        app.toggle_bulk_select("s2");
+        app.clear_bulk_selection();
+        assert!(app.bulk_selected.is_empty());
     }
 }

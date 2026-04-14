@@ -21,13 +21,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let hints: Vec<(&str, &str)> = match &app.overlay {
         Overlay::None => {
-            if app.sessions.is_empty() {
+            if !app.bulk_selected.is_empty() {
+                vec![
+                    ("Space", "toggle"),
+                    ("d", "delete all"),
+                    ("s", "stop all"),
+                    ("C-a", "select all"),
+                    ("Esc", "clear"),
+                ]
+            } else if app.sessions.is_empty() {
                 vec![("n", "new"), ("g", "group"), ("q", "quit")]
             } else {
                 vec![
                     ("j/k", "navigate"),
                     ("Enter", "attach"),
                     ("n", "new"),
+                    ("Space", "select"),
                     ("g", "group"),
                     ("m", "move"),
                     ("R", "rename"),
