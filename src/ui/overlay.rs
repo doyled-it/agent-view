@@ -289,7 +289,7 @@ pub fn render_command_palette(
 
 /// Render the keybinding help overlay
 pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
-    let width = area.width.min(60);
+    let width = area.width.min(72);
     let height = area.height.min(22);
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
@@ -307,27 +307,27 @@ pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Them
     frame.render_widget(block, popup);
 
     let left_bindings = vec![
-        ("j / k", "Navigate up/down"),
-        ("Enter", "Attach to session"),
+        ("j / k", "Navigate"),
+        ("Enter", "Attach session"),
         ("n", "New session"),
         ("s", "Stop session"),
         ("r", "Restart session"),
         ("d", "Delete session"),
-        ("R", "Rename session/group"),
+        ("R", "Rename"),
         ("m", "Move to group"),
         ("g", "Create group"),
-        ("J / K", "Move group down/up"),
+        ("J / K", "Move group up/dn"),
     ];
 
     let right_bindings = vec![
         ("Space", "Select session"),
         ("Ctrl+A", "Select all"),
-        ("S", "Cycle sort mode"),
-        ("p", "Pin/unpin session"),
-        ("i", "Toggle follow-up"),
-        ("!", "Toggle notifications"),
+        ("S", "Cycle sort"),
+        ("p", "Pin/unpin"),
+        ("i", "Follow-up flag"),
+        ("!", "Notifications"),
         ("e", "Export log"),
-        ("a", "Toggle activity feed"),
+        ("a", "Activity feed"),
         ("/", "Search"),
         ("Ctrl+K", "Command palette"),
     ];

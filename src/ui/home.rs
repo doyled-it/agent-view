@@ -244,9 +244,9 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                 crate::core::groups::ListRow::Session(session) => {
                     let is_bulk_selected = app.bulk_selected.contains(&session.id);
                     let status_color = crate::ui::theme::status_color(theme, session.status);
-                    let notify_indicator = if session.notify { " !" } else { "  " };
-                    let follow_up_indicator = if session.follow_up { "F " } else { "  " };
-                    let pin_indicator = if session.pinned { "^ " } else { "  " };
+                    let notify_indicator = if session.notify { "\u{266A}" } else { " " };
+                    let follow_up_indicator = if session.follow_up { "\u{2691}" } else { " " };
+                    let pin_indicator = if session.pinned { "\u{25B4}" } else { " " };
                     let age = format_age(session.created_at);
                     let sparkline = render_sparkline_str(&session.status_history, 8);
 
@@ -258,13 +258,13 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     };
 
                     let line = Line::from(vec![
-                        Span::styled(pin_indicator, Style::default().fg(theme.accent)),
-                        Span::raw(follow_up_indicator),
+                        Span::styled(format!(" {}", pin_indicator), Style::default().fg(theme.accent)),
+                        Span::styled(follow_up_indicator, Style::default().fg(theme.warning)),
+                        Span::styled(notify_indicator, Style::default().fg(theme.info)),
                         Span::styled(
-                            format!("   {} ", session.status.icon()),
+                            format!(" {} ", session.status.icon()),
                             Style::default().fg(status_color),
                         ),
-                        Span::styled(notify_indicator, Style::default().fg(theme.warning)),
                         Span::styled(session.title.clone(), Style::default().fg(title_color).bold()),
                         Span::raw("  "),
                         Span::styled(
