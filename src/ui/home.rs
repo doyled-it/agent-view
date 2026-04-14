@@ -8,6 +8,12 @@ use ratatui::widgets::*;
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
+    // Fill entire screen with theme background so light theme works properly
+    frame.render_widget(
+        Block::default().style(Style::default().bg(app.theme.background)),
+        area,
+    );
+
     // When the terminal is wide enough, split horizontally: list on left, detail on right
     let (list_area, detail_area) =
         if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH {
