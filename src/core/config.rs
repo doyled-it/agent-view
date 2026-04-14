@@ -151,4 +151,64 @@ mod tests {
         let config2 = load_config_from_path(&path);
         assert_eq!(config2.theme, "dark");
     }
+
+    #[test]
+    fn test_load_config_from_missing_path_returns_default() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nonexistent.json");
+        let config = load_config_from_path(&path);
+        assert_eq!(config.default_tool, "claude");
+        assert_eq!(config.theme, "dark");
+        assert_eq!(config.default_group, "default");
+        assert!(!config.notifications.sound);
+    }
+
+    #[test]
+    fn test_load_config_from_invalid_json_returns_default() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, "this is not json").unwrap();
+        let config = load_config_from_path(&path);
+        assert_eq!(config.default_tool, "claude");
+        assert_eq!(config.theme, "dark");
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+
+        let original = AppConfig {
+            default_tool: "gemini".to_string(),
+            theme: "gruvbox".to_string(),
+            default_group: "work".to_string(),
+            notifications: NotificationConfig { sound: true },
+        };
+
+        // Write manually using save_config logic (bypass the hardcoded path)
+        let json = serde_json::to_string_pretty(&original).unwrap();
+        fs::write(&path, json).unwrap();
+
+        let loaded = load_config_from_path(&path);
+        assert_eq!(loaded.default_tool, "gemini");
+        assert_eq!(loaded.theme, "gruvbox");
+        assert_eq!(loaded.default_group, "work");
+        assert!(loaded.notifications.sound);
+    }
+
+    #[test]
+    fn test_serialization_roundtrip_via_json_string() {
+        let config = AppConfig {
+            default_tool: "codex".to_string(),
+            theme: "solarized".to_string(),
+            default_group: "research".to_string(),
+            notifications: NotificationConfig { sound: false },
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.default_tool, config.default_tool);
+        assert_eq!(restored.theme, config.theme);
+        assert_eq!(restored.default_group, config.default_group);
+        assert_eq!(restored.notifications.sound, config.notifications.sound);
+    }
 }
