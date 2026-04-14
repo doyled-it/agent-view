@@ -264,7 +264,7 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     let follow_up_indicator = if session.follow_up { "\u{2691}" } else { " " };
                     let pin_indicator = if session.pinned { "\u{25B4}" } else { " " };
                     let age = format_age(session.created_at);
-                    let sparkline = render_sparkline_str(&session.status_history, 8);
+                    let sparkline = render_sparkline_str(&session.status_history, 16);
 
                     // When this session matches the search, highlight the title in the info color
                     let title_color = if is_search_match {
@@ -273,32 +273,48 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                         theme.text
                     };
 
+                    // Build left side: indicators + status + title + path
+                    let left_prefix = format!(" {}", pin_indicator);
+                    let status_str = format!(" {} ", session.status.icon());
+                    let path_str = truncate_path(&session.project_path, 30);
+
+                    // Build right side: sparkline + age (right-justified)
+                    let right_str = if sparkline.is_empty() {
+                        format!("{} ", age)
+                    } else {
+                        format!("{} {} ", sparkline, age)
+                    };
+                    let right_width = right_str.chars().count();
+
+                    // Calculate left content width to determine padding
+                    let left_width = left_prefix.chars().count()
+                        + 1 // follow_up_indicator
+                        + 1 // notify_indicator
+                        + status_str.chars().count()
+                        + session.title.chars().count()
+                        + 2 // "  " gap
+                        + path_str.chars().count();
+
+                    let row_width = area.width as usize;
+                    let pad = if left_width + right_width < row_width {
+                        row_width - left_width - right_width
+                    } else {
+                        2
+                    };
+
                     let line = Line::from(vec![
-                        Span::styled(
-                            format!(" {}", pin_indicator),
-                            Style::default().fg(theme.accent),
-                        ),
+                        Span::styled(left_prefix, Style::default().fg(theme.accent)),
                         Span::styled(follow_up_indicator, Style::default().fg(theme.warning)),
                         Span::styled(notify_indicator, Style::default().fg(theme.info)),
-                        Span::styled(
-                            format!(" {} ", session.status.icon()),
-                            Style::default().fg(status_color),
-                        ),
+                        Span::styled(status_str, Style::default().fg(status_color)),
                         Span::styled(
                             session.title.clone(),
                             Style::default().fg(title_color).bold(),
                         ),
                         Span::raw("  "),
-                        Span::styled(
-                            truncate_path(&session.project_path, 30),
-                            Style::default().fg(theme.text_muted),
-                        ),
-                        Span::raw("  "),
-                        Span::styled(
-                            format!(" {} ", sparkline),
-                            Style::default().fg(theme.text_muted),
-                        ),
-                        Span::styled(age, Style::default().fg(theme.text_muted)),
+                        Span::styled(path_str, Style::default().fg(theme.text_muted)),
+                        Span::raw(" ".repeat(pad)),
+                        Span::styled(right_str, Style::default().fg(theme.text_muted)),
                     ]);
 
                     let bg = if is_selected {
@@ -320,12 +336,12 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
 
 fn status_to_sparkline_char(status: &str) -> char {
     match status {
-        "idle" | "stopped" => '\u{2581}',      // ▁
-        "running" => '\u{2588}',               // █
-        "waiting" => '\u{2585}',               // ▅
-        "paused" | "compacting" => '\u{2583}', // ▃
-        "error" => '\u{2587}',                 // ▇
-        _ => '\u{2581}',                       // ▁
+        "idle" | "stopped" => '\u{2581}',      // ▁  thin
+        "running" => '\u{2586}',               // ▆  tall
+        "waiting" => '\u{2584}',               // ▄  mid
+        "paused" | "compacting" => '\u{2582}', // ▂  low
+        "error" => '\u{2585}',                 // ▅  mid-tall
+        _ => '\u{2581}',                       // ▁  thin
     }
 }
 
@@ -445,7 +461,7 @@ mod tests {
             },
         ];
         let spark = render_sparkline_str(&history, 4);
-        assert_eq!(spark, "\u{2581}\u{2588}\u{2585}\u{2581}");
+        assert_eq!(spark, "\u{2581}\u{2586}\u{2584}\u{2581}");
     }
 
     #[test]
