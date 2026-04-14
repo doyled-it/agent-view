@@ -102,6 +102,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::Help => {
             crate::ui::overlay::render_help(frame, area, &app.theme);
         }
+        Overlay::ThemeSelect(form) => {
+            crate::ui::overlay::render_theme_select(frame, area, form, &app.theme);
+        }
         Overlay::None => {}
     }
 }

@@ -16,6 +16,26 @@ pub enum Overlay {
     GroupManage(GroupForm),
     CommandPalette(CommandPalette),
     Help,
+    ThemeSelect(ThemeSelectForm),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThemeSelectForm {
+    pub options: Vec<String>,
+    pub selected: usize,
+    pub original_theme_name: String,
+}
+
+impl ThemeSelectForm {
+    pub fn new(current_theme: &str) -> Self {
+        let options = vec!["dark".to_string(), "light".to_string()];
+        let selected = options.iter().position(|o| o == current_theme).unwrap_or(0);
+        Self {
+            options,
+            selected,
+            original_theme_name: current_theme.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +69,7 @@ pub enum CommandAction {
     CycleSort,
     PinSession,
     ShowHelp,
+    SelectTheme,
     Quit,
 }
 
@@ -68,6 +89,7 @@ impl CommandPalette {
             CommandItem { label: "Search Sessions".to_string(), key_hint: "/".to_string(), action: CommandAction::Search },
             CommandItem { label: "Cycle Sort Mode".to_string(), key_hint: "S".to_string(), action: CommandAction::CycleSort },
             CommandItem { label: "Pin/Unpin Session".to_string(), key_hint: "p".to_string(), action: CommandAction::PinSession },
+            CommandItem { label: "Select Theme".to_string(), key_hint: "t".to_string(), action: CommandAction::SelectTheme },
             CommandItem { label: "Show Help".to_string(), key_hint: "?".to_string(), action: CommandAction::ShowHelp },
             CommandItem { label: "Quit".to_string(), key_hint: "q".to_string(), action: CommandAction::Quit },
         ];

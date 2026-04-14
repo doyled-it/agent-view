@@ -375,6 +375,9 @@ fn run_tui(
                                 app.overlay = crate::app::Overlay::None;
                             }
                         }
+                        crate::app::Overlay::ThemeSelect(_) => {
+                            handle_theme_select_key(&mut app, key)?;
+                        }
                     }
                 }
                 if app.should_quit {
@@ -763,6 +766,14 @@ fn handle_main_key(
         }
         (KeyModifiers::NONE, KeyCode::Char('?')) => {
             app.overlay = crate::app::Overlay::Help;
+        }
+        (KeyModifiers::NONE, KeyCode::Char('t')) => {
+            let current = if app.theme.background == crate::ui::theme::Theme::light().background {
+                "light"
+            } else {
+                "dark"
+            };
+            app.overlay = crate::app::Overlay::ThemeSelect(crate::app::ThemeSelectForm::new(current));
         }
         _ => {}
     }
@@ -1254,6 +1265,70 @@ fn execute_command_action(
         }
         CommandAction::ShowHelp => {
             app.overlay = Overlay::Help;
+        }
+        CommandAction::SelectTheme => {
+            let current = if app.theme.background == crate::ui::theme::Theme::light().background {
+                "light"
+            } else {
+                "dark"
+            };
+            app.overlay = Overlay::ThemeSelect(crate::app::ThemeSelectForm::new(current));
+        }
+    }
+    Ok(())
+}
+
+fn handle_theme_select_key(
+    app: &mut crate::app::App,
+    key: crossterm::event::KeyEvent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::KeyCode;
+
+    if let crate::app::Overlay::ThemeSelect(ref mut form) = app.overlay {
+        match key.code {
+            KeyCode::Esc => {
+                let original = form.original_theme_name.clone();
+                if original == "light" {
+                    app.theme = crate::ui::theme::Theme::light();
+                } else {
+                    app.theme = crate::ui::theme::Theme::dark();
+                }
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Enter => {
+                let chosen = form.options[form.selected].clone();
+                let mut config = crate::core::config::load_config();
+                config.theme = chosen;
+                let _ = crate::core::config::save_config(&config);
+                // Suppress the watcher-triggered config reload toast
+                app.config_changed.store(false, std::sync::atomic::Ordering::Relaxed);
+                app.overlay = crate::app::Overlay::None;
+                app.toast_message = Some("Theme saved".to_string());
+                app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if form.selected > 0 {
+                    form.selected -= 1;
+                }
+                let theme_name = form.options[form.selected].clone();
+                if theme_name == "light" {
+                    app.theme = crate::ui::theme::Theme::light();
+                } else {
+                    app.theme = crate::ui::theme::Theme::dark();
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if form.selected < form.options.len() - 1 {
+                    form.selected += 1;
+                }
+                let theme_name = form.options[form.selected].clone();
+                if theme_name == "light" {
+                    app.theme = crate::ui::theme::Theme::light();
+                } else {
+                    app.theme = crate::ui::theme::Theme::dark();
+                }
+            }
+            _ => {}
         }
     }
     Ok(())

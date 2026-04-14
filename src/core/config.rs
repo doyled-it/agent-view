@@ -79,6 +79,18 @@ pub fn load_config() -> AppConfig {
     load_config_from_path(&config_path())
 }
 
+/// Save config to disk at the default config path.
+pub fn save_config(config: &AppConfig) -> Result<(), std::io::Error> {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    fs::write(&path, json)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

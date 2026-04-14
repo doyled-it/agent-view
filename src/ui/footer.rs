@@ -67,6 +67,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Overlay::Help => {
             vec![("Esc", "close")]
         }
+        Overlay::ThemeSelect(_) => {
+            vec![("j/k", "preview"), ("Enter", "confirm"), ("Esc", "cancel")]
+        }
     };
 
     let len = hints.len();
