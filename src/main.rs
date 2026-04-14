@@ -276,13 +276,25 @@ fn run_tui(
                 let _ = crate::core::tmux::attach_session_sync(&tmux_name);
 
                 if let Ok(mut guard) = attach_state.lock() {
-                    guard.suppress_queue.push(tmux_name);
+                    guard.suppress_queue.push(tmux_name.clone());
                     guard.attached_session = None;
                 }
 
                 enable_raw_mode()?;
                 execute!(terminal.backend_mut(), EnterAlternateScreen)?;
                 terminal.clear()?;
+
+                // Fresh reload after returning; restore cursor to attached session
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                    if let Some(pos) = app.list_rows.iter().position(|row| {
+                        matches!(row, crate::core::groups::ListRow::Session(s) if s.tmux_session == tmux_name)
+                    }) {
+                        app.selected_index = pos;
+                    }
+                }
             }
         }
     }
@@ -537,6 +549,12 @@ fn handle_main_key(
                         app.sessions = sessions;
                         app.groups = storage.load_groups().unwrap_or_default();
                         app.rebuild_list_rows();
+                        // Restore cursor to the session we just detached from
+                        if let Some(pos) = app.list_rows.iter().position(|row| {
+                            matches!(row, crate::core::groups::ListRow::Session(s) if s.tmux_session == tmux_name)
+                        }) {
+                            app.selected_index = pos;
+                        }
                     }
                 }
             }
