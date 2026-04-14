@@ -223,26 +223,6 @@ pub fn capture_pane(name: &str, start_line: Option<i32>) -> Result<String, Strin
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Get sessions that currently have an attached client
-pub fn get_attached_sessions() -> std::collections::HashSet<String> {
-    let output = Command::new("tmux")
-        .args(["list-clients", "-F", "#{client_session}"])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout
-                .trim()
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect()
-        }
-        _ => std::collections::HashSet::new(),
-    }
-}
-
 /// Attach to a tmux session synchronously (blocks until detach).
 /// Sets up Ctrl+Q to detach, Ctrl+K for command palette signal, Ctrl+T for terminal split.
 /// Returns true if command palette was requested.

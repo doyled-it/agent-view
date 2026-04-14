@@ -15,10 +15,12 @@ pub struct Theme {
     pub text_muted: Color,
     pub selected_item_text: Color,
     pub background: Color,
+    #[allow(dead_code)]
     pub background_panel: Color,
     pub background_element: Color,
     pub border: Color,
     pub border_active: Color,
+    #[allow(dead_code)]
     pub border_subtle: Color,
 }
 
