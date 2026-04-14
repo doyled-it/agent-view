@@ -4,16 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotificationConfig {
     #[serde(default)]
     pub sound: bool,
-}
-
-impl Default for NotificationConfig {
-    fn default() -> Self {
-        Self { sound: false }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
