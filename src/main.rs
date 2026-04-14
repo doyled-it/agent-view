@@ -703,7 +703,7 @@ fn handle_main_key(
                 app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
         }
-        (KeyModifiers::CONTROL, KeyCode::Up) => {
+        (KeyModifiers::SHIFT, KeyCode::Char('<')) => {
             if let Some(group) = app.selected_group() {
                 let path = group.path.clone();
                 let groups = storage.load_groups().unwrap_or_default();
@@ -719,7 +719,7 @@ fn handle_main_key(
                 }
             }
         }
-        (KeyModifiers::CONTROL, KeyCode::Down) => {
+        (KeyModifiers::SHIFT, KeyCode::Char('>')) => {
             if let Some(group) = app.selected_group() {
                 let path = group.path.clone();
                 let groups = storage.load_groups().unwrap_or_default();

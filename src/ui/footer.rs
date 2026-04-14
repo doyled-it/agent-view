@@ -51,7 +51,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ("/", "search"),
                     ("a", "activity"),
                     ("C-k", "commands"),
-                    ("C-Up/Dn", "move group"),
+                    ("</>", "move group"),
                     ("q", "quit"),
                 ]
             }
