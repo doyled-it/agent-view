@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, Result as SqlResult};
 use std::fs;
 use std::path::PathBuf;
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 5;
 
 pub struct Storage {
     conn: Connection,
@@ -117,6 +117,31 @@ impl Storage {
             );
         }
 
+        // v3 -> v4
+        if version < 4 {
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+        }
+
+        // v4 -> v5
+        if version < 5 {
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN last_started_at INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            // Backfill: set last_started_at = created_at for existing sessions
+            let _ = self.conn.execute(
+                "UPDATE sessions SET last_started_at = created_at WHERE last_started_at = 0",
+                [],
+            );
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -135,8 +160,9 @@ impl Storage {
                 created_at, last_accessed,
                 parent_session_id, worktree_path, worktree_repo, worktree_branch,
                 tool_data, acknowledged,
-                notify, follow_up, status_changed_at, restart_count, status_history
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                notify, follow_up, status_changed_at, restart_count, status_history,
+                pinned, tokens_used, last_started_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             params![
                 session.id,
                 session.title,
@@ -161,6 +187,9 @@ impl Storage {
                 session.status_changed_at,
                 session.restart_count,
                 session.status_history_json(),
+                session.pinned as i32,
+                session.tokens_used,
+                session.last_started_at,
             ],
         )?;
         Ok(())
@@ -174,7 +203,8 @@ impl Storage {
                     created_at, last_accessed,
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
-                    notify, follow_up, status_changed_at, restart_count, status_history
+                    notify, follow_up, status_changed_at, restart_count, status_history,
+                    pinned, tokens_used, last_started_at
              FROM sessions ORDER BY sort_order",
         )?;
 
@@ -212,7 +242,17 @@ impl Storage {
                     created_at
                 },
                 restart_count: row.get(21)?,
+                last_started_at: {
+                    let v: i64 = row.get(25).unwrap_or(0);
+                    if v > 0 {
+                        v
+                    } else {
+                        created_at
+                    }
+                },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
+                pinned: row.get::<_, i32>(23)? == 1,
+                tokens_used: row.get(24)?,
             })
         })?;
 
@@ -227,7 +267,8 @@ impl Storage {
                     created_at, last_accessed,
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
-                    notify, follow_up, status_changed_at, restart_count, status_history
+                    notify, follow_up, status_changed_at, restart_count, status_history,
+                    pinned, tokens_used, last_started_at
              FROM sessions WHERE id = ?1",
         )?;
 
@@ -265,7 +306,17 @@ impl Storage {
                     created_at
                 },
                 restart_count: row.get(21)?,
+                last_started_at: {
+                    let v: i64 = row.get(25).unwrap_or(0);
+                    if v > 0 {
+                        v
+                    } else {
+                        created_at
+                    }
+                },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
+                pinned: row.get::<_, i32>(23)? == 1,
+                tokens_used: row.get(24)?,
             })
         });
 
@@ -332,7 +383,26 @@ impl Storage {
         Ok(())
     }
 
+    /// Set the pinned flag
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET pinned = ?1 WHERE id = ?2",
+            params![pinned as i32, id],
+        )?;
+        Ok(())
+    }
+
+    /// Add tokens to a session's token count
+    pub fn add_tokens(&self, id: &str, tokens: i64) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET tokens_used = tokens_used + ?1 WHERE id = ?2",
+            params![tokens, id],
+        )?;
+        Ok(())
+    }
+
     /// Set the acknowledged flag
+    #[allow(dead_code)]
     pub fn set_acknowledged(&self, id: &str, ack: bool) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE sessions SET acknowledged = ?1 WHERE id = ?2",
@@ -427,9 +497,33 @@ impl Storage {
     }
 
     /// Delete a group by path
+    #[allow(dead_code)]
     pub fn delete_group(&self, path: &str) -> SqlResult<()> {
         self.conn
             .execute("DELETE FROM groups WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
+    /// Swap the sort_order of two groups by path
+    pub fn swap_group_order(&self, path_a: &str, path_b: &str) -> SqlResult<()> {
+        let order_a: i32 = self.conn.query_row(
+            "SELECT sort_order FROM groups WHERE path = ?1",
+            params![path_a],
+            |row| row.get(0),
+        )?;
+        let order_b: i32 = self.conn.query_row(
+            "SELECT sort_order FROM groups WHERE path = ?1",
+            params![path_b],
+            |row| row.get(0),
+        )?;
+        self.conn.execute(
+            "UPDATE groups SET sort_order = ?1 WHERE path = ?2",
+            params![order_b, path_a],
+        )?;
+        self.conn.execute(
+            "UPDATE groups SET sort_order = ?1 WHERE path = ?2",
+            params![order_a, path_b],
+        )?;
         Ok(())
     }
 
@@ -460,11 +554,13 @@ impl Storage {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn close(self) -> SqlResult<()> {
         self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn conn(&self) -> &Connection {
         &self.conn
     }
@@ -539,7 +635,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("3".to_string()));
+        assert_eq!(version, Some("5".to_string()));
     }
 
     #[test]
@@ -547,7 +643,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("3".to_string()));
+        assert_eq!(version, Some("5".to_string()));
     }
 
     #[test]
@@ -611,7 +707,10 @@ mod tests {
             follow_up: false,
             status_changed_at: 1700000000000,
             restart_count: 0,
+            last_started_at: 1700000000000,
             status_history: vec![],
+            pinned: false,
+            tokens_used: 0,
         }
     }
 
@@ -661,7 +760,11 @@ mod tests {
         storage.save_session(&session).unwrap();
 
         storage
-            .write_status("s1", crate::types::SessionStatus::Running, crate::types::Tool::Claude)
+            .write_status(
+                "s1",
+                crate::types::SessionStatus::Running,
+                crate::types::Tool::Claude,
+            )
             .unwrap();
 
         let loaded = storage.get_session("s1").unwrap().unwrap();
@@ -689,8 +792,12 @@ mod tests {
         let session = make_test_session("s1");
         storage.save_session(&session).unwrap();
 
-        storage.update_status_history("s1", crate::types::SessionStatus::Running, 1700000001000).unwrap();
-        storage.update_status_history("s1", crate::types::SessionStatus::Waiting, 1700000002000).unwrap();
+        storage
+            .update_status_history("s1", crate::types::SessionStatus::Running, 1700000001000)
+            .unwrap();
+        storage
+            .update_status_history("s1", crate::types::SessionStatus::Waiting, 1700000002000)
+            .unwrap();
 
         let loaded = storage.get_session("s1").unwrap().unwrap();
         assert_eq!(loaded.status_history.len(), 2);
@@ -720,7 +827,11 @@ mod tests {
 
         for i in 0..60 {
             storage
-                .update_status_history("s1", crate::types::SessionStatus::Running, 1700000000000 + i)
+                .update_status_history(
+                    "s1",
+                    crate::types::SessionStatus::Running,
+                    1700000000000 + i,
+                )
                 .unwrap();
         }
 
@@ -750,6 +861,47 @@ mod tests {
             .unwrap();
 
         assert_eq!(follow_up, 1);
+    }
+
+    #[test]
+    fn test_v4_columns_exist() {
+        let (storage, _dir) = test_storage();
+        let mut session = make_test_session("s1");
+        session.pinned = true;
+        session.tokens_used = 5000;
+        storage.save_session(&session).unwrap();
+
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert!(loaded.pinned);
+        assert_eq!(loaded.tokens_used, 5000);
+    }
+
+    #[test]
+    fn test_set_pinned() {
+        let (storage, _dir) = test_storage();
+        let session = make_test_session("s1");
+        storage.save_session(&session).unwrap();
+
+        storage.set_pinned("s1", true).unwrap();
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert!(loaded.pinned);
+
+        storage.set_pinned("s1", false).unwrap();
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert!(!loaded.pinned);
+    }
+
+    #[test]
+    fn test_add_tokens() {
+        let (storage, _dir) = test_storage();
+        let session = make_test_session("s1");
+        storage.save_session(&session).unwrap();
+
+        storage.add_tokens("s1", 1000).unwrap();
+        storage.add_tokens("s1", 2500).unwrap();
+
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert_eq!(loaded.tokens_used, 3500);
     }
 
     #[test]
@@ -784,6 +936,33 @@ mod tests {
         storage.delete_group("work").unwrap();
         let groups = storage.load_groups().unwrap();
         assert_eq!(groups.len(), 0);
+    }
+
+    #[test]
+    fn test_swap_group_order() {
+        let (storage, _dir) = test_storage();
+        let g1 = crate::types::Group {
+            path: "work".to_string(),
+            name: "Work".to_string(),
+            expanded: true,
+            order: 0,
+            default_path: String::new(),
+        };
+        let g2 = crate::types::Group {
+            path: "personal".to_string(),
+            name: "Personal".to_string(),
+            expanded: true,
+            order: 1,
+            default_path: String::new(),
+        };
+        storage.save_group(&g1).unwrap();
+        storage.save_group(&g2).unwrap();
+
+        storage.swap_group_order("work", "personal").unwrap();
+
+        let groups = storage.load_groups().unwrap();
+        assert_eq!(groups[0].path, "personal");
+        assert_eq!(groups[1].path, "work");
     }
 
     #[test]

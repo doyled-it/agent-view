@@ -37,8 +37,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load config
     let config = crate::core::config::load_config();
 
-    // Initialize app state
-    let mut app = crate::app::App::new(cli.light);
+    // Initialize app state — CLI --light flag overrides config
+    let theme_name = if cli.light {
+        "light".to_string()
+    } else {
+        config.theme.clone()
+    };
+    let mut app = crate::app::App::new(false); // we set theme manually below
+    app.theme = crate::ui::theme::Theme::from_name(&theme_name);
+    app.theme_name = theme_name;
 
     // Load sessions from storage
     app.sessions = storage.load_sessions()?;
@@ -49,6 +56,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ref session_id) = cli.attach {
         app.attach_session = Some(session_id.clone());
     }
+
+    // Spawn config file watcher — watches the config directory for changes
+    let config_changed = app.config_changed.clone();
+    let _config_watcher = {
+        use notify::{Event, EventKind, RecursiveMode, Watcher};
+        let config_path_clone = crate::core::config::config_dir();
+        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            if let Ok(event) = res {
+                if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                    config_changed.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        })
+        .ok();
+        if let Some(ref mut w) = watcher {
+            let _ = w.watch(&config_path_clone, RecursiveMode::NonRecursive);
+        }
+        watcher
+    };
 
     // Run the TUI event loop
     run_tui(app, storage, config)?;
@@ -89,13 +115,18 @@ fn run_tui(
     let _bg_handle = std::thread::spawn(move || {
         let mut cache = crate::core::tmux::SessionCache::new();
         let mut processor = crate::core::session::StatusProcessor::new();
+        let mut logger = crate::core::logger::SessionLogger::new();
+        let mut log_tick: u32 = 0;
 
         loop {
             std::thread::sleep(Duration::from_millis(500));
 
             // Open fresh storage connection each tick
             let bg_storage = match crate::core::storage::Storage::open_default() {
-                Ok(s) => { let _ = s.migrate(); s }
+                Ok(s) => {
+                    let _ = s.migrate();
+                    s
+                }
                 Err(_) => continue,
             };
             let sessions = bg_storage.load_sessions().unwrap_or_default();
@@ -186,6 +217,47 @@ fn run_tui(
             if any_changed {
                 let _ = bg_storage.touch();
             }
+
+            // Log capture every 10 ticks (5s at 500ms interval)
+            log_tick += 1;
+            if log_tick >= 10 {
+                log_tick = 0;
+                for session in &sessions {
+                    if !session.tmux_session.is_empty()
+                        && session.status != crate::types::SessionStatus::Stopped
+                    {
+                        logger.capture_and_log(&session.tmux_session, &session.id);
+                    }
+                }
+
+                // Parse tokens from Claude sessions
+                let mut tokens_changed = false;
+                for session in &sessions {
+                    if session.tool == crate::types::Tool::Claude
+                        && !session.tmux_session.is_empty()
+                        && session.status != crate::types::SessionStatus::Stopped
+                    {
+                        if let Ok(output) =
+                            crate::core::tmux::capture_pane(&session.tmux_session, Some(-50))
+                        {
+                            if let Some(tokens) =
+                                crate::core::tokens::extract_latest_tokens(&output)
+                            {
+                                if tokens > session.tokens_used {
+                                    let diff = tokens - session.tokens_used;
+                                    if diff > 0 {
+                                        let _ = bg_storage.add_tokens(&session.id, diff);
+                                        tokens_changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if tokens_changed {
+                    let _ = bg_storage.touch();
+                }
+            }
         }
     });
 
@@ -204,13 +276,25 @@ fn run_tui(
                 let _ = crate::core::tmux::attach_session_sync(&tmux_name);
 
                 if let Ok(mut guard) = attach_state.lock() {
-                    guard.suppress_queue.push(tmux_name);
+                    guard.suppress_queue.push(tmux_name.clone());
                     guard.attached_session = None;
                 }
 
                 enable_raw_mode()?;
                 execute!(terminal.backend_mut(), EnterAlternateScreen)?;
                 terminal.clear()?;
+
+                // Fresh reload after returning; restore cursor to attached session
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                    if let Some(pos) = app.list_rows.iter().position(|row| {
+                        matches!(row, crate::core::groups::ListRow::Session(s) if s.tmux_session == tmux_name)
+                    }) {
+                        app.selected_index = pos;
+                    }
+                }
             }
         }
     }
@@ -273,20 +357,10 @@ fn run_tui(
                             )?;
                         }
                         crate::app::Overlay::NewSession(_) => {
-                            handle_new_session_key(
-                                &mut app,
-                                key,
-                                &storage,
-                                &session_ops,
-                            )?;
+                            handle_new_session_key(&mut app, key, &storage, &session_ops)?;
                         }
                         crate::app::Overlay::Confirm(_) => {
-                            handle_confirm_key(
-                                &mut app,
-                                key,
-                                &storage,
-                                &session_ops,
-                            )?;
+                            handle_confirm_key(&mut app, key, &storage, &session_ops)?;
                         }
                         crate::app::Overlay::Rename(_) => {
                             handle_rename_key(&mut app, key, &storage)?;
@@ -298,12 +372,18 @@ fn run_tui(
                             handle_group_key(&mut app, key, &storage)?;
                         }
                         crate::app::Overlay::CommandPalette(_) => {
-                            handle_palette_key(
-                                &mut app,
-                                key,
-                                &storage,
-                                &session_ops,
-                            )?;
+                            handle_palette_key(&mut app, key, &storage, &session_ops)?;
+                        }
+                        crate::app::Overlay::Help => {
+                            if key.code == crossterm::event::KeyCode::Esc
+                                || key.code == crossterm::event::KeyCode::Char('?')
+                                || key.code == crossterm::event::KeyCode::Char('q')
+                            {
+                                app.overlay = crate::app::Overlay::None;
+                            }
+                        }
+                        crate::app::Overlay::ThemeSelect(_) => {
+                            handle_theme_select_key(&mut app, key)?;
                         }
                     }
                 }
@@ -322,7 +402,24 @@ fn run_tui(
             let current_mtime = storage.last_modified();
             if current_mtime != app.last_storage_mtime {
                 app.last_storage_mtime = current_mtime;
-                app.sessions = storage.load_sessions().unwrap_or_default();
+                let new_sessions = storage.load_sessions().unwrap_or_default();
+
+                // Diff statuses for activity feed
+                for new_s in &new_sessions {
+                    if let Some(old_s) = app.sessions.iter().find(|s| s.id == new_s.id) {
+                        if old_s.status != new_s.status {
+                            app.push_activity(crate::types::ActivityEvent {
+                                session_title: new_s.title.clone(),
+                                old_status: old_s.status,
+                                new_status: new_s.status,
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                                message: None,
+                            });
+                        }
+                    }
+                }
+
+                app.sessions = new_sessions;
                 app.groups = storage.load_groups().unwrap_or_default();
                 app.rebuild_list_rows();
             }
@@ -334,6 +431,20 @@ fn run_tui(
                 app.toast_message = None;
                 app.toast_expire = None;
             }
+        }
+
+        // Check for config hot-reload
+        if app
+            .config_changed
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            app.config_changed
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            let new_config = crate::core::config::load_config();
+            app.theme = crate::ui::theme::Theme::from_name(&new_config.theme);
+            app.theme_name = new_config.theme;
+            app.toast_message = Some("Config reloaded".to_string());
+            app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
         }
 
         // Sleep briefly to avoid busy-spinning when idle
@@ -364,8 +475,7 @@ fn handle_main_key(
     };
 
     match (key.modifiers, key.code) {
-        (KeyModifiers::NONE, KeyCode::Char('q'))
-        | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+        (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
             app.should_quit = true;
         }
         (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
@@ -375,8 +485,7 @@ fn handle_main_key(
             app.move_selection_down();
         }
         (KeyModifiers::NONE, KeyCode::Char('n')) => {
-            app.overlay =
-                crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
+            app.overlay = crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
         }
         (KeyModifiers::NONE, KeyCode::Right) | (KeyModifiers::NONE, KeyCode::Char('l')) => {
             if let Some(group) = app.selected_group() {
@@ -420,10 +529,7 @@ fn handle_main_key(
                     // alternate screen state, and all attributes in one shot.
                     // This prevents the scroll-to-bottom effect while also
                     // restoring normal terminal mode for paste etc.
-                    let _ = std::io::Write::write_all(
-                        &mut std::io::stdout(),
-                        b"\x1bc",
-                    );
+                    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1bc");
                     let _ = std::io::Write::flush(&mut std::io::stdout());
 
                     let _ = crate::core::tmux::attach_session_sync(&tmux_name);
@@ -443,13 +549,24 @@ fn handle_main_key(
                         app.sessions = sessions;
                         app.groups = storage.load_groups().unwrap_or_default();
                         app.rebuild_list_rows();
+                        // Restore cursor to the session we just detached from
+                        if let Some(pos) = app.list_rows.iter().position(|row| {
+                            matches!(row, crate::core::groups::ListRow::Session(s) if s.tmux_session == tmux_name)
+                        }) {
+                            app.selected_index = pos;
+                        }
                     }
                 }
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('s')) => {
-            // Stop selected session
-            if let Some(session) = app.selected_session() {
+            if !app.bulk_selected.is_empty() {
+                let count = app.bulk_selected.len();
+                app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
+                    message: format!("Stop {} selected sessions?", count),
+                    action: crate::app::ConfirmAction::BulkStop,
+                });
+            } else if let Some(session) = app.selected_session() {
                 if session.status != crate::types::SessionStatus::Stopped {
                     let msg = format!("Stop session \"{}\"?", session.title);
                     app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
@@ -460,13 +577,32 @@ fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('d')) => {
-            // Delete selected session
-            if let Some(session) = app.selected_session() {
+            if !app.bulk_selected.is_empty() {
+                let count = app.bulk_selected.len();
+                app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
+                    message: format!("Delete {} selected sessions?", count),
+                    action: crate::app::ConfirmAction::BulkDelete,
+                });
+            } else if let Some(session) = app.selected_session() {
                 let msg = format!("Delete session \"{}\"?", session.title);
                 app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
                     message: msg,
                     action: crate::app::ConfirmAction::DeleteSession(session.id.clone()),
                 });
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Char(' ')) => {
+            if let Some(session) = app.selected_session() {
+                let id = session.id.clone();
+                app.toggle_bulk_select(&id);
+            }
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
+            app.select_all_visible();
+        }
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            if !app.bulk_selected.is_empty() {
+                app.clear_bulk_selection();
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('r')) => {
@@ -500,7 +636,8 @@ fn handle_main_key(
                     format!("Notifications off: {}", title)
                 };
                 app.toast_message = Some(msg);
-                app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                app.toast_expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('i')) => {
@@ -521,7 +658,8 @@ fn handle_main_key(
                 if !session.tmux_session.is_empty() {
                     let tmux_name = session.tmux_session.clone();
                     let title = session.title.clone();
-                    match export_session_log(&tmux_name, &title) {
+                    let id = session.id.clone();
+                    match export_session_log(&tmux_name, &title, &id) {
                         Ok(path) => {
                             app.toast_message = Some(format!("Exported to {}", path));
                         }
@@ -529,7 +667,8 @@ fn handle_main_key(
                             app.toast_message = Some(format!("Export failed: {}", e));
                         }
                     }
-                    app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                 }
             }
         }
@@ -538,7 +677,9 @@ fn handle_main_key(
         }
         (KeyModifiers::NONE, KeyCode::Char('m')) => {
             if let Some(session) = app.selected_session() {
-                let groups: Vec<(String, String)> = app.groups.iter()
+                let groups: Vec<(String, String)> = app
+                    .groups
+                    .iter()
                     .map(|g| (g.path.clone(), g.name.clone()))
                     .collect();
                 if !groups.is_empty() {
@@ -559,6 +700,66 @@ fn handle_main_key(
         (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
             app.overlay = crate::app::Overlay::CommandPalette(crate::app::CommandPalette::new());
         }
+        (KeyModifiers::SHIFT, KeyCode::Char('S')) => {
+            app.sort_mode = app.sort_mode.next();
+            app.rebuild_list_rows();
+            let label = app.sort_mode.label();
+            app.toast_message = Some(format!("Sort: {}", label));
+            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+        }
+        (KeyModifiers::NONE, KeyCode::Char('p')) => {
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.pinned;
+                let id = session.id.clone();
+                let title = session.title.clone();
+                let _ = storage.set_pinned(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+                let msg = if new_val {
+                    format!("Pinned: {}", title)
+                } else {
+                    format!("Unpinned: {}", title)
+                };
+                app.toast_message = Some(msg);
+                app.toast_expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            }
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('K')) => {
+            if let Some(group) = app.selected_group() {
+                let path = group.path.clone();
+                let groups = storage.load_groups().unwrap_or_default();
+                if let Some(pos) = groups.iter().position(|g| g.path == path) {
+                    if pos > 0 {
+                        let prev_path = groups[pos - 1].path.clone();
+                        let _ = storage.swap_group_order(&path, &prev_path);
+                        app.groups = storage.load_groups().unwrap_or_default();
+                        app.rebuild_list_rows();
+                        app.move_selection_up();
+                        let _ = storage.touch();
+                    }
+                }
+            }
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('J')) => {
+            if let Some(group) = app.selected_group() {
+                let path = group.path.clone();
+                let groups = storage.load_groups().unwrap_or_default();
+                if let Some(pos) = groups.iter().position(|g| g.path == path) {
+                    if pos < groups.len() - 1 {
+                        let next_path = groups[pos + 1].path.clone();
+                        let _ = storage.swap_group_order(&path, &next_path);
+                        app.groups = storage.load_groups().unwrap_or_default();
+                        app.rebuild_list_rows();
+                        app.move_selection_down();
+                        let _ = storage.touch();
+                    }
+                }
+            }
+        }
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
             if let Some(session) = app.selected_session() {
                 app.overlay = crate::app::Overlay::Rename(crate::app::RenameForm {
@@ -574,31 +775,54 @@ fn handle_main_key(
                 });
             }
         }
+        (KeyModifiers::NONE, KeyCode::Char('a')) => {
+            app.show_activity_feed = !app.show_activity_feed;
+        }
+        (KeyModifiers::NONE, KeyCode::Char('?')) => {
+            app.overlay = crate::app::Overlay::Help;
+        }
+        (KeyModifiers::NONE, KeyCode::Char('t')) => {
+            app.overlay =
+                crate::app::Overlay::ThemeSelect(crate::app::ThemeSelectForm::new(&app.theme_name));
+        }
         _ => {}
     }
 
     Ok(())
 }
 
-fn export_session_log(tmux_session: &str, title: &str) -> Result<String, String> {
-    let output = crate::core::tmux::capture_pane(tmux_session, Some(-10000))
-        .map_err(|e| format!("Capture failed: {}", e))?;
-
+fn export_session_log(tmux_session: &str, title: &str, session_id: &str) -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
-    let logs_dir = home.join(".agent-view").join("logs");
-    std::fs::create_dir_all(&logs_dir).map_err(|e| format!("Cannot create logs dir: {}", e))?;
+    let export_dir = home.join(".agent-view").join("exports");
+    std::fs::create_dir_all(&export_dir)
+        .map_err(|e| format!("Cannot create exports dir: {}", e))?;
 
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let safe_name: String = title
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .take(30)
         .collect();
     let filename = format!("{}-{}.log", safe_name, timestamp);
-    let filepath = logs_dir.join(&filename);
+    let filepath = export_dir.join(&filename);
 
-    std::fs::write(&filepath, &output)
-        .map_err(|e| format!("Write failed: {}", e))?;
+    // Try continuous log file first
+    let log_path = crate::core::logger::session_log_path(session_id);
+    if log_path.exists() {
+        std::fs::copy(&log_path, &filepath).map_err(|e| format!("Copy failed: {}", e))?;
+        return Ok(filepath.to_string_lossy().to_string());
+    }
+
+    // Fallback to live capture
+    let output = crate::core::tmux::capture_pane(tmux_session, Some(-10000))
+        .map_err(|e| format!("Capture failed: {}", e))?;
+    std::fs::write(&filepath, &output).map_err(|e| format!("Write failed: {}", e))?;
 
     Ok(filepath.to_string_lossy().to_string())
 }
@@ -697,6 +921,21 @@ fn handle_confirm_key(
                     crate::app::ConfirmAction::StopSession(id) => {
                         let _ = session_ops.stop_session(storage, id);
                     }
+                    crate::app::ConfirmAction::BulkDelete => {
+                        let ids: Vec<String> = app.bulk_selected.iter().cloned().collect();
+                        let mut cache = crate::core::tmux::SessionCache::new();
+                        for id in &ids {
+                            let _ = session_ops.delete_session(storage, &mut cache, id);
+                        }
+                        app.clear_bulk_selection();
+                    }
+                    crate::app::ConfirmAction::BulkStop => {
+                        let ids: Vec<String> = app.bulk_selected.iter().cloned().collect();
+                        for id in &ids {
+                            let _ = session_ops.stop_session(storage, id);
+                        }
+                        app.clear_bulk_selection();
+                    }
                 }
                 // Refresh sessions
                 if let Ok(sessions) = storage.load_sessions() {
@@ -737,7 +976,9 @@ fn handle_rename_key(
                         }
                         crate::app::RenameTarget::Group => {
                             if let Ok(groups) = storage.load_groups() {
-                                if let Some(mut group) = groups.into_iter().find(|g| g.path == form.target_id) {
+                                if let Some(mut group) =
+                                    groups.into_iter().find(|g| g.path == form.target_id)
+                                {
                                     group.name = new_name;
                                     let _ = storage.save_group(&group);
                                 }
@@ -788,14 +1029,15 @@ fn handle_move_key(
             }
             KeyCode::Enter => {
                 if let Some((ref path, ref name)) = form.groups.get(form.selected).cloned() {
-                    let _ = storage.move_session_to_group(&form.session_id.clone(), &path);
+                    let _ = storage.move_session_to_group(&form.session_id.clone(), path);
                     if let Ok(sessions) = storage.load_sessions() {
                         app.sessions = sessions;
                     }
                     app.groups = storage.load_groups().unwrap_or_default();
                     app.rebuild_list_rows();
                     app.toast_message = Some(format!("Moved to {}", name));
-                    app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
                 }
                 app.overlay = crate::app::Overlay::None;
             }
@@ -913,7 +1155,9 @@ fn execute_command_action(
             app.search_query = Some(String::new());
         }
         CommandAction::CreateGroup => {
-            app.overlay = Overlay::GroupManage(crate::app::GroupForm { name: String::new() });
+            app.overlay = Overlay::GroupManage(crate::app::GroupForm {
+                name: String::new(),
+            });
         }
         CommandAction::Quit => {
             app.should_quit = true;
@@ -958,7 +1202,9 @@ fn execute_command_action(
         }
         CommandAction::MoveSession => {
             if let Some(session) = app.selected_session() {
-                let groups: Vec<(String, String)> = app.groups.iter()
+                let groups: Vec<(String, String)> = app
+                    .groups
+                    .iter()
                     .map(|g| (g.path.clone(), g.name.clone()))
                     .collect();
                 if !groups.is_empty() {
@@ -998,18 +1244,100 @@ fn execute_command_action(
                 if !session.tmux_session.is_empty() {
                     let tmux_name = session.tmux_session.clone();
                     let title = session.title.clone();
-                    match export_session_log(&tmux_name, &title) {
+                    let id = session.id.clone();
+                    match export_session_log(&tmux_name, &title, &id) {
                         Ok(path) => {
                             app.toast_message = Some(format!("Exported to {}", path));
-                            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                            app.toast_expire =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                         }
                         Err(e) => {
                             app.toast_message = Some(format!("Export failed: {}", e));
-                            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                            app.toast_expire =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                         }
                     }
                 }
             }
+        }
+        CommandAction::CycleSort => {
+            app.sort_mode = app.sort_mode.next();
+            app.rebuild_list_rows();
+            let label = app.sort_mode.label();
+            app.toast_message = Some(format!("Sort: {}", label));
+            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+        }
+        CommandAction::PinSession => {
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.pinned;
+                let id = session.id.clone();
+                let title = session.title.clone();
+                let _ = storage.set_pinned(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+                let msg = if new_val {
+                    format!("Pinned: {}", title)
+                } else {
+                    format!("Unpinned: {}", title)
+                };
+                app.toast_message = Some(msg);
+                app.toast_expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            }
+        }
+        CommandAction::ShowHelp => {
+            app.overlay = Overlay::Help;
+        }
+        CommandAction::SelectTheme => {
+            app.overlay = Overlay::ThemeSelect(crate::app::ThemeSelectForm::new(&app.theme_name));
+        }
+    }
+    Ok(())
+}
+
+fn handle_theme_select_key(
+    app: &mut crate::app::App,
+    key: crossterm::event::KeyEvent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::KeyCode;
+
+    if let crate::app::Overlay::ThemeSelect(ref mut form) = app.overlay {
+        match key.code {
+            KeyCode::Esc => {
+                let original = form.original_theme_name.clone();
+                app.theme = crate::ui::theme::Theme::from_name(&original);
+                app.theme_name = original;
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Enter => {
+                let chosen = form.options[form.selected].clone();
+                let mut config = crate::core::config::load_config();
+                config.theme = chosen.clone();
+                let _ = crate::core::config::save_config(&config);
+                app.config_changed
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                app.theme_name = chosen.clone();
+                app.overlay = crate::app::Overlay::None;
+                app.toast_message = Some(format!("Theme: {}", chosen));
+                app.toast_expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if form.selected > 0 {
+                    form.selected -= 1;
+                }
+                app.theme = crate::ui::theme::Theme::from_name(&form.options[form.selected]);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if form.selected < form.options.len() - 1 {
+                    form.selected += 1;
+                }
+                app.theme = crate::ui::theme::Theme::from_name(&form.options[form.selected]);
+            }
+            _ => {}
         }
     }
     Ok(())

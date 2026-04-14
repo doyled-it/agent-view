@@ -4,16 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotificationConfig {
     #[serde(default)]
     pub sound: bool,
-}
-
-impl Default for NotificationConfig {
-    fn default() -> Self {
-        Self { sound: false }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,23 +56,29 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
+/// Load config from a specific path. Returns defaults if file doesn't exist or fails to parse.
+pub fn load_config_from_path(path: &std::path::Path) -> AppConfig {
+    match fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str::<AppConfig>(&content).unwrap_or_default(),
+        Err(_) => AppConfig::default(),
+    }
+}
+
 /// Load config from disk, merging with defaults.
 /// Returns defaults if file doesn't exist or fails to parse.
 pub fn load_config() -> AppConfig {
+    load_config_from_path(&config_path())
+}
+
+/// Save config to disk at the default config path.
+pub fn save_config(config: &AppConfig) -> Result<(), std::io::Error> {
     let path = config_path();
-    match fs::read_to_string(&path) {
-        Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-            Ok(config) => config,
-            Err(_) => {
-                eprintln!(
-                    "Warning: Failed to parse config from {}",
-                    path.display()
-                );
-                AppConfig::default()
-            }
-        },
-        Err(_) => AppConfig::default(),
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
     }
+    let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
+    fs::write(&path, json)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -137,5 +137,78 @@ mod tests {
         // but we test the parsing logic
         let result: Result<AppConfig, _> = serde_json::from_str("not valid json!!!");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_config_from_path() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{ "theme": "light" }"#).unwrap();
+        let config = load_config_from_path(&path);
+        assert_eq!(config.theme, "light");
+
+        fs::write(&path, r#"{ "theme": "dark" }"#).unwrap();
+        let config2 = load_config_from_path(&path);
+        assert_eq!(config2.theme, "dark");
+    }
+
+    #[test]
+    fn test_load_config_from_missing_path_returns_default() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nonexistent.json");
+        let config = load_config_from_path(&path);
+        assert_eq!(config.default_tool, "claude");
+        assert_eq!(config.theme, "dark");
+        assert_eq!(config.default_group, "default");
+        assert!(!config.notifications.sound);
+    }
+
+    #[test]
+    fn test_load_config_from_invalid_json_returns_default() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, "this is not json").unwrap();
+        let config = load_config_from_path(&path);
+        assert_eq!(config.default_tool, "claude");
+        assert_eq!(config.theme, "dark");
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+
+        let original = AppConfig {
+            default_tool: "gemini".to_string(),
+            theme: "gruvbox".to_string(),
+            default_group: "work".to_string(),
+            notifications: NotificationConfig { sound: true },
+        };
+
+        // Write manually using save_config logic (bypass the hardcoded path)
+        let json = serde_json::to_string_pretty(&original).unwrap();
+        fs::write(&path, json).unwrap();
+
+        let loaded = load_config_from_path(&path);
+        assert_eq!(loaded.default_tool, "gemini");
+        assert_eq!(loaded.theme, "gruvbox");
+        assert_eq!(loaded.default_group, "work");
+        assert!(loaded.notifications.sound);
+    }
+
+    #[test]
+    fn test_serialization_roundtrip_via_json_string() {
+        let config = AppConfig {
+            default_tool: "codex".to_string(),
+            theme: "solarized".to_string(),
+            default_group: "research".to_string(),
+            notifications: NotificationConfig { sound: false },
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.default_tool, config.default_tool);
+        assert_eq!(restored.theme, config.theme);
+        assert_eq!(restored.default_group, config.default_group);
+        assert_eq!(restored.notifications.sound, config.notifications.sound);
     }
 }

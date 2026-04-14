@@ -1,6 +1,7 @@
 //! Overlay rendering for new session form and confirm dialogs
 
 use crate::app::{CommandPalette, ConfirmDialog, GroupForm, MoveForm, NewSessionForm, RenameForm};
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
@@ -73,10 +74,7 @@ pub fn render_new_session(
     } else {
         Style::default().fg(theme.text_muted)
     };
-    frame.render_widget(
-        Paragraph::new("Project Path:").style(path_style),
-        chunks[3],
-    );
+    frame.render_widget(Paragraph::new("Project Path:").style(path_style), chunks[3]);
 
     let path_display = if form.focused_field == 1 {
         format!("{}\u{2588}", form.project_path)
@@ -127,8 +125,7 @@ pub fn render_rename(
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new(format!("{}\u{2588}", form.input))
-            .style(Style::default().fg(theme.text)),
+        Paragraph::new(format!("{}\u{2588}", form.input)).style(Style::default().fg(theme.text)),
         chunks[1],
     );
 }
@@ -205,7 +202,9 @@ pub fn render_move(
         .enumerate()
         .map(|(i, (_, name))| {
             let style = if i == form.selected {
-                Style::default().bg(theme.primary).fg(theme.selected_item_text)
+                Style::default()
+                    .bg(theme.primary)
+                    .fg(theme.selected_item_text)
             } else {
                 Style::default().fg(theme.text)
             };
@@ -264,7 +263,9 @@ pub fn render_command_palette(
         .map(|(i, &idx)| {
             let item = &palette.items[idx];
             let style = if i == palette.selected {
-                Style::default().bg(theme.primary).fg(theme.selected_item_text)
+                Style::default()
+                    .bg(theme.primary)
+                    .fg(theme.selected_item_text)
             } else {
                 Style::default().fg(theme.text)
             };
@@ -273,7 +274,9 @@ pub fn render_command_palette(
                 Span::styled(
                     format!("  {}", item.key_hint),
                     if i == palette.selected {
-                        Style::default().bg(theme.primary).fg(theme.selected_item_text)
+                        Style::default()
+                            .bg(theme.primary)
+                            .fg(theme.selected_item_text)
                     } else {
                         Style::default().fg(theme.text_muted)
                     },
@@ -284,6 +287,133 @@ pub fn render_command_palette(
         .collect();
 
     frame.render_widget(List::new(items), chunks[1]);
+}
+
+/// Render the keybinding help overlay
+pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
+    let width = area.width.min(72);
+    let row_count = 11; // max of left_bindings.len(), right_bindings.len()
+    let height = area.height.min(row_count + 2); // +2 for top/bottom border
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup = Rect::new(area.x + x, area.y + y, width, height);
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(" Keybindings ")
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let left_bindings = vec![
+        ("j / k", "Navigate"),
+        ("Enter", "Attach session"),
+        ("n", "New session"),
+        ("s", "Stop session"),
+        ("r", "Restart session"),
+        ("d", "Delete session"),
+        ("R", "Rename"),
+        ("m", "Move to group"),
+        ("g", "Create group"),
+        ("J / K", "Move group up/dn"),
+        ("t", "Select theme"),
+    ];
+
+    let right_bindings = vec![
+        ("Space", "Select session"),
+        ("Ctrl+A", "Select all"),
+        ("S", "Cycle sort"),
+        ("p", "Pin/unpin"),
+        ("i", "Follow-up flag"),
+        ("!", "Notifications"),
+        ("e", "Export log"),
+        ("a", "Activity feed"),
+        ("/", "Search"),
+        ("Ctrl+K", "Command palette"),
+    ];
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(inner);
+
+    let left_lines: Vec<Line> = left_bindings
+        .iter()
+        .map(|(key, desc)| {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {:>9} ", key),
+                    Style::default().fg(theme.secondary).bold(),
+                ),
+                Span::styled(*desc, Style::default().fg(theme.text)),
+            ])
+        })
+        .collect();
+
+    let right_lines: Vec<Line> = right_bindings
+        .iter()
+        .map(|(key, desc)| {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {:>9} ", key),
+                    Style::default().fg(theme.secondary).bold(),
+                ),
+                Span::styled(*desc, Style::default().fg(theme.text)),
+            ])
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(left_lines), cols[0]);
+    frame.render_widget(Paragraph::new(right_lines), cols[1]);
+}
+
+/// Render the theme selection overlay with live preview
+pub fn render_theme_select(
+    frame: &mut Frame,
+    area: Rect,
+    form: &crate::app::ThemeSelectForm,
+    theme: &crate::ui::theme::Theme,
+) {
+    let width = area.width.min(30);
+    let height = (form.options.len() as u16 + 2).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup = Rect::new(area.x + x, area.y + y, width, height);
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(" Theme ")
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let items: Vec<ListItem> = form
+        .options
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let is_selected = i == form.selected;
+            let style = if is_selected {
+                Style::default()
+                    .fg(theme.selected_item_text)
+                    .bg(theme.primary)
+                    .bold()
+            } else {
+                Style::default().fg(theme.text)
+            };
+            ListItem::new(format!("  {}  ", name)).style(style)
+        })
+        .collect();
+
+    frame.render_widget(List::new(items), inner);
 }
 
 /// Render the group creation overlay

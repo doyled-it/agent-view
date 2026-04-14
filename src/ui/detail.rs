@@ -22,7 +22,8 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
     let status_color = crate::ui::theme::status_color(theme, session.status);
 
     let created = format_timestamp(session.created_at);
-    let duration = format_session_duration(session.created_at, session.status);
+    let started = format_timestamp(session.last_started_at);
+    let duration = format_session_duration(session.last_started_at, session.status);
 
     let mut lines = vec![
         Line::from(vec![
@@ -50,7 +51,11 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
             Span::styled(created, Style::default().fg(theme.text)),
         ]),
         Line::from(vec![
-            Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
+            Span::styled("Started: ", Style::default().fg(theme.text_muted)),
+            Span::styled(started, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("Uptime: ", Style::default().fg(theme.text_muted)),
             Span::styled(duration, Style::default().fg(theme.text)),
         ]),
     ];
@@ -64,7 +69,10 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
         if !session.worktree_branch.is_empty() {
             lines.push(Line::from(vec![
                 Span::styled("Branch: ", Style::default().fg(theme.text_muted)),
-                Span::styled(&session.worktree_branch, Style::default().fg(theme.secondary)),
+                Span::styled(
+                    &session.worktree_branch,
+                    Style::default().fg(theme.secondary),
+                ),
             ]));
         }
     }
@@ -89,6 +97,16 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
             Span::styled("Restarts: ", Style::default().fg(theme.text_muted)),
             Span::styled(
                 session.restart_count.to_string(),
+                Style::default().fg(theme.text),
+            ),
+        ]));
+    }
+
+    if session.tokens_used > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("Tokens: ", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                crate::core::tokens::format_tokens(session.tokens_used),
                 Style::default().fg(theme.text),
             ),
         ]));
