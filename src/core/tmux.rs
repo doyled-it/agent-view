@@ -224,6 +224,7 @@ pub fn capture_pane(name: &str, start_line: Option<i32>) -> Result<String, Strin
 }
 
 /// Get sessions that currently have an attached client
+#[allow(dead_code)]
 pub fn get_attached_sessions() -> std::collections::HashSet<String> {
     let output = Command::new("tmux")
         .args(["list-clients", "-F", "#{client_session}"])

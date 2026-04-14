@@ -372,6 +372,7 @@ impl Storage {
     }
 
     /// Set the acknowledged flag
+    #[allow(dead_code)]
     pub fn set_acknowledged(&self, id: &str, ack: bool) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE sessions SET acknowledged = ?1 WHERE id = ?2",
@@ -466,6 +467,7 @@ impl Storage {
     }
 
     /// Delete a group by path
+    #[allow(dead_code)]
     pub fn delete_group(&self, path: &str) -> SqlResult<()> {
         self.conn
             .execute("DELETE FROM groups WHERE path = ?1", params![path])?;
@@ -522,11 +524,13 @@ impl Storage {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn close(self) -> SqlResult<()> {
         self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn conn(&self) -> &Connection {
         &self.conn
     }

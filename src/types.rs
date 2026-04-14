@@ -213,13 +213,16 @@ pub struct SessionCreateOptions {
 #[derive(Debug, Clone)]
 pub struct ActivityEvent {
     pub session_title: String,
+    #[allow(dead_code)]
     pub old_status: SessionStatus,
     pub new_status: SessionStatus,
     pub timestamp: i64,
+    #[allow(dead_code)]
     pub message: Option<String>,
 }
 
 impl ActivityEvent {
+    #[allow(dead_code)]
     pub fn format_line(&self) -> String {
         let now = chrono::Utc::now().timestamp_millis();
         let ago_ms = now - self.timestamp;

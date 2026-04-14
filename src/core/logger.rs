@@ -92,6 +92,7 @@ impl SessionLogger {
             .insert(session_id.to_string(), total_lines);
     }
 
+    #[allow(dead_code)]
     pub fn remove_session(&mut self, session_id: &str) {
         self.last_line_counts.remove(session_id);
     }
