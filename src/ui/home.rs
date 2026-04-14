@@ -180,6 +180,7 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     let follow_up_indicator = if session.follow_up { "F " } else { "  " };
                     let pin_indicator = if session.pinned { "^ " } else { "  " };
                     let age = format_age(session.created_at);
+                    let sparkline = render_sparkline_str(&session.status_history, 8);
 
                     // When this session matches the search, highlight the title in the info color
                     let title_color = if is_search_match {
@@ -203,6 +204,10 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                             Style::default().fg(theme.text_muted),
                         ),
                         Span::raw("  "),
+                        Span::styled(
+                            format!(" {} ", sparkline),
+                            Style::default().fg(theme.text_muted),
+                        ),
                         Span::styled(age, Style::default().fg(theme.text_muted)),
                     ]);
 
@@ -219,6 +224,32 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
 
     let list = List::new(items);
     frame.render_widget(list, area);
+}
+
+fn status_to_sparkline_char(status: &str) -> char {
+    match status {
+        "idle" | "stopped" => '\u{2581}',     // ▁
+        "running" => '\u{2588}',              // █
+        "waiting" => '\u{2585}',              // ▅
+        "paused" | "compacting" => '\u{2583}', // ▃
+        "error" => '\u{2587}',               // ▇
+        _ => '\u{2581}',                      // ▁
+    }
+}
+
+fn render_sparkline_str(history: &[crate::types::StatusHistoryEntry], max_width: usize) -> String {
+    if history.is_empty() {
+        return String::new();
+    }
+    let start = if history.len() > max_width {
+        history.len() - max_width
+    } else {
+        0
+    };
+    history[start..]
+        .iter()
+        .map(|entry| status_to_sparkline_char(&entry.status))
+        .collect()
 }
 
 /// Format a millisecond timestamp as a human-readable age
@@ -298,6 +329,38 @@ mod tests {
         let result = truncate_path(long_path, 20);
         assert!(result.starts_with('~'));
         assert!(result.len() <= 20);
+    }
+
+    #[test]
+    fn test_sparkline_from_history() {
+        use crate::types::StatusHistoryEntry;
+        let history = vec![
+            StatusHistoryEntry { status: "idle".to_string(), timestamp: 1000 },
+            StatusHistoryEntry { status: "running".to_string(), timestamp: 2000 },
+            StatusHistoryEntry { status: "waiting".to_string(), timestamp: 3000 },
+            StatusHistoryEntry { status: "idle".to_string(), timestamp: 4000 },
+        ];
+        let spark = render_sparkline_str(&history, 4);
+        assert_eq!(spark, "\u{2581}\u{2588}\u{2585}\u{2581}");
+    }
+
+    #[test]
+    fn test_sparkline_empty_history() {
+        let spark = render_sparkline_str(&[], 4);
+        assert_eq!(spark, "");
+    }
+
+    #[test]
+    fn test_sparkline_truncates_to_max_width() {
+        use crate::types::StatusHistoryEntry;
+        let history: Vec<StatusHistoryEntry> = (0..20)
+            .map(|i| StatusHistoryEntry {
+                status: "running".to_string(),
+                timestamp: i * 1000,
+            })
+            .collect();
+        let spark = render_sparkline_str(&history, 8);
+        assert_eq!(spark.chars().count(), 8);
     }
 
     #[test]
