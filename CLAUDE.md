@@ -42,7 +42,7 @@ src/
 ### Quick Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/frayo44/agent-view/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/install.sh | bash
 ```
 
 This will:
@@ -54,7 +54,7 @@ This will:
 ### Manual Install
 
 ```bash
-git clone https://github.com/frayo44/agent-view.git
+git clone https://github.com/doyled-it/agent-view.git
 cd agent-view
 bun install
 bun run build
@@ -72,7 +72,7 @@ Binaries are output to the `bin/` directory.
 ### Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/frayo44/agent-view/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/uninstall.sh | bash
 ```
 
 ## Development

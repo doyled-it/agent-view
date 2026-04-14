@@ -1,0 +1,145 @@
+stages:
+  - check
+  - test
+  - build
+  - release
+
+fmt:
+  stage: check
+  image: rust:latest
+  tags:
+    - docker
+  before_script:
+    - rustup component add rustfmt
+  script:
+    - cargo fmt --check
+  only:
+    - main
+    - /^release\/.*$/
+    - merge_requests
+
+clippy:
+  stage: check
+  image: rust:latest
+  tags:
+    - docker
+  before_script:
+    - rustup component add clippy
+  script:
+    - cargo clippy -- -D warnings
+  only:
+    - main
+    - /^release\/.*$/
+    - merge_requests
+
+test:
+  stage: test
+  image: rust:latest
+  tags:
+    - docker
+  before_script:
+    - apt-get update && apt-get install -y tmux
+  script:
+    - cargo test
+  only:
+    - main
+    - /^release\/.*$/
+    - merge_requests
+
+build-release:
+  stage: build
+  image: rust:latest
+  tags:
+    - docker
+  script:
+    - cargo build --release
+    - mkdir -p bin
+    - tar czf bin/agent-view-linux-x64.tar.gz -C target/release agent-view
+  artifacts:
+    paths:
+      - bin/*.tar.gz
+    expire_in: 1 week
+  only:
+    - tags
+
+create-release:
+  stage: release
+  image: alpine:3.19
+  tags:
+    - docker
+  before_script:
+    - apk add --no-cache curl jq sed git
+  script:
+    - |
+      set -e
+      VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
+      echo "Creating release for version: $VERSION"
+
+      git fetch --tags
+      PREV_TAG=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -B1 "^${CI_COMMIT_TAG}$" | head -1)
+      if [ "$PREV_TAG" = "$CI_COMMIT_TAG" ] || [ -z "$PREV_TAG" ]; then
+        PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+      fi
+
+      COMMITS=$(git log "${PREV_TAG}..${CI_COMMIT_TAG}" --pretty=format:"- %s" --no-merges 2>/dev/null | head -50 || true)
+
+      RELEASE_NOTES=""
+      if [ -n "${AIP_API_KEY:-}" ]; then
+        LLM_PROMPT=$(printf 'Generate concise release notes for version %s.\n\nCommits:\n%s\n\nRULES:\n1. Use headings: Changed, Added, Removed, Fixed (only relevant ones)\n2. Imperative mood\n3. Combine related commits\n4. Exclude CI/CD, formatting, docs-only, version bump commits\n5. Output ONLY headings and bullet points. No code fences.' \
+          "$VERSION" "$COMMITS")
+
+        LLM_PAYLOAD=$(jq -n \
+          --arg model "openai/gpt-oss-120b" \
+          --arg prompt "$LLM_PROMPT" \
+          '{model: $model, messages: [{role: "user", content: $prompt}], temperature: 0.3}')
+
+        LLM_RESPONSE=$(curl -ksSL -X POST \
+          "https://models.k8s.aip.mitre.org/v1/chat/completions" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer $AIP_API_KEY" \
+          -d "$LLM_PAYLOAD" 2>/dev/null || true)
+
+        RELEASE_NOTES=$(echo "$LLM_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
+      fi
+
+      if [ -z "$RELEASE_NOTES" ]; then
+        RELEASE_NOTES="$COMMITS"
+      fi
+
+      INSTALL_CMD='curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash'
+      DESCRIPTION=$(printf "## What's New in v%s\n\n%s\n\n## Installation\n\n\`\`\`bash\n%s\n\`\`\`\n" "$VERSION" "$RELEASE_NOTES" "$INSTALL_CMD")
+
+      ASSET_LINKS="[]"
+      for tarball in bin/*.tar.gz; do
+        FILENAME=$(basename "$tarball")
+        echo "Uploading $FILENAME..."
+        curl -ksSL --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
+          --upload-file "$tarball" \
+          "https://gitlab.mitre.org/api/v4/projects/${CI_PROJECT_ID}/packages/generic/agent-view/${VERSION}/${FILENAME}"
+
+        LINK=$(jq -n \
+          --arg name "$FILENAME" \
+          --arg url "https://gitlab.mitre.org/api/v4/projects/${CI_PROJECT_ID}/packages/generic/agent-view/${VERSION}/${FILENAME}" \
+          '{name: $name, url: $url, link_type: "package"}')
+
+        ASSET_LINKS=$(echo "$ASSET_LINKS" | jq --argjson link "$LINK" '. + [$link]')
+      done
+
+      RELEASE_PAYLOAD=$(jq -n \
+        --arg tag "$CI_COMMIT_TAG" \
+        --arg name "Agent View v${VERSION}" \
+        --arg description "$DESCRIPTION" \
+        --argjson assets "{\"links\": $ASSET_LINKS}" \
+        '{tag_name: $tag, name: $name, description: $description, assets: $assets}')
+
+      curl -ksSL -X POST \
+        "https://gitlab.mitre.org/api/v4/projects/${CI_PROJECT_ID}/releases" \
+        --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
+        --header "Content-Type: application/json" \
+        --data "$RELEASE_PAYLOAD"
+
+      echo "Release v${VERSION} created successfully."
+  needs:
+    - build-release
+  only:
+    - tags

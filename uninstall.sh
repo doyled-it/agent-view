@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Agent View Uninstaller
-# Usage: curl -fsSL https://raw.githubusercontent.com/frayo44/agent-view/main/uninstall.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/uninstall.sh | bash
 #
 
 set -euo pipefail
