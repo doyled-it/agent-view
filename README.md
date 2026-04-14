@@ -1,30 +1,24 @@
 # Agent View
 
-**A lightweight terminal-based agent orchestrator for managing multiple AI coding assistants.**
+**A lightweight terminal dashboard for managing multiple AI coding agent sessions.**
 
-Run multiple AI coding agents in parallel and manage them from a single dashboard. Agent View is a lightweight tmux session manager built for AI-assisted development workflows - monitor agent status in real-time, get notifications when agents finish or need input, and seamlessly switch between sessions.
+Run multiple AI coding agents in parallel and manage them from a single terminal UI. Agent View is a tmux session manager built for AI-assisted development workflows -- monitor agent status in real-time, get notifications when agents finish or need input, and seamlessly switch between sessions.
 
-Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom AI coding tool.
+Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command.
 
 ## Supported Platforms
 
 | Platform | Architecture | Status |
 |----------|--------------|--------|
-| macOS    | Apple Silicon (arm64) | ✅ Supported |
-| macOS    | Intel (x64) | ✅ Supported |
-| Linux    | arm64 | ✅ Supported |
-| Linux    | x64 | ✅ Supported |
-| WSL      | x64 | ✅ Supported |
-
----
-
-### ⭐ If you find this useful, please give it a star to help others discover it!
-
----
+| macOS    | Apple Silicon (arm64) | Supported |
+| macOS    | Intel (x64) | Supported |
+| Linux    | arm64 | Supported |
+| Linux    | x64 | Supported |
+| WSL      | x64 | Supported |
 
 ## Why Agent View?
 
-When working with AI coding agents, you often need to run multiple agents on different tasks - one refactoring a module, another writing tests, a third exploring a bug. Agent View lets you orchestrate all of them from one place instead of juggling terminal tabs. It's the missing multi-agent management layer for your AI-assisted development workflow.
+When working with AI coding agents, you often need multiple agents running on different tasks -- one refactoring a module, another writing tests, a third exploring a bug. Agent View lets you orchestrate all of them from one place instead of juggling terminal tabs.
 
 ## Demo
 
@@ -32,32 +26,41 @@ When working with AI coding agents, you often need to run multiple agents on dif
 
 ## Features
 
-- **Multi-Agent Dashboard** - View all your AI coding assistant sessions at a glance with real-time status indicators
-- **Smart Notifications** - Get notified when an agent finishes a task or needs your input, so you can context-switch efficiently
-- **Session Management** - Create, stop, restart, and delete coding agent sessions with keyboard shortcuts
-- **Git Worktree Integration** - Automatically create isolated git worktrees for each agent session, keeping your branches clean
-- **Tool Agnostic** - Works as a Claude Code manager, Gemini CLI orchestrator, OpenCode dashboard, or with any custom AI tool
-- **Keyboard-First** - Fully navigable terminal UI with keyboard shortcuts for maximum productivity
-- **Session Groups** - Organize sessions into groups by project or workflow
-- **Persistent State** - Sessions survive terminal restarts and system reboots via tmux
+- **Multi-Agent Dashboard** -- View all sessions at a glance with real-time status indicators and 24-hour activity timelines
+- **Smart Notifications** -- Get notified when an agent finishes or needs input
+- **Session Management** -- Create, stop, restart, rename, and delete sessions with keyboard shortcuts
+- **Git Worktree Integration** -- Create isolated git worktrees for each session
+- **Tool Agnostic** -- Works with Claude Code, Gemini CLI, OpenCode, Codex CLI, or any custom command
+- **12 Themes** -- dark, light, tokyo-night, dracula, gruvbox, nord, solarized, rose-pine, kanagawa, everforest, one-dark, moonfly (press `t` to preview and switch)
+- **Session Groups** -- Organize sessions into named groups, reorder with Shift+J/K
+- **Session Pinning** -- Pin important sessions to the top of their group
+- **Bulk Operations** -- Select multiple sessions with Space/Ctrl+A, then stop or delete in bulk
+- **Activity Feed** -- Collapsible feed showing real-time status transitions (press `a`)
+- **Sort Modes** -- Cycle through status, activity, name, and creation time sorting (Shift+S)
+- **Search** -- Fuzzy search across session names (press `/`)
+- **Command Palette** -- Quick access to all actions (Ctrl+K)
+- **Token Tracking** -- Monitor token usage for Claude sessions
+- **Session Uptime** -- Tracks time since last tmux session start, not just creation date
+- **Persistent State** -- Sessions survive terminal restarts via tmux; data stored in SQLite
 
 ### Status Detection
 
-Agent View monitors your sessions and shows real-time status indicators:
+Agent View monitors sessions and shows real-time status:
 
-| Status | Symbol | What It Means |
-|--------|--------|---------------|
-| **Running** | `●` green | Agent is actively working |
-| **Waiting** | `◐` yellow | Needs your input |
-| **Idle** | `○` gray | Ready for commands |
-| **Stopped** | `◻` gray | Session was stopped |
-| **Error** | `✗` red | Something went wrong |
+| Status | Meaning |
+|--------|---------|
+| Running | Agent is actively working |
+| Waiting | Needs your input |
+| Paused | Agent is paused/compacting |
+| Idle | Ready for commands |
+| Stopped | Session was stopped |
+| Error | Something went wrong |
 
 ## Installation
 
 ### Quick Install
 
-Pre-built binary via `curl | sh`:
+Downloads a pre-built binary for your platform:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/install.sh | bash
@@ -69,27 +72,24 @@ Install a specific version:
 curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/install.sh | bash -s -- -v 1.0.0
 ```
 
-### Install from Source
+### Build from Source
+
+Requires [Rust](https://rustup.rs/) and [tmux](https://github.com/tmux/tmux):
 
 ```bash
 git clone https://github.com/doyled-it/agent-view.git
 cd agent-view
-bun install
-bun run compile
+cargo build --release
+cp target/release/agent-view ~/.local/bin/
 ```
 
-Then add `bin/agent-view-<platform>/` to your PATH, or run the included install script:
+### Uninstall
 
 ```bash
-cd bin/agent-view-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/uninstall.sh | bash
 ```
 
-**Requirements:** [Bun](https://bun.sh), tmux (`brew install tmux` on macOS)
-
 ## Usage
-
-### Start Agent View
 
 ```bash
 agent-view
@@ -99,63 +99,72 @@ av
 
 ### Keyboard Shortcuts
 
-**Dashboard:**
+**Navigation:**
 
 | Key | Action |
 |-----|--------|
-| `n` | Create new session |
+| `j` / `k` | Navigate up/down |
 | `Enter` | Attach to session / toggle group |
-| `↑/k` | Navigate up |
-| `↓/j` | Navigate down |
-| `→/l` | Expand group (or attach to session) |
-| `←/h` | Collapse group |
-| `d` | Delete session or group |
-| `r` | Restart session |
-| `R` | Rename session or group |
-| `f` | Fork session |
-| `F` | Fork session with worktree |
-| `g` | Create new group |
-| `m` | Move session to group |
-| `1-9` | Jump to group by number |
-| `Ctrl+K` | Open command palette |
-| `?` | Show help |
+| `l` / `Right` | Expand group (or attach) |
+| `h` / `Left` | Collapse group |
+| `1`-`9` | Jump to group by number |
+| `/` | Search sessions |
+| `Ctrl+K` | Command palette |
+| `?` | Help overlay |
 | `q` | Quit |
 
-**Inside attached session:**
+**Session Management:**
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+K` | Detach and open command palette |
-| `Ctrl+T` | Open terminal pane |
-| `Ctrl+Q` | Detach (return to dashboard) |
+| `n` | New session |
+| `s` | Stop session |
+| `r` | Restart session |
+| `d` | Delete session or group |
+| `R` | Rename session or group |
+| `m` | Move session to group |
+| `e` | Export session log |
+| `!` | Toggle notifications |
+| `i` | Toggle follow-up flag |
+| `p` | Toggle pin |
 
-### Create a Session
+**Organization:**
 
-1. Press `n` to open the new session dialog
-2. Select your AI tool (Claude, Gemini, OpenCode, etc.)
-3. Enter the project path
-4. Optionally enable git worktree for an isolated branch
-5. Press `Enter` to create and attach
+| Key | Action |
+|-----|--------|
+| `g` | Create new group |
+| `Shift+J` / `Shift+K` | Reorder groups |
+| `Shift+S` | Cycle sort mode |
+| `Space` | Toggle bulk select |
+| `Ctrl+A` | Select all visible |
+| `a` | Toggle activity feed |
+| `t` | Theme selector |
+
+**Inside an attached session:**
+
+Detach with `Ctrl+B`, `D` (standard tmux detach) to return to the dashboard.
 
 ### Configuration
 
-Create `~/.agent-view/config.json` to customize defaults:
+Config lives at `~/.agent-view/config.json`:
 
 ```json
 {
-  "defaultTool": "claude",
-  "worktree": {
-    "defaultBaseBranch": "main",
-    "command": "git worktree"
+  "default_tool": "claude",
+  "theme": "dark",
+  "default_group": "default",
+  "notifications": {
+    "sound": false
   }
 }
 ```
 
+**Available themes:** `dark`, `light`, `tokyo-night`, `dracula`, `gruvbox`, `nord`, `solarized`, `rose-pine`, `kanagawa`, `everforest`, `one-dark`, `moonfly`
+
 ## Requirements
 
-- [Bun](https://bun.sh) runtime
-- [tmux](https://github.com/tmux/tmux) for session management
-- At least one AI coding tool installed (claude, gemini, opencode, etc.)
+- [tmux](https://github.com/tmux/tmux) (`brew install tmux` on macOS, `apt install tmux` on Linux)
+- At least one AI coding tool installed (claude, gemini, opencode, codex, etc.)
 
 ## Acknowledgments
 
