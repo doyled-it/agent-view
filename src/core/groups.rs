@@ -263,4 +263,138 @@ mod tests {
             panic!("Expected group row");
         }
     }
+
+    #[test]
+    fn test_sessions_sorted_by_created_at_descending() {
+        let groups = vec![make_group("work", "Work", 0)];
+        // Create sessions with distinct created_at values
+        let mut old_session = make_session("old", "work", SessionStatus::Idle);
+        old_session.created_at = 1700000000000;
+        let mut new_session = make_session("new", "work", SessionStatus::Idle);
+        new_session.created_at = 1700000099999;
+        let mut mid_session = make_session("mid", "work", SessionStatus::Idle);
+        mid_session.created_at = 1700000050000;
+
+        // Pass in oldest-first order to confirm flatten reorders them
+        let sessions = vec![old_session, mid_session, new_session];
+        let rows = flatten_group_tree(&sessions, &groups);
+
+        // rows[0] is the group header; rows[1..] are sessions newest-first
+        let ids: Vec<&str> = rows[1..]
+            .iter()
+            .filter_map(|r| {
+                if let ListRow::Session(s) = r {
+                    Some(s.id.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(ids, vec!["new", "mid", "old"]);
+    }
+
+    #[test]
+    fn test_groups_ordered_by_order_field() {
+        // Groups with intentionally reversed order values
+        let groups = vec![
+            make_group("alpha", "Alpha", 2),
+            make_group("beta", "Beta", 0),
+            make_group("gamma", "Gamma", 1),
+        ];
+        let sessions = vec![
+            make_session("s1", "alpha", SessionStatus::Idle),
+            make_session("s2", "beta", SessionStatus::Idle),
+            make_session("s3", "gamma", SessionStatus::Idle),
+        ];
+        let rows = flatten_group_tree(&sessions, &groups);
+
+        // Collect group names in the order they appear
+        let group_names: Vec<&str> = rows
+            .iter()
+            .filter_map(|r| {
+                if let ListRow::Group { group, .. } = r {
+                    Some(group.name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(group_names, vec!["Beta", "Gamma", "Alpha"]);
+    }
+
+    #[test]
+    fn test_multiple_groups_sessions_not_mixed() {
+        let groups = vec![
+            make_group("team-a", "Team A", 0),
+            make_group("team-b", "Team B", 1),
+        ];
+        let sessions = vec![
+            make_session("a1", "team-a", SessionStatus::Idle),
+            make_session("a2", "team-a", SessionStatus::Running),
+            make_session("b1", "team-b", SessionStatus::Idle),
+        ];
+        let rows = flatten_group_tree(&sessions, &groups);
+
+        // Expect: Group(team-a), Session(a*), Session(a*), Group(team-b), Session(b1)
+        assert_eq!(rows.len(), 5);
+
+        // First group header should be Team A with 2 sessions
+        if let ListRow::Group { group, session_count, .. } = &rows[0] {
+            assert_eq!(group.path, "team-a");
+            assert_eq!(*session_count, 2);
+        } else {
+            panic!("Expected group row at index 0");
+        }
+
+        // Fourth row should be Team B group header
+        if let ListRow::Group { group, session_count, .. } = &rows[3] {
+            assert_eq!(group.path, "team-b");
+            assert_eq!(*session_count, 1);
+        } else {
+            panic!("Expected group row at index 3");
+        }
+    }
+
+    #[test]
+    fn test_empty_non_default_group_still_shows() {
+        let groups = vec![
+            make_group("work", "Work", 0),
+            make_group("personal", "Personal", 1),
+        ];
+        // Only populate the "work" group
+        let sessions = vec![make_session("s1", "work", SessionStatus::Idle)];
+        let rows = flatten_group_tree(&sessions, &groups);
+
+        // Both groups should appear (only default group is hidden when empty)
+        let group_paths: Vec<&str> = rows
+            .iter()
+            .filter_map(|r| {
+                if let ListRow::Group { group, .. } = r {
+                    Some(group.path.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(group_paths.contains(&"work"));
+        assert!(group_paths.contains(&"personal"));
+    }
+
+    #[test]
+    fn test_sessions_with_empty_group_path_go_to_default() {
+        let groups = vec![make_group(DEFAULT_GROUP_PATH, DEFAULT_GROUP_NAME, 0)];
+        // Session with empty group_path should land in the default group
+        let session = make_session("s1", "", SessionStatus::Idle);
+        let rows = flatten_group_tree(&[session], &groups);
+
+        // Default group header + 1 session
+        assert_eq!(rows.len(), 2);
+        if let ListRow::Group { group, session_count, .. } = &rows[0] {
+            assert_eq!(group.path, DEFAULT_GROUP_PATH);
+            assert_eq!(*session_count, 1);
+        } else {
+            panic!("Expected default group row");
+        }
+        assert!(matches!(rows[1], ListRow::Session(_)));
+    }
 }
