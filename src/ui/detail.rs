@@ -22,7 +22,8 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
     let status_color = crate::ui::theme::status_color(theme, session.status);
 
     let created = format_timestamp(session.created_at);
-    let duration = format_session_duration(session.created_at, session.status);
+    let started = format_timestamp(session.last_started_at);
+    let duration = format_session_duration(session.last_started_at, session.status);
 
     let mut lines = vec![
         Line::from(vec![
@@ -50,7 +51,11 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
             Span::styled(created, Style::default().fg(theme.text)),
         ]),
         Line::from(vec![
-            Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
+            Span::styled("Started: ", Style::default().fg(theme.text_muted)),
+            Span::styled(started, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("Uptime: ", Style::default().fg(theme.text_muted)),
             Span::styled(duration, Style::default().fg(theme.text)),
         ]),
     ];

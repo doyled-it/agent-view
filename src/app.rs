@@ -423,6 +423,7 @@ mod tests {
             follow_up: false,
             status_changed_at: 0,
             restart_count: 0,
+            last_started_at: 0,
             status_history: vec![],
             pinned: false,
             tokens_used: 0,

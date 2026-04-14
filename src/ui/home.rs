@@ -263,7 +263,7 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     let notify_indicator = if session.notify { "\u{266A}" } else { " " };
                     let follow_up_indicator = if session.follow_up { "\u{2691}" } else { " " };
                     let pin_indicator = if session.pinned { "\u{25B4}" } else { " " };
-                    let age = format_age(session.created_at);
+                    let age = format_age(session.last_started_at);
                     let sparkline = render_sparkline_str(&session.status_history, 16);
 
                     // When this session matches the search, highlight the title in the info color

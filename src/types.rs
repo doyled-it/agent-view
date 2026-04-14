@@ -154,6 +154,7 @@ pub struct Session {
     pub follow_up: bool,
     pub status_changed_at: i64,
     pub restart_count: i32,
+    pub last_started_at: i64,
     pub status_history: Vec<StatusHistoryEntry>,
     pub pinned: bool,
     pub tokens_used: i64,
@@ -425,6 +426,7 @@ mod tests {
             follow_up: false,
             status_changed_at: 0,
             restart_count: 0,
+            last_started_at: 0,
             status_history: vec![],
             pinned: false,
             tokens_used: 0,
@@ -457,6 +459,7 @@ mod tests {
             follow_up: false,
             status_changed_at: 0,
             restart_count: 0,
+            last_started_at: 0,
             status_history: vec![
                 StatusHistoryEntry {
                     status: "running".to_string(),

@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, Result as SqlResult};
 use std::fs;
 use std::path::PathBuf;
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 pub struct Storage {
     conn: Connection,
@@ -129,6 +129,19 @@ impl Storage {
             );
         }
 
+        // v4 -> v5
+        if version < 5 {
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN last_started_at INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            // Backfill: set last_started_at = created_at for existing sessions
+            let _ = self.conn.execute(
+                "UPDATE sessions SET last_started_at = created_at WHERE last_started_at = 0",
+                [],
+            );
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -148,8 +161,8 @@ impl Storage {
                 parent_session_id, worktree_path, worktree_repo, worktree_branch,
                 tool_data, acknowledged,
                 notify, follow_up, status_changed_at, restart_count, status_history,
-                pinned, tokens_used
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+                pinned, tokens_used, last_started_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             params![
                 session.id,
                 session.title,
@@ -176,6 +189,7 @@ impl Storage {
                 session.status_history_json(),
                 session.pinned as i32,
                 session.tokens_used,
+                session.last_started_at,
             ],
         )?;
         Ok(())
@@ -190,7 +204,7 @@ impl Storage {
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
                     notify, follow_up, status_changed_at, restart_count, status_history,
-                    pinned, tokens_used
+                    pinned, tokens_used, last_started_at
              FROM sessions ORDER BY sort_order",
         )?;
 
@@ -228,6 +242,14 @@ impl Storage {
                     created_at
                 },
                 restart_count: row.get(21)?,
+                last_started_at: {
+                    let v: i64 = row.get(25).unwrap_or(0);
+                    if v > 0 {
+                        v
+                    } else {
+                        created_at
+                    }
+                },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
                 pinned: row.get::<_, i32>(23)? == 1,
                 tokens_used: row.get(24)?,
@@ -246,7 +268,7 @@ impl Storage {
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
                     notify, follow_up, status_changed_at, restart_count, status_history,
-                    pinned, tokens_used
+                    pinned, tokens_used, last_started_at
              FROM sessions WHERE id = ?1",
         )?;
 
@@ -284,6 +306,14 @@ impl Storage {
                     created_at
                 },
                 restart_count: row.get(21)?,
+                last_started_at: {
+                    let v: i64 = row.get(25).unwrap_or(0);
+                    if v > 0 {
+                        v
+                    } else {
+                        created_at
+                    }
+                },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
                 pinned: row.get::<_, i32>(23)? == 1,
                 tokens_used: row.get(24)?,
@@ -605,7 +635,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("4".to_string()));
+        assert_eq!(version, Some("5".to_string()));
     }
 
     #[test]
@@ -613,7 +643,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("4".to_string()));
+        assert_eq!(version, Some("5".to_string()));
     }
 
     #[test]
@@ -677,6 +707,7 @@ mod tests {
             follow_up: false,
             status_changed_at: 1700000000000,
             restart_count: 0,
+            last_started_at: 1700000000000,
             status_history: vec![],
             pinned: false,
             tokens_used: 0,

@@ -335,6 +335,7 @@ impl SessionOps {
             follow_up: false,
             status_changed_at: now,
             restart_count: 0,
+            last_started_at: now,
             status_history: vec![crate::types::StatusHistoryEntry {
                 status: "running".to_string(),
                 timestamp: now,
@@ -428,7 +429,9 @@ impl SessionOps {
 
         session.tmux_session = new_tmux_name;
         session.status = SessionStatus::Running;
-        session.last_accessed = chrono::Utc::now().timestamp_millis();
+        let now = chrono::Utc::now().timestamp_millis();
+        session.last_accessed = now;
+        session.last_started_at = now;
 
         storage
             .save_session(&session)
@@ -470,6 +473,7 @@ mod tests {
             follow_up: false,
             status_changed_at: 0,
             restart_count: 0,
+            last_started_at: 0,
             status_history: vec![],
             pinned: false,
             tokens_used: 0,
