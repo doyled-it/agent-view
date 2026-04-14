@@ -1,0 +1,78 @@
+name: Version Bump
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main, "release/*"]
+
+jobs:
+  bump:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine bump type from labels
+        id: bump
+        run: |
+          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+          if echo "$LABELS" | grep -q "version:major"; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          elif echo "$LABELS" | grep -q "version:minor"; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          elif echo "$LABELS" | grep -q "version:patch"; then
+            echo "type=patch" >> $GITHUB_OUTPUT
+          else
+            echo "type=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version
+        if: steps.bump.outputs.type != ''
+        run: |
+          set -e
+          BUMP_TYPE="${{ steps.bump.outputs.type }}"
+          CURRENT_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
+
+          case "$BUMP_TYPE" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "Bumping $CURRENT_VERSION -> $NEW_VERSION ($BUMP_TYPE)"
+
+          sed -i "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+          TODAY=$(date +%Y-%m-%d)
+
+          CHANGELOG_ENTRY=$(printf "### Changed\n\n- %s (#%s) (@%s)" "$PR_TITLE" "$PR_NUMBER" "$PR_AUTHOR")
+          VERSION_HEADER=$(printf "## [%s] - %s" "$NEW_VERSION" "$TODAY")
+
+          if [ -f CHANGELOG.md ]; then
+            HEADER=$(head -n 1 CHANGELOG.md)
+            REST=$(tail -n +2 CHANGELOG.md)
+            printf "%s\n\n%s\n\n%s\n%s" "$HEADER" "$VERSION_HEADER" "$CHANGELOG_ENTRY" "$REST" > CHANGELOG.md
+          else
+            printf "# Changelog\n\n%s\n\n%s\n" "$VERSION_HEADER" "$CHANGELOG_ENTRY" > CHANGELOG.md
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml CHANGELOG.md
+          git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
+          git tag "v${NEW_VERSION}"
+          git push origin HEAD "v${NEW_VERSION}"
+
+          echo "Version bumped and tagged: v${NEW_VERSION}"
