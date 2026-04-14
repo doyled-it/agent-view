@@ -339,7 +339,12 @@ mod tests {
         assert_eq!(rows.len(), 5);
 
         // First group header should be Team A with 2 sessions
-        if let ListRow::Group { group, session_count, .. } = &rows[0] {
+        if let ListRow::Group {
+            group,
+            session_count,
+            ..
+        } = &rows[0]
+        {
             assert_eq!(group.path, "team-a");
             assert_eq!(*session_count, 2);
         } else {
@@ -347,7 +352,12 @@ mod tests {
         }
 
         // Fourth row should be Team B group header
-        if let ListRow::Group { group, session_count, .. } = &rows[3] {
+        if let ListRow::Group {
+            group,
+            session_count,
+            ..
+        } = &rows[3]
+        {
             assert_eq!(group.path, "team-b");
             assert_eq!(*session_count, 1);
         } else {
@@ -389,7 +399,12 @@ mod tests {
 
         // Default group header + 1 session
         assert_eq!(rows.len(), 2);
-        if let ListRow::Group { group, session_count, .. } = &rows[0] {
+        if let ListRow::Group {
+            group,
+            session_count,
+            ..
+        } = &rows[0]
+        {
             assert_eq!(group.path, DEFAULT_GROUP_PATH);
             assert_eq!(*session_count, 1);
         } else {

@@ -78,12 +78,12 @@ pub fn load_config_from_path(path: &std::path::Path) -> AppConfig {
 }
 
 /// Save a config to the given path, creating parent directories as needed.
+#[cfg(test)]
 pub fn save_config_to_path(path: &std::path::Path, config: &AppConfig) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(config).map_err(|e| std::io::Error::other(e))?;
     fs::write(path, json)
 }
 
@@ -193,7 +193,8 @@ mod tests {
 
         // Verify the file contains valid JSON that round-trips correctly.
         let contents = fs::read_to_string(&path).unwrap();
-        let parsed: AppConfig = serde_json::from_str(&contents).expect("saved file must be valid JSON");
+        let parsed: AppConfig =
+            serde_json::from_str(&contents).expect("saved file must be valid JSON");
         assert_eq!(parsed.default_tool, config.default_tool);
         assert_eq!(parsed.theme, config.theme);
     }
