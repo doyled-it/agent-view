@@ -472,6 +472,29 @@ impl Storage {
         Ok(())
     }
 
+    /// Swap the sort_order of two groups by path
+    pub fn swap_group_order(&self, path_a: &str, path_b: &str) -> SqlResult<()> {
+        let order_a: i32 = self.conn.query_row(
+            "SELECT sort_order FROM groups WHERE path = ?1",
+            params![path_a],
+            |row| row.get(0),
+        )?;
+        let order_b: i32 = self.conn.query_row(
+            "SELECT sort_order FROM groups WHERE path = ?1",
+            params![path_b],
+            |row| row.get(0),
+        )?;
+        self.conn.execute(
+            "UPDATE groups SET sort_order = ?1 WHERE path = ?2",
+            params![order_b, path_a],
+        )?;
+        self.conn.execute(
+            "UPDATE groups SET sort_order = ?1 WHERE path = ?2",
+            params![order_a, path_b],
+        )?;
+        Ok(())
+    }
+
     /// Toggle the expanded state of a group
     pub fn toggle_group_expanded(&self, path: &str) -> SqlResult<()> {
         self.conn.execute(
@@ -866,6 +889,33 @@ mod tests {
         storage.delete_group("work").unwrap();
         let groups = storage.load_groups().unwrap();
         assert_eq!(groups.len(), 0);
+    }
+
+    #[test]
+    fn test_swap_group_order() {
+        let (storage, _dir) = test_storage();
+        let g1 = crate::types::Group {
+            path: "work".to_string(),
+            name: "Work".to_string(),
+            expanded: true,
+            order: 0,
+            default_path: String::new(),
+        };
+        let g2 = crate::types::Group {
+            path: "personal".to_string(),
+            name: "Personal".to_string(),
+            expanded: true,
+            order: 1,
+            default_path: String::new(),
+        };
+        storage.save_group(&g1).unwrap();
+        storage.save_group(&g2).unwrap();
+
+        storage.swap_group_order("work", "personal").unwrap();
+
+        let groups = storage.load_groups().unwrap();
+        assert_eq!(groups[0].path, "personal");
+        assert_eq!(groups[1].path, "work");
     }
 
     #[test]

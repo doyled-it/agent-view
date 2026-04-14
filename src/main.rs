@@ -586,6 +586,38 @@ fn handle_main_key(
                 app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
         }
+        (KeyModifiers::CONTROL, KeyCode::Up) => {
+            if let Some(group) = app.selected_group() {
+                let path = group.path.clone();
+                let groups = storage.load_groups().unwrap_or_default();
+                if let Some(pos) = groups.iter().position(|g| g.path == path) {
+                    if pos > 0 {
+                        let prev_path = groups[pos - 1].path.clone();
+                        let _ = storage.swap_group_order(&path, &prev_path);
+                        app.groups = storage.load_groups().unwrap_or_default();
+                        app.rebuild_list_rows();
+                        app.move_selection_up();
+                        let _ = storage.touch();
+                    }
+                }
+            }
+        }
+        (KeyModifiers::CONTROL, KeyCode::Down) => {
+            if let Some(group) = app.selected_group() {
+                let path = group.path.clone();
+                let groups = storage.load_groups().unwrap_or_default();
+                if let Some(pos) = groups.iter().position(|g| g.path == path) {
+                    if pos < groups.len() - 1 {
+                        let next_path = groups[pos + 1].path.clone();
+                        let _ = storage.swap_group_order(&path, &next_path);
+                        app.groups = storage.load_groups().unwrap_or_default();
+                        app.rebuild_list_rows();
+                        app.move_selection_down();
+                        let _ = storage.touch();
+                    }
+                }
+            }
+        }
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
             if let Some(session) = app.selected_session() {
                 app.overlay = crate::app::Overlay::Rename(crate::app::RenameForm {
