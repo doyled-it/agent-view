@@ -1,6 +1,7 @@
 //! Overlay rendering for new session form and confirm dialogs
 
 use crate::app::{CommandPalette, ConfirmDialog, GroupForm, MoveForm, NewSessionForm, RenameForm};
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
@@ -284,6 +285,86 @@ pub fn render_command_palette(
         .collect();
 
     frame.render_widget(List::new(items), chunks[1]);
+}
+
+/// Render the keybinding help overlay
+pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
+    let width = area.width.min(60);
+    let height = area.height.min(22);
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup = Rect::new(area.x + x, area.y + y, width, height);
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(" Keybindings ")
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let left_bindings = vec![
+        ("j / k", "Navigate up/down"),
+        ("Enter", "Attach to session"),
+        ("n", "New session"),
+        ("s", "Stop session"),
+        ("r", "Restart session"),
+        ("d", "Delete session"),
+        ("R", "Rename session/group"),
+        ("m", "Move to group"),
+        ("g", "Create group"),
+        ("J / K", "Move group down/up"),
+    ];
+
+    let right_bindings = vec![
+        ("Space", "Select session"),
+        ("Ctrl+A", "Select all"),
+        ("S", "Cycle sort mode"),
+        ("p", "Pin/unpin session"),
+        ("i", "Toggle follow-up"),
+        ("!", "Toggle notifications"),
+        ("e", "Export log"),
+        ("a", "Toggle activity feed"),
+        ("/", "Search"),
+        ("Ctrl+K", "Command palette"),
+    ];
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(inner);
+
+    let left_lines: Vec<Line> = left_bindings
+        .iter()
+        .map(|(key, desc)| {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {:>9} ", key),
+                    Style::default().fg(theme.secondary).bold(),
+                ),
+                Span::styled(*desc, Style::default().fg(theme.text)),
+            ])
+        })
+        .collect();
+
+    let right_lines: Vec<Line> = right_bindings
+        .iter()
+        .map(|(key, desc)| {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {:>9} ", key),
+                    Style::default().fg(theme.secondary).bold(),
+                ),
+                Span::styled(*desc, Style::default().fg(theme.text)),
+            ])
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(left_lines), cols[0]);
+    frame.render_widget(Paragraph::new(right_lines), cols[1]);
 }
 
 /// Render the group creation overlay

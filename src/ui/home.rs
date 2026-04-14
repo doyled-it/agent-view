@@ -87,6 +87,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::CommandPalette(palette) => {
             crate::ui::overlay::render_command_palette(frame, area, palette, &app.theme);
         }
+        Overlay::Help => {
+            crate::ui::overlay::render_help(frame, area, &app.theme);
+        }
         Overlay::None => {}
     }
 }

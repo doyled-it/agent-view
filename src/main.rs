@@ -367,6 +367,14 @@ fn run_tui(
                                 &session_ops,
                             )?;
                         }
+                        crate::app::Overlay::Help => {
+                            if key.code == crossterm::event::KeyCode::Esc
+                                || key.code == crossterm::event::KeyCode::Char('?')
+                                || key.code == crossterm::event::KeyCode::Char('q')
+                            {
+                                app.overlay = crate::app::Overlay::None;
+                            }
+                        }
                     }
                 }
                 if app.should_quit {
@@ -752,6 +760,9 @@ fn handle_main_key(
         }
         (KeyModifiers::NONE, KeyCode::Char('a')) => {
             app.show_activity_feed = !app.show_activity_feed;
+        }
+        (KeyModifiers::NONE, KeyCode::Char('?')) => {
+            app.overlay = crate::app::Overlay::Help;
         }
         _ => {}
     }
@@ -1240,6 +1251,9 @@ fn execute_command_action(
                 app.toast_message = Some(msg);
                 app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
+        }
+        CommandAction::ShowHelp => {
+            app.overlay = Overlay::Help;
         }
     }
     Ok(())

@@ -37,21 +37,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ("Enter", "attach"),
                     ("n", "new"),
                     ("Space", "select"),
-                    ("g", "group"),
-                    ("m", "move"),
-                    ("R", "rename"),
-                    ("d", "delete"),
-                    ("s", "stop"),
-                    ("r", "restart"),
-                    ("S", "sort"),
-                    ("i", "follow-up"),
-                    ("p", "pin"),
-                    ("!", "notify"),
-                    ("e", "export"),
-                    ("/", "search"),
-                    ("a", "activity"),
-                    ("C-k", "commands"),
-                    ("J/K", "move group"),
+                    ("?", "help"),
                     ("q", "quit"),
                 ]
             }
@@ -77,6 +63,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
         Overlay::CommandPalette(_) => {
             vec![("Tab/arrows", "navigate"), ("Enter", "execute"), ("Esc", "close")]
+        }
+        Overlay::Help => {
+            vec![("Esc", "close")]
         }
     };
 
