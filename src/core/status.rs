@@ -155,7 +155,7 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
                     .iter()
                     .rposition(|l| IDLE_PROMPT_RE.is_match(l))
                 {
-                    let scan_start = if prompt_idx > 20 { prompt_idx - 20 } else { 0 };
+                    let scan_start = prompt_idx.saturating_sub(20);
                     let lines_above = &trimmed_lines[scan_start..prompt_idx];
                     let mut content_checked = 0;
 

@@ -15,7 +15,7 @@ pub enum ListRow {
         running_count: usize,
         waiting_count: usize,
     },
-    Session(Session),
+    Session(Box<Session>),
 }
 
 /// Ensure the default "Ungrouped" group exists in the list.
@@ -124,7 +124,7 @@ pub fn flatten_group_tree(
 
         if group.expanded {
             for session in group_sessions {
-                result.push(ListRow::Session((*session).clone()));
+                result.push(ListRow::Session(Box::new((*session).clone())));
             }
         }
     }
@@ -157,7 +157,7 @@ pub fn flatten_group_tree(
         });
 
         for session in orphans {
-            result.push(ListRow::Session((*session).clone()));
+            result.push(ListRow::Session(Box::new((*session).clone())));
         }
     }
 

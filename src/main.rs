@@ -1011,7 +1011,7 @@ fn handle_move_key(
             }
             KeyCode::Enter => {
                 if let Some((ref path, ref name)) = form.groups.get(form.selected).cloned() {
-                    let _ = storage.move_session_to_group(&form.session_id.clone(), &path);
+                    let _ = storage.move_session_to_group(&form.session_id.clone(), path);
                     if let Ok(sessions) = storage.load_sessions() {
                         app.sessions = sessions;
                     }

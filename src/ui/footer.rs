@@ -11,7 +11,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(ref msg) = app.toast_message {
         if app
             .toast_expire
-            .map_or(false, |t| t > std::time::Instant::now())
+            .is_some_and(|t| t > std::time::Instant::now())
         {
             let toast = Line::from(Span::styled(
                 msg.as_str(),

@@ -87,7 +87,7 @@ pub fn branch_exists(repo_dir: &str, branch: &str) -> bool {
 
 /// Generate a worktree path: <repo>/.worktrees/<branch-sanitized>
 pub fn generate_worktree_path(repo_dir: &str, branch: &str) -> String {
-    let sanitized: String = branch.replace('/', "-").replace(' ', "-");
+    let sanitized: String = branch.replace(['/', ' '], "-");
     Path::new(repo_dir)
         .join(".worktrees")
         .join(&sanitized)

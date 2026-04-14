@@ -24,7 +24,7 @@ pub fn extract_latest_tokens(output: &str) -> Option<i64> {
         .lines()
         .rev()
         .take(50)
-        .filter_map(|line| parse_token_count(line))
+        .filter_map(parse_token_count)
         .next()
 }
 

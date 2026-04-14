@@ -4,16 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotificationConfig {
     #[serde(default)]
     pub sound: bool,
-}
-
-impl Default for NotificationConfig {
-    fn default() -> Self {
-        Self { sound: false }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,10 +59,7 @@ pub fn config_path() -> PathBuf {
 /// Load config from a specific path. Returns defaults if file doesn't exist or fails to parse.
 pub fn load_config_from_path(path: &std::path::Path) -> AppConfig {
     match fs::read_to_string(path) {
-        Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-            Ok(config) => config,
-            Err(_) => AppConfig::default(),
-        },
+        Ok(content) => serde_json::from_str::<AppConfig>(&content).unwrap_or_default(),
         Err(_) => AppConfig::default(),
     }
 }
@@ -85,8 +76,7 @@ pub fn save_config(config: &AppConfig) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
     fs::write(&path, json)?;
     Ok(())
 }
