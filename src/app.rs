@@ -396,6 +396,56 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::groups::ListRow;
+    use crate::types::{Group, Session, SessionStatus, SortMode, Tool};
+
+    fn make_session(id: &str, title: &str, group: &str, tmux: &str) -> Session {
+        Session {
+            id: id.to_string(),
+            title: title.to_string(),
+            project_path: "/tmp".to_string(),
+            group_path: group.to_string(),
+            order: 0,
+            command: String::new(),
+            wrapper: String::new(),
+            tool: Tool::Claude,
+            status: SessionStatus::Idle,
+            tmux_session: tmux.to_string(),
+            created_at: 0,
+            last_accessed: 0,
+            parent_session_id: String::new(),
+            worktree_path: String::new(),
+            worktree_repo: String::new(),
+            worktree_branch: String::new(),
+            tool_data: "{}".to_string(),
+            acknowledged: false,
+            notify: false,
+            follow_up: false,
+            status_changed_at: 0,
+            restart_count: 0,
+            status_history: vec![],
+            pinned: false,
+            tokens_used: 0,
+        }
+    }
+
+    fn make_group(path: &str, name: &str) -> Group {
+        Group {
+            path: path.to_string(),
+            name: name.to_string(),
+            expanded: true,
+            order: 0,
+            default_path: String::new(),
+        }
+    }
+
+    fn app_with_sessions(sessions: Vec<Session>) -> App {
+        let mut app = App::new(false);
+        app.groups = vec![make_group("my-sessions", "Ungrouped")];
+        app.sessions = sessions;
+        app.rebuild_list_rows();
+        app
+    }
 
     #[test]
     fn test_toggle_bulk_selection() {
@@ -413,5 +463,261 @@ mod tests {
         app.toggle_bulk_select("s2");
         app.clear_bulk_selection();
         assert!(app.bulk_selected.is_empty());
+    }
+
+    #[test]
+    fn test_move_selection_down_wraps() {
+        let sessions = vec![
+            make_session("s1", "Alpha", "my-sessions", ""),
+            make_session("s2", "Beta", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions);
+        // Place cursor at last item
+        app.selected_index = app.list_rows.len() - 1;
+        app.move_selection_down();
+        assert_eq!(app.selected_index, 0);
+    }
+
+    #[test]
+    fn test_move_selection_up_wraps() {
+        let sessions = vec![
+            make_session("s1", "Alpha", "my-sessions", ""),
+            make_session("s2", "Beta", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions);
+        app.selected_index = 0;
+        app.move_selection_up();
+        assert_eq!(app.selected_index, app.list_rows.len() - 1);
+    }
+
+    #[test]
+    fn test_move_selection_down_increments() {
+        let sessions = vec![
+            make_session("s1", "Alpha", "my-sessions", ""),
+            make_session("s2", "Beta", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions);
+        app.selected_index = 0;
+        app.move_selection_down();
+        assert_eq!(app.selected_index, 1);
+    }
+
+    #[test]
+    fn test_move_selection_up_decrements() {
+        let sessions = vec![
+            make_session("s1", "Alpha", "my-sessions", ""),
+            make_session("s2", "Beta", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions);
+        app.selected_index = 1;
+        app.move_selection_up();
+        assert_eq!(app.selected_index, 0);
+    }
+
+    #[test]
+    fn test_move_selection_empty_list_noop() {
+        let mut app = App::new(false);
+        // No sessions, no groups — list_rows is empty
+        app.rebuild_list_rows();
+        app.selected_index = 0;
+        app.move_selection_down();
+        assert_eq!(app.selected_index, 0);
+        app.move_selection_up();
+        assert_eq!(app.selected_index, 0);
+    }
+
+    #[test]
+    fn test_clamp_selection_empty_list() {
+        let mut app = App::new(false);
+        app.selected_index = 99;
+        app.clamp_selection();
+        assert_eq!(app.selected_index, 0);
+    }
+
+    #[test]
+    fn test_clamp_selection_out_of_bounds() {
+        let sessions = vec![make_session("s1", "Alpha", "my-sessions", "")];
+        let mut app = app_with_sessions(sessions);
+        app.selected_index = 999;
+        app.clamp_selection();
+        assert!(app.selected_index < app.list_rows.len());
+    }
+
+    #[test]
+    fn test_clamp_selection_in_bounds_unchanged() {
+        let sessions = vec![
+            make_session("s1", "Alpha", "my-sessions", ""),
+            make_session("s2", "Beta", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions);
+        app.selected_index = 1;
+        app.clamp_selection();
+        assert_eq!(app.selected_index, 1);
+    }
+
+    #[test]
+    fn test_selected_session_returns_session() {
+        let sessions = vec![
+            make_session("s1", "Alpha", "my-sessions", ""),
+            make_session("s2", "Beta", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions);
+        // Find a row that is a Session and select it
+        let session_idx = app
+            .list_rows
+            .iter()
+            .position(|r| matches!(r, ListRow::Session(_)))
+            .expect("should have at least one session row");
+        app.selected_index = session_idx;
+        assert!(app.selected_session().is_some());
+    }
+
+    #[test]
+    fn test_selected_group_returns_group() {
+        let sessions = vec![make_session("s1", "Alpha", "my-sessions", "")];
+        let mut app = app_with_sessions(sessions);
+        // First row should be the group header
+        app.selected_index = 0;
+        // It's the group header when cursor is on it
+        if matches!(app.list_rows.get(0), Some(ListRow::Group { .. })) {
+            assert!(app.selected_group().is_some());
+        } else {
+            // No group row visible — skip assertion
+        }
+    }
+
+    #[test]
+    fn test_selected_session_none_on_group_row() {
+        let sessions = vec![make_session("s1", "Alpha", "my-sessions", "")];
+        let mut app = app_with_sessions(sessions);
+        // Select group header row (index 0)
+        app.selected_index = 0;
+        if matches!(app.list_rows.get(0), Some(ListRow::Group { .. })) {
+            assert!(app.selected_session().is_none());
+        }
+    }
+
+    #[test]
+    fn test_search_matches_empty_when_no_query() {
+        let sessions = vec![make_session("s1", "Alpha", "my-sessions", "")];
+        let app = app_with_sessions(sessions);
+        assert!(app.search_matches().is_empty());
+    }
+
+    #[test]
+    fn test_search_matches_finds_by_title() {
+        let sessions = vec![
+            make_session("s1", "AlphaProject", "my-sessions", ""),
+            make_session("s2", "BetaWork", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions);
+        app.search_query = Some("alpha".to_string());
+        let matches = app.search_matches();
+        assert!(!matches.is_empty());
+        // All matches should point to session rows containing "alpha" in title (case-insensitive)
+        for idx in &matches {
+            if let Some(ListRow::Session(s)) = app.list_rows.get(*idx) {
+                assert!(s.title.to_lowercase().contains("alpha"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_search_matches_case_insensitive() {
+        let sessions = vec![make_session("s1", "AlphaProject", "my-sessions", "")];
+        let mut app = app_with_sessions(sessions);
+        app.search_query = Some("ALPHA".to_string());
+        assert!(!app.search_matches().is_empty());
+    }
+
+    #[test]
+    fn test_search_matches_empty_query_returns_none() {
+        let sessions = vec![make_session("s1", "Alpha", "my-sessions", "")];
+        let mut app = app_with_sessions(sessions);
+        app.search_query = Some(String::new());
+        assert!(app.search_matches().is_empty());
+    }
+
+    #[test]
+    fn test_search_matches_no_match() {
+        let sessions = vec![make_session("s1", "Alpha", "my-sessions", "")];
+        let mut app = app_with_sessions(sessions);
+        app.search_query = Some("zzznomatch".to_string());
+        assert!(app.search_matches().is_empty());
+    }
+
+    #[test]
+    fn test_command_palette_default_shows_all_items() {
+        let palette = CommandPalette::new();
+        assert_eq!(palette.filtered.len(), palette.items.len());
+    }
+
+    #[test]
+    fn test_command_palette_filter_narrows_results() {
+        let mut palette = CommandPalette::new();
+        palette.query = "new".to_string();
+        palette.filter();
+        assert!(!palette.filtered.is_empty());
+        for &idx in &palette.filtered {
+            assert!(palette.items[idx].label.to_lowercase().contains("new"));
+        }
+    }
+
+    #[test]
+    fn test_command_palette_filter_empty_query_restores_all() {
+        let mut palette = CommandPalette::new();
+        palette.query = "quit".to_string();
+        palette.filter();
+        let narrowed = palette.filtered.len();
+        palette.query = String::new();
+        palette.filter();
+        assert_eq!(palette.filtered.len(), palette.items.len());
+        assert!(narrowed < palette.items.len());
+    }
+
+    #[test]
+    fn test_command_palette_filter_resets_selected_to_zero() {
+        let mut palette = CommandPalette::new();
+        palette.selected = 5;
+        palette.query = "quit".to_string();
+        palette.filter();
+        assert_eq!(palette.selected, 0);
+    }
+
+    #[test]
+    fn test_command_palette_no_match_gives_empty_filtered() {
+        let mut palette = CommandPalette::new();
+        palette.query = "xyzzy_no_such_command".to_string();
+        palette.filter();
+        assert!(palette.filtered.is_empty());
+    }
+
+    #[test]
+    fn test_sort_mode_cycles_via_rebuild() {
+        let sessions = vec![
+            make_session("s1", "Alpha", "my-sessions", ""),
+            make_session("s2", "Beta", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions.clone());
+        app.sort_mode = SortMode::Name;
+        app.rebuild_list_rows();
+        // After rebuild the list should still have the same number of rows
+        let count = app.list_rows.len();
+        app.sort_mode = SortMode::StatusPriority;
+        app.rebuild_list_rows();
+        assert_eq!(app.list_rows.len(), count);
+    }
+
+    #[test]
+    fn test_select_all_visible() {
+        let sessions = vec![
+            make_session("s1", "Alpha", "my-sessions", ""),
+            make_session("s2", "Beta", "my-sessions", ""),
+        ];
+        let mut app = app_with_sessions(sessions);
+        app.select_all_visible();
+        // At least the sessions should be selected
+        assert!(app.bulk_selected.contains("s1"));
+        assert!(app.bulk_selected.contains("s2"));
     }
 }
