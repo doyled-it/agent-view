@@ -28,7 +28,10 @@ pub struct ThemeSelectForm {
 
 impl ThemeSelectForm {
     pub fn new(current_theme: &str) -> Self {
-        let options = vec!["dark".to_string(), "light".to_string()];
+        let options: Vec<String> = crate::ui::theme::Theme::available()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let selected = options.iter().position(|o| o == current_theme).unwrap_or(0);
         Self {
             options,
@@ -181,6 +184,7 @@ pub struct App {
     pub last_storage_mtime: i64,
     pub attach_session: Option<String>,
     pub theme: Theme,
+    pub theme_name: String,
     pub search_query: Option<String>,
     pub toast_message: Option<String>,
     pub toast_expire: Option<std::time::Instant>,
@@ -203,6 +207,7 @@ impl App {
             last_storage_mtime: 0,
             attach_session: None,
             theme: if light { Theme::light() } else { Theme::dark() },
+            theme_name: if light { "light".to_string() } else { "dark".to_string() },
             search_query: None,
             toast_message: None,
             toast_expire: None,

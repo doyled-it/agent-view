@@ -37,8 +37,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load config
     let config = crate::core::config::load_config();
 
-    // Initialize app state
-    let mut app = crate::app::App::new(cli.light);
+    // Initialize app state — CLI --light flag overrides config
+    let theme_name = if cli.light {
+        "light".to_string()
+    } else {
+        config.theme.clone()
+    };
+    let mut app = crate::app::App::new(false); // we set theme manually below
+    app.theme = crate::ui::theme::Theme::from_name(&theme_name);
+    app.theme_name = theme_name;
 
     // Load sessions from storage
     app.sessions = storage.load_sessions()?;
@@ -430,11 +437,8 @@ fn run_tui(
         if app.config_changed.load(std::sync::atomic::Ordering::Relaxed) {
             app.config_changed.store(false, std::sync::atomic::Ordering::Relaxed);
             let new_config = crate::core::config::load_config();
-            if new_config.theme == "light" {
-                app.theme = crate::ui::theme::Theme::light();
-            } else {
-                app.theme = crate::ui::theme::Theme::dark();
-            }
+            app.theme = crate::ui::theme::Theme::from_name(&new_config.theme);
+            app.theme_name = new_config.theme;
             app.toast_message = Some("Config reloaded".to_string());
             app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
         }
@@ -768,12 +772,9 @@ fn handle_main_key(
             app.overlay = crate::app::Overlay::Help;
         }
         (KeyModifiers::NONE, KeyCode::Char('t')) => {
-            let current = if app.theme.background == crate::ui::theme::Theme::light().background {
-                "light"
-            } else {
-                "dark"
-            };
-            app.overlay = crate::app::Overlay::ThemeSelect(crate::app::ThemeSelectForm::new(current));
+            app.overlay = crate::app::Overlay::ThemeSelect(
+                crate::app::ThemeSelectForm::new(&app.theme_name),
+            );
         }
         _ => {}
     }
@@ -1267,12 +1268,7 @@ fn execute_command_action(
             app.overlay = Overlay::Help;
         }
         CommandAction::SelectTheme => {
-            let current = if app.theme.background == crate::ui::theme::Theme::light().background {
-                "light"
-            } else {
-                "dark"
-            };
-            app.overlay = Overlay::ThemeSelect(crate::app::ThemeSelectForm::new(current));
+            app.overlay = Overlay::ThemeSelect(crate::app::ThemeSelectForm::new(&app.theme_name));
         }
     }
     Ok(())
@@ -1288,45 +1284,32 @@ fn handle_theme_select_key(
         match key.code {
             KeyCode::Esc => {
                 let original = form.original_theme_name.clone();
-                if original == "light" {
-                    app.theme = crate::ui::theme::Theme::light();
-                } else {
-                    app.theme = crate::ui::theme::Theme::dark();
-                }
+                app.theme = crate::ui::theme::Theme::from_name(&original);
+                app.theme_name = original;
                 app.overlay = crate::app::Overlay::None;
             }
             KeyCode::Enter => {
                 let chosen = form.options[form.selected].clone();
                 let mut config = crate::core::config::load_config();
-                config.theme = chosen;
+                config.theme = chosen.clone();
                 let _ = crate::core::config::save_config(&config);
-                // Suppress the watcher-triggered config reload toast
                 app.config_changed.store(false, std::sync::atomic::Ordering::Relaxed);
+                app.theme_name = chosen.clone();
                 app.overlay = crate::app::Overlay::None;
-                app.toast_message = Some("Theme saved".to_string());
+                app.toast_message = Some(format!("Theme: {}", chosen));
                 app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if form.selected > 0 {
                     form.selected -= 1;
                 }
-                let theme_name = form.options[form.selected].clone();
-                if theme_name == "light" {
-                    app.theme = crate::ui::theme::Theme::light();
-                } else {
-                    app.theme = crate::ui::theme::Theme::dark();
-                }
+                app.theme = crate::ui::theme::Theme::from_name(&form.options[form.selected]);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if form.selected < form.options.len() - 1 {
                     form.selected += 1;
                 }
-                let theme_name = form.options[form.selected].clone();
-                if theme_name == "light" {
-                    app.theme = crate::ui::theme::Theme::light();
-                } else {
-                    app.theme = crate::ui::theme::Theme::dark();
-                }
+                app.theme = crate::ui::theme::Theme::from_name(&form.options[form.selected]);
             }
             _ => {}
         }
