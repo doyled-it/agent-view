@@ -1,157 +1,66 @@
 stages:
+  - check
+  - test
   - build
   - release
 
-build-binaries:
-  stage: build
-  image: debian:bookworm-slim
+fmt:
+  stage: check
+  image: rust:latest
   tags:
     - docker
   before_script:
-    - apt-get update && apt-get install -y curl unzip git ca-certificates python3 make g++
-    - curl -ksSL https://gitlab.mitre.org/mitre-scripts/mitre-pki/raw/master/os_scripts/install_certs.sh | sh
-    - curl -fsSL https://bun.sh/install | bash
-    - export BUN_INSTALL="$HOME/.bun"
-    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - rustup component add rustfmt
   script:
-    - export BUN_INSTALL="$HOME/.bun"
-    - export PATH="$BUN_INSTALL/bin:$PATH"
-    - bun install
-    - bun run compile
-    - ls -lh bin/*.tar.gz
+    - cargo fmt --check
+  only:
+    - main
+    - /^release\/.*$/
+    - merge_requests
+
+clippy:
+  stage: check
+  image: rust:latest
+  tags:
+    - docker
+  before_script:
+    - rustup component add clippy
+  script:
+    - cargo clippy -- -D warnings
+  only:
+    - main
+    - /^release\/.*$/
+    - merge_requests
+
+test:
+  stage: test
+  image: rust:latest
+  tags:
+    - docker
+  before_script:
+    - apt-get update && apt-get install -y tmux
+  script:
+    - cargo test
+  only:
+    - main
+    - /^release\/.*$/
+    - merge_requests
+
+build-release:
+  stage: build
+  image: rust:latest
+  tags:
+    - docker
+  script:
+    - cargo build --release
+    - mkdir -p bin
+    - tar czf bin/agent-view-linux-x64.tar.gz -C target/release agent-view
   artifacts:
     paths:
       - bin/*.tar.gz
     expire_in: 1 week
   only:
     - tags
-
-bump-version:
-  stage: release
-  image: debian:bookworm-slim
-  tags:
-    - docker
-  variables:
-    CHANGELOG_FILE: CHANGELOG.md
-  before_script:
-    - apt-get update && apt-get install -y curl jq git ca-certificates
-    - curl -ksSL https://gitlab.mitre.org/mitre-scripts/mitre-pki/raw/master/os_scripts/install_certs.sh | sh
-  script:
-    - |
-      set -e
-
-      git fetch origin
-      git checkout main
-      git pull origin main
-
-      LAST_AUTHOR=$(git log -1 --pretty=format:'%an')
-      if [ "$LAST_AUTHOR" = "$COMMIT_BOT_USER" ]; then
-        echo "Last commit was from $COMMIT_BOT_USER, skipping bump."
-        exit 0
-      fi
-
-      PROJECT_ID="$CI_PROJECT_ID"
-      COMMIT_SHA=$(git log -1 --pretty=format:'%H')
-      MR_RESPONSE=$(curl -ksSL --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
-        "https://gitlab.mitre.org/api/v4/projects/${PROJECT_ID}/repository/commits/${COMMIT_SHA}/merge_requests")
-
-      MR_IID=$(echo "$MR_RESPONSE" | jq -r '.[0].iid // empty')
-      if [ -z "$MR_IID" ]; then
-        echo "No MR found for commit $COMMIT_SHA, skipping."
-        exit 0
-      fi
-
-      LABELS=$(echo "$MR_RESPONSE" | jq -r '.[0].labels[]' 2>/dev/null || true)
-      BUMP_TYPE=""
-      if echo "$LABELS" | grep -q "Version::Major"; then
-        BUMP_TYPE="major"
-      elif echo "$LABELS" | grep -q "Version::Minor"; then
-        BUMP_TYPE="minor"
-      elif echo "$LABELS" | grep -q "Version::Patch"; then
-        BUMP_TYPE="patch"
-      fi
-
-      if [ -z "$BUMP_TYPE" ]; then
-        echo "No version label found on MR !${MR_IID}, skipping."
-        exit 0
-      fi
-
-      echo "Bump type: $BUMP_TYPE"
-
-      CURRENT_VERSION=$(jq -r '.version' package.json)
-      MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
-      MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
-      PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
-
-      case "$BUMP_TYPE" in
-        major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-        minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-        patch) PATCH=$((PATCH + 1)) ;;
-      esac
-
-      NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-      echo "Current: $CURRENT_VERSION -> New: $NEW_VERSION"
-
-      jq --arg v "$NEW_VERSION" '.version = $v' package.json > package.json.tmp
-      mv package.json.tmp package.json
-
-      MR_COMMITS=$(curl -ksSL --header "PRIVATE-TOKEN: $CI_TAG_TOKEN" \
-        "https://gitlab.mitre.org/api/v4/projects/${PROJECT_ID}/merge_requests/${MR_IID}/commits" \
-        | jq -r '.[].title' 2>/dev/null || true)
-
-      MR_TITLE=$(echo "$MR_RESPONSE" | jq -r '.[0].title // "No title"')
-      MR_DESCRIPTION=$(echo "$MR_RESPONSE" | jq -r '.[0].description // ""')
-      MR_AUTHOR=$(echo "$MR_RESPONSE" | jq -r '.[0].author.username // "unknown"')
-      TODAY=$(date +%Y-%m-%d)
-
-      CHANGELOG_ENTRY=""
-      if [ -n "${AIP_API_KEY:-}" ]; then
-        LLM_PROMPT=$(printf 'Generate a changelog entry following Common Changelog conventions.\n\nVersion: %s (%s release, previous: %s)\nMR Title: %s\nMR Author: @%s\nMR Description: %s\nCommits:\n%s\n\nRULES:\n1. Use headings: Changed, Added, Removed, Fixed (only relevant ones)\n2. Imperative mood (Add, Fix, Change, Remove)\n3. Reference MR: (!%s) and author: (@%s)\n4. Output ONLY headings and bullet points, no version header or date.\n5. Do not wrap in code fences.' \
-          "$NEW_VERSION" "$BUMP_TYPE" "$CURRENT_VERSION" "$MR_TITLE" "$MR_AUTHOR" "$MR_DESCRIPTION" "$MR_COMMITS" "$MR_IID" "$MR_AUTHOR")
-
-        LLM_PAYLOAD=$(jq -n \
-          --arg model "openai/gpt-oss-120b" \
-          --arg prompt "$LLM_PROMPT" \
-          '{model: $model, messages: [{role: "user", content: $prompt}], temperature: 0.3}')
-
-        LLM_RESPONSE=$(curl -ksSL -X POST \
-          "https://models.k8s.aip.mitre.org/v1/chat/completions" \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Bearer $AIP_API_KEY" \
-          -d "$LLM_PAYLOAD" 2>/dev/null || true)
-
-        CHANGELOG_ENTRY=$(echo "$LLM_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
-      fi
-
-      if [ -z "$CHANGELOG_ENTRY" ]; then
-        printf -v CHANGELOG_ENTRY "### Changed\n\n- %s (!%s) (@%s)" "$MR_TITLE" "$MR_IID" "$MR_AUTHOR"
-      fi
-
-      VERSION_HEADER=$(printf "## [%s] - %s" "$NEW_VERSION" "$TODAY")
-
-      if [ -f "$CHANGELOG_FILE" ]; then
-        HEADER=$(head -n 1 "$CHANGELOG_FILE")
-        REST=$(tail -n +2 "$CHANGELOG_FILE")
-        printf "%s\n\n%s\n\n%s\n%s" "$HEADER" "$VERSION_HEADER" "$CHANGELOG_ENTRY" "$REST" > "$CHANGELOG_FILE"
-      else
-        printf "# Changelog\n\n%s\n\n%s\n" "$VERSION_HEADER" "$CHANGELOG_ENTRY" > "$CHANGELOG_FILE"
-      fi
-
-      echo "Updated CHANGELOG.md"
-
-      git config user.name "$COMMIT_BOT_USER"
-      git config user.email "${COMMIT_BOT_USER}@mitre.org"
-
-      git add package.json "$CHANGELOG_FILE"
-      git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
-
-      git tag "v${NEW_VERSION}"
-      git push "https://oauth2:${CI_TAG_TOKEN}@gitlab.mitre.org/${CI_PROJECT_PATH}.git" main "v${NEW_VERSION}"
-
-      echo "Version bumped and tagged: v${NEW_VERSION}"
-  needs: []
-  only:
-    - main
 
 create-release:
   stage: release
@@ -163,7 +72,6 @@ create-release:
   script:
     - |
       set -e
-
       VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
       echo "Creating release for version: $VERSION"
 
@@ -199,7 +107,6 @@ create-release:
       fi
 
       INSTALL_CMD='curl -kfsSL https://gitlab.mitre.org/mdoyle/agent-view/-/raw/main/install-mitre.sh | bash'
-
       DESCRIPTION=$(printf "## What's New in v%s\n\n%s\n\n## Installation\n\n\`\`\`bash\n%s\n\`\`\`\n" "$VERSION" "$RELEASE_NOTES" "$INSTALL_CMD")
 
       ASSET_LINKS="[]"
@@ -233,6 +140,6 @@ create-release:
 
       echo "Release v${VERSION} created successfully."
   needs:
-    - build-binaries
+    - build-release
   only:
     - tags
