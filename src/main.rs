@@ -385,6 +385,9 @@ fn run_tui(
                         crate::app::Overlay::ThemeSelect(_) => {
                             handle_theme_select_key(&mut app, key)?;
                         }
+                        crate::app::Overlay::AddNote(_) => {
+                            handle_add_note_key(&mut app, key, &storage)?;
+                        }
                     }
                 }
                 if app.should_quit {
@@ -486,6 +489,14 @@ fn handle_main_key(
         }
         (KeyModifiers::NONE, KeyCode::Char('n')) => {
             app.overlay = crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('N')) => {
+            if let Some(session) = app.selected_session() {
+                app.overlay = crate::app::Overlay::AddNote(crate::app::NoteForm {
+                    session_id: session.id.clone(),
+                    text: String::new(),
+                });
+            }
         }
         (KeyModifiers::NONE, KeyCode::Right) | (KeyModifiers::NONE, KeyCode::Char('l')) => {
             if let Some(group) = app.selected_group() {
@@ -1339,6 +1350,52 @@ fn handle_theme_select_key(
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+fn handle_add_note_key(
+    app: &mut crate::app::App,
+    key: crossterm::event::KeyEvent,
+    storage: &crate::core::storage::Storage,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::KeyCode;
+
+    match key.code {
+        KeyCode::Esc => {
+            app.overlay = crate::app::Overlay::None;
+        }
+        KeyCode::Enter => {
+            let (text, session_id) = if let crate::app::Overlay::AddNote(ref form) = app.overlay {
+                (form.text.trim().to_string(), form.session_id.clone())
+            } else {
+                return Ok(());
+            };
+            if !text.is_empty() {
+                let note = crate::types::NoteEntry {
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    text,
+                };
+                if let Some(session) = app.sessions.iter_mut().find(|s| s.id == session_id) {
+                    session.notes.push(note);
+                    let _ = storage.save_session(session);
+                    storage.touch().ok();
+                }
+                app.rebuild_list_rows();
+            }
+            app.overlay = crate::app::Overlay::None;
+        }
+        KeyCode::Backspace => {
+            if let crate::app::Overlay::AddNote(ref mut form) = app.overlay {
+                form.text.pop();
+            }
+        }
+        KeyCode::Char(c) => {
+            if let crate::app::Overlay::AddNote(ref mut form) = app.overlay {
+                form.text.push(c);
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

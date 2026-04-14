@@ -17,6 +17,13 @@ pub enum Overlay {
     CommandPalette(CommandPalette),
     Help,
     ThemeSelect(ThemeSelectForm),
+    AddNote(NoteForm),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteForm {
+    pub session_id: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
