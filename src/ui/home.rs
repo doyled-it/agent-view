@@ -20,18 +20,25 @@ pub fn render(frame: &mut Frame, app: &App) {
             (area, None)
         };
 
-    // Layout: header (1), body (fill), footer (1)
+    // Layout: header (1), body (fill), activity feed (0 or 4), footer (1)
+    let show_feed = app.show_activity_feed && !app.activity_feed.is_empty();
+    let feed_height = if show_feed { 4 } else { 0 };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
+            Constraint::Length(feed_height),
             Constraint::Length(1),
         ])
         .split(list_area);
 
     render_header(frame, chunks[0], &app.theme);
     render_session_list(frame, chunks[1], app);
+    if show_feed {
+        render_activity_feed(frame, chunks[2], app);
+    }
     if let Some(ref query) = app.search_query {
         let matches = app.search_matches();
         let match_count = matches.len();
@@ -48,9 +55,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                 Style::default().fg(app.theme.text_muted),
             ),
         ]);
-        frame.render_widget(Paragraph::new(search_line), chunks[2]);
+        frame.render_widget(Paragraph::new(search_line), chunks[3]);
     } else {
-        crate::ui::footer::render(frame, chunks[2], app);
+        crate::ui::footer::render(frame, chunks[3], app);
     }
 
     // Render detail panel for selected session when wide enough
@@ -81,6 +88,57 @@ pub fn render(frame: &mut Frame, app: &App) {
             crate::ui::overlay::render_command_palette(frame, area, palette, &app.theme);
         }
         Overlay::None => {}
+    }
+}
+
+fn render_activity_feed(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let block = Block::default()
+        .title(" Activity ")
+        .title_style(Style::default().fg(theme.text_muted))
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines: Vec<Line> = app
+        .activity_feed
+        .iter()
+        .take(inner.height as usize)
+        .map(|event| {
+            let status_color = crate::ui::theme::status_color(theme, event.new_status);
+            Line::from(vec![
+                Span::styled(
+                    format_activity_age(event.timestamp),
+                    Style::default().fg(theme.text_muted),
+                ),
+                Span::styled(
+                    format!(" {} ", event.session_title),
+                    Style::default().fg(theme.text),
+                ),
+                Span::styled("-> ", Style::default().fg(theme.text_muted)),
+                Span::styled(
+                    event.new_status.as_str(),
+                    Style::default().fg(status_color),
+                ),
+            ])
+        })
+        .collect();
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
+}
+
+fn format_activity_age(timestamp: i64) -> String {
+    let now = chrono::Utc::now().timestamp_millis();
+    let ago_ms = now - timestamp;
+    if ago_ms < 60_000 {
+        " <1m ".to_string()
+    } else if ago_ms < 3_600_000 {
+        format!(" {}m  ", ago_ms / 60_000)
+    } else {
+        format!(" {}h  ", ago_ms / 3_600_000)
     }
 }
 

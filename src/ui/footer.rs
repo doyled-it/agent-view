@@ -40,6 +40,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ("!", "notify"),
                     ("e", "export"),
                     ("/", "search"),
+                    ("a", "activity"),
                     ("C-k", "commands"),
                     ("C-Up/Dn", "move group"),
                     ("q", "quit"),

@@ -322,7 +322,24 @@ fn run_tui(
             let current_mtime = storage.last_modified();
             if current_mtime != app.last_storage_mtime {
                 app.last_storage_mtime = current_mtime;
-                app.sessions = storage.load_sessions().unwrap_or_default();
+                let new_sessions = storage.load_sessions().unwrap_or_default();
+
+                // Diff statuses for activity feed
+                for new_s in &new_sessions {
+                    if let Some(old_s) = app.sessions.iter().find(|s| s.id == new_s.id) {
+                        if old_s.status != new_s.status {
+                            app.push_activity(crate::types::ActivityEvent {
+                                session_title: new_s.title.clone(),
+                                old_status: old_s.status,
+                                new_status: new_s.status,
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                                message: None,
+                            });
+                        }
+                    }
+                }
+
+                app.sessions = new_sessions;
                 app.groups = storage.load_groups().unwrap_or_default();
                 app.rebuild_list_rows();
             }
@@ -632,6 +649,9 @@ fn handle_main_key(
                     input: group.name.clone(),
                 });
             }
+        }
+        (KeyModifiers::NONE, KeyCode::Char('a')) => {
+            app.show_activity_feed = !app.show_activity_feed;
         }
         _ => {}
     }

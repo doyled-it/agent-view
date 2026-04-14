@@ -3,6 +3,7 @@
 use crate::core::groups::ListRow;
 use crate::types::{Group, Session};
 use crate::ui::theme::Theme;
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
@@ -156,6 +157,8 @@ pub struct App {
     pub toast_message: Option<String>,
     pub toast_expire: Option<std::time::Instant>,
     pub sort_mode: crate::types::SortMode,
+    pub activity_feed: VecDeque<crate::types::ActivityEvent>,
+    pub show_activity_feed: bool,
 }
 
 impl App {
@@ -174,6 +177,15 @@ impl App {
             toast_message: None,
             toast_expire: None,
             sort_mode: crate::types::SortMode::StatusPriority,
+            activity_feed: VecDeque::new(),
+            show_activity_feed: true,
+        }
+    }
+
+    pub fn push_activity(&mut self, event: crate::types::ActivityEvent) {
+        self.activity_feed.push_front(event);
+        if self.activity_feed.len() > 100 {
+            self.activity_feed.pop_back();
         }
     }
 
