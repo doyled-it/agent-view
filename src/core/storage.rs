@@ -418,6 +418,15 @@ impl Storage {
         Ok(())
     }
 
+    /// Update only the tool_data field for a session
+    pub fn update_tool_data(&self, session_id: &str, tool_data: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET tool_data = ?1 WHERE id = ?2",
+            params![tool_data, session_id],
+        )?;
+        Ok(())
+    }
+
     /// Set the acknowledged flag
     #[allow(dead_code)]
     pub fn set_acknowledged(&self, id: &str, ack: bool) -> SqlResult<()> {

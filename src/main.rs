@@ -189,6 +189,25 @@ fn run_tui(
                             };
                             let parsed = crate::core::status::parse_tool_status(&output, tool_str);
 
+                            // Capture Claude session ID if present
+                            if tool_str == Some("claude") {
+                                if let Some(session_id) =
+                                    crate::core::status::extract_claude_session_id(&output)
+                                {
+                                    let mut data: serde_json::Value =
+                                        serde_json::from_str(&session.tool_data)
+                                            .unwrap_or_else(|_| serde_json::json!({}));
+                                    if data.get("claude_session_id").and_then(|v| v.as_str())
+                                        != Some(&session_id)
+                                    {
+                                        data["claude_session_id"] =
+                                            serde_json::Value::String(session_id);
+                                        let _ = bg_storage
+                                            .update_tool_data(&session.id, &data.to_string());
+                                    }
+                                }
+                            }
+
                             if parsed.is_waiting {
                                 crate::types::SessionStatus::Waiting
                             } else if parsed.is_compacting {

@@ -74,6 +74,9 @@ lazy_static! {
     // Idle prompt pattern
     static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}\s").unwrap();
 
+    /// Match "claude --resume <session-id>" to extract the session ID
+    static ref CLAUDE_SESSION_ID_RE: Regex = Regex::new(r"claude\s+--resume\s+([\w-]+)").unwrap();
+
     // Question detection
     static ref QUESTION_RE: Regex = Regex::new(r"\?\s*$").unwrap();
 
@@ -199,6 +202,15 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
     }
 
     status
+}
+
+/// Extract Claude Code session ID from pane output, if present.
+pub fn extract_claude_session_id(output: &str) -> Option<String> {
+    let cleaned = crate::core::tmux::strip_ansi(output);
+    CLAUDE_SESSION_ID_RE
+        .captures(&cleaned)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
 }
 
 #[cfg(test)]
@@ -432,5 +444,27 @@ mod tests {
         let status = parse_tool_status(output, Some("claude"));
         assert!(status.has_idle_prompt);
         assert!(!status.has_question);
+    }
+
+    #[test]
+    fn test_extract_claude_session_id() {
+        let output =
+            "Some output\nResume this session with: claude --resume abc123-def456\nMore output";
+        let id = extract_claude_session_id(output);
+        assert_eq!(id, Some("abc123-def456".to_string()));
+    }
+
+    #[test]
+    fn test_extract_claude_session_id_no_match() {
+        let output = "Normal claude output with no resume line";
+        let id = extract_claude_session_id(output);
+        assert_eq!(id, None);
+    }
+
+    #[test]
+    fn test_extract_claude_session_id_from_exited_output() {
+        let output = "Task completed.\n\n  Resume this session with:\n    claude --resume 7a3f2b1e-4c5d-6e7f-8a9b-0c1d2e3f4a5b\n\n";
+        let id = extract_claude_session_id(output);
+        assert_eq!(id, Some("7a3f2b1e-4c5d-6e7f-8a9b-0c1d2e3f4a5b".to_string()));
     }
 }
