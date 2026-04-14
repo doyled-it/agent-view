@@ -200,6 +200,34 @@ fn run_tui(
                         logger.capture_and_log(&session.tmux_session, &session.id);
                     }
                 }
+
+                // Parse tokens from Claude sessions
+                let mut tokens_changed = false;
+                for session in &sessions {
+                    if session.tool == crate::types::Tool::Claude
+                        && !session.tmux_session.is_empty()
+                        && session.status != crate::types::SessionStatus::Stopped
+                    {
+                        if let Ok(output) =
+                            crate::core::tmux::capture_pane(&session.tmux_session, Some(-50))
+                        {
+                            if let Some(tokens) =
+                                crate::core::tokens::extract_latest_tokens(&output)
+                            {
+                                if tokens > session.tokens_used {
+                                    let diff = tokens - session.tokens_used;
+                                    if diff > 0 {
+                                        let _ = bg_storage.add_tokens(&session.id, diff);
+                                        tokens_changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if tokens_changed {
+                    let _ = bg_storage.touch();
+                }
             }
         }
     });

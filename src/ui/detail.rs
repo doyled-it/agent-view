@@ -94,6 +94,16 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
         ]));
     }
 
+    if session.tokens_used > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("Tokens: ", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                crate::core::tokens::format_tokens(session.tokens_used),
+                Style::default().fg(theme.text),
+            ),
+        ]));
+    }
+
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, inner);
 }
