@@ -62,23 +62,21 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
-/// Load config from disk, merging with defaults.
-/// Returns defaults if file doesn't exist or fails to parse.
-pub fn load_config() -> AppConfig {
-    let path = config_path();
-    match fs::read_to_string(&path) {
+/// Load config from a specific path. Returns defaults if file doesn't exist or fails to parse.
+pub fn load_config_from_path(path: &std::path::Path) -> AppConfig {
+    match fs::read_to_string(path) {
         Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
             Ok(config) => config,
-            Err(_) => {
-                eprintln!(
-                    "Warning: Failed to parse config from {}",
-                    path.display()
-                );
-                AppConfig::default()
-            }
+            Err(_) => AppConfig::default(),
         },
         Err(_) => AppConfig::default(),
     }
+}
+
+/// Load config from disk, merging with defaults.
+/// Returns defaults if file doesn't exist or fails to parse.
+pub fn load_config() -> AppConfig {
+    load_config_from_path(&config_path())
 }
 
 #[cfg(test)]
@@ -137,5 +135,18 @@ mod tests {
         // but we test the parsing logic
         let result: Result<AppConfig, _> = serde_json::from_str("not valid json!!!");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_config_from_path() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{ "theme": "light" }"#).unwrap();
+        let config = load_config_from_path(&path);
+        assert_eq!(config.theme, "light");
+
+        fs::write(&path, r#"{ "theme": "dark" }"#).unwrap();
+        let config2 = load_config_from_path(&path);
+        assert_eq!(config2.theme, "dark");
     }
 }

@@ -163,6 +163,7 @@ pub struct App {
     pub activity_feed: VecDeque<crate::types::ActivityEvent>,
     pub show_activity_feed: bool,
     pub bulk_selected: HashSet<String>,
+    pub config_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl App {
@@ -184,6 +185,7 @@ impl App {
             activity_feed: VecDeque::new(),
             show_activity_feed: true,
             bulk_selected: HashSet::new(),
+            config_changed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 

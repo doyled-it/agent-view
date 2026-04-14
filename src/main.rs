@@ -50,6 +50,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.attach_session = Some(session_id.clone());
     }
 
+    // Spawn config file watcher — watches the config directory for changes
+    let config_changed = app.config_changed.clone();
+    let _config_watcher = {
+        use notify::{Event, EventKind, RecursiveMode, Watcher};
+        let config_path_clone = crate::core::config::config_dir();
+        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            if let Ok(event) = res {
+                if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                    config_changed.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        })
+        .ok();
+        if let Some(ref mut w) = watcher {
+            let _ = w.watch(&config_path_clone, RecursiveMode::NonRecursive);
+        }
+        watcher
+    };
+
     // Run the TUI event loop
     run_tui(app, storage, config)?;
 
@@ -394,6 +413,19 @@ fn run_tui(
                 app.toast_message = None;
                 app.toast_expire = None;
             }
+        }
+
+        // Check for config hot-reload
+        if app.config_changed.load(std::sync::atomic::Ordering::Relaxed) {
+            app.config_changed.store(false, std::sync::atomic::Ordering::Relaxed);
+            let new_config = crate::core::config::load_config();
+            if new_config.theme == "light" {
+                app.theme = crate::ui::theme::Theme::light();
+            } else {
+                app.theme = crate::ui::theme::Theme::dark();
+            }
+            app.toast_message = Some("Config reloaded".to_string());
+            app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
         }
 
         // Sleep briefly to avoid busy-spinning when idle
