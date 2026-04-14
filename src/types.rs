@@ -11,19 +11,21 @@ pub enum SessionStatus {
     Compacting,
     Idle,
     Error,
+    Crashed,
     Stopped,
 }
 
 impl SessionStatus {
     pub fn sort_priority(&self) -> u8 {
         match self {
-            Self::Waiting => 0,
-            Self::Paused => 1,
-            Self::Running => 2,
-            Self::Compacting => 3,
-            Self::Idle => 4,
-            Self::Stopped => 5,
-            Self::Error => 6,
+            Self::Crashed => 0,
+            Self::Waiting => 1,
+            Self::Paused => 2,
+            Self::Running => 3,
+            Self::Compacting => 4,
+            Self::Idle => 5,
+            Self::Stopped => 6,
+            Self::Error => 7,
         }
     }
 
@@ -35,6 +37,7 @@ impl SessionStatus {
             Self::Compacting => "compacting",
             Self::Idle => "idle",
             Self::Error => "error",
+            Self::Crashed => "crashed",
             Self::Stopped => "stopped",
         }
     }
@@ -47,6 +50,7 @@ impl SessionStatus {
             "compacting" => Self::Compacting,
             "idle" => Self::Idle,
             "error" => Self::Error,
+            "crashed" => Self::Crashed,
             "stopped" => Self::Stopped,
             _ => Self::Idle,
         }
@@ -60,6 +64,7 @@ impl SessionStatus {
             Self::Compacting => "◌",
             Self::Idle => "○",
             Self::Error => "✗",
+            Self::Crashed => "⚠",
             Self::Stopped => "◻",
         }
     }
@@ -266,6 +271,7 @@ mod tests {
             SessionStatus::Compacting,
             SessionStatus::Idle,
             SessionStatus::Error,
+            SessionStatus::Crashed,
             SessionStatus::Stopped,
         ];
         for s in statuses {
@@ -323,6 +329,7 @@ mod tests {
             SessionStatus::Compacting,
             SessionStatus::Idle,
             SessionStatus::Error,
+            SessionStatus::Crashed,
             SessionStatus::Stopped,
         ];
         let icons: HashSet<&str> = statuses.iter().map(|s| s.icon()).collect();
@@ -342,6 +349,7 @@ mod tests {
             SessionStatus::Compacting,
             SessionStatus::Idle,
             SessionStatus::Error,
+            SessionStatus::Crashed,
             SessionStatus::Stopped,
         ];
         for s in statuses {
@@ -358,6 +366,7 @@ mod tests {
             SessionStatus::Compacting,
             SessionStatus::Idle,
             SessionStatus::Error,
+            SessionStatus::Crashed,
             SessionStatus::Stopped,
         ];
         for s in statuses {
@@ -367,7 +376,8 @@ mod tests {
 
     #[test]
     fn test_session_status_sort_priority_ordering() {
-        // Waiting < Paused < Running < Compacting < Idle < Stopped < Error
+        // Crashed < Waiting < Paused < Running < Compacting < Idle < Stopped < Error
+        assert!(SessionStatus::Crashed.sort_priority() < SessionStatus::Waiting.sort_priority());
         assert!(SessionStatus::Waiting.sort_priority() < SessionStatus::Paused.sort_priority());
         assert!(SessionStatus::Paused.sort_priority() < SessionStatus::Running.sort_priority());
         assert!(SessionStatus::Running.sort_priority() < SessionStatus::Compacting.sort_priority());
@@ -498,5 +508,20 @@ mod tests {
         assert_eq!(SortMode::LastActivity.label(), "activity");
         assert_eq!(SortMode::Name.label(), "name");
         assert_eq!(SortMode::Created.label(), "created");
+    }
+
+    #[test]
+    fn test_crashed_status_properties() {
+        let status = SessionStatus::Crashed;
+        assert_eq!(status.as_str(), "crashed");
+        assert_eq!(SessionStatus::from_str("crashed"), SessionStatus::Crashed);
+        assert!(!status.icon().is_empty());
+        assert_eq!(format!("{}", status), "crashed");
+    }
+
+    #[test]
+    fn test_crashed_sort_priority() {
+        // Crashed should sort higher priority than Error (user needs to see it)
+        assert!(SessionStatus::Crashed.sort_priority() < SessionStatus::Error.sort_priority());
     }
 }
