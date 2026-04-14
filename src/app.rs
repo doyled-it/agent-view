@@ -296,3 +296,277 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::groups::ListRow;
+    use crate::types::{Session, SessionStatus, Tool};
+
+    fn make_session(id: &str) -> Session {
+        Session {
+            id: id.to_string(),
+            title: format!("Session {}", id),
+            project_path: "/tmp".to_string(),
+            group_path: String::new(),
+            order: 0,
+            command: String::new(),
+            wrapper: String::new(),
+            tool: Tool::Claude,
+            status: SessionStatus::Idle,
+            tmux_session: String::new(),
+            created_at: 1700000000000,
+            last_accessed: 0,
+            parent_session_id: String::new(),
+            worktree_path: String::new(),
+            worktree_repo: String::new(),
+            worktree_branch: String::new(),
+            tool_data: "{}".to_string(),
+            acknowledged: false,
+            notify: false,
+            follow_up: false,
+            status_changed_at: 0,
+            restart_count: 0,
+            status_history: vec![],
+        }
+    }
+
+    fn make_app_with_sessions(count: usize) -> App {
+        let mut app = App::new(false);
+        for i in 0..count {
+            app.list_rows
+                .push(ListRow::Session(Box::new(make_session(&i.to_string()))));
+        }
+        app
+    }
+
+    // --- move_selection wrapping ---
+
+    #[test]
+    fn test_move_selection_down_wraps_to_start() {
+        let mut app = make_app_with_sessions(3);
+        app.selected_index = 2; // last item
+        app.move_selection_down();
+        assert_eq!(app.selected_index, 0, "should wrap to first item");
+    }
+
+    #[test]
+    fn test_move_selection_up_wraps_to_end() {
+        let mut app = make_app_with_sessions(3);
+        app.selected_index = 0; // first item
+        app.move_selection_up();
+        assert_eq!(app.selected_index, 2, "should wrap to last item");
+    }
+
+    #[test]
+    fn test_move_selection_on_empty_list_is_noop() {
+        let mut app = App::new(false);
+        app.selected_index = 0;
+        app.move_selection_down();
+        assert_eq!(app.selected_index, 0);
+        app.move_selection_up();
+        assert_eq!(app.selected_index, 0);
+    }
+
+    #[test]
+    fn test_move_selection_down_increments() {
+        let mut app = make_app_with_sessions(3);
+        app.selected_index = 0;
+        app.move_selection_down();
+        assert_eq!(app.selected_index, 1);
+    }
+
+    #[test]
+    fn test_move_selection_up_decrements() {
+        let mut app = make_app_with_sessions(3);
+        app.selected_index = 2;
+        app.move_selection_up();
+        assert_eq!(app.selected_index, 1);
+    }
+
+    // --- clamp_selection ---
+
+    #[test]
+    fn test_clamp_selection_empty_list_sets_zero() {
+        let mut app = App::new(false);
+        app.selected_index = 99;
+        app.clamp_selection();
+        assert_eq!(app.selected_index, 0);
+    }
+
+    #[test]
+    fn test_clamp_selection_out_of_bounds() {
+        let mut app = make_app_with_sessions(3);
+        app.selected_index = 10;
+        app.clamp_selection();
+        assert_eq!(app.selected_index, 2, "should clamp to last valid index");
+    }
+
+    #[test]
+    fn test_clamp_selection_in_bounds_unchanged() {
+        let mut app = make_app_with_sessions(3);
+        app.selected_index = 1;
+        app.clamp_selection();
+        assert_eq!(app.selected_index, 1);
+    }
+
+    // --- selected_session / selected_group ---
+
+    #[test]
+    fn test_selected_session_returns_session_at_index() {
+        let mut app = make_app_with_sessions(2);
+        app.selected_index = 0;
+        let s = app.selected_session();
+        assert!(s.is_some());
+        assert_eq!(s.unwrap().id, "0");
+    }
+
+    #[test]
+    fn test_selected_session_returns_none_for_group_row() {
+        use crate::types::Group;
+        let mut app = App::new(false);
+        app.list_rows.push(ListRow::Group {
+            group: Group {
+                path: "work".to_string(),
+                name: "Work".to_string(),
+                expanded: true,
+                order: 0,
+                default_path: String::new(),
+            },
+            session_count: 0,
+            running_count: 0,
+            waiting_count: 0,
+        });
+        app.selected_index = 0;
+        assert!(app.selected_session().is_none());
+    }
+
+    #[test]
+    fn test_selected_group_returns_group_at_index() {
+        use crate::types::Group;
+        let mut app = App::new(false);
+        app.list_rows.push(ListRow::Group {
+            group: Group {
+                path: "work".to_string(),
+                name: "Work".to_string(),
+                expanded: true,
+                order: 0,
+                default_path: String::new(),
+            },
+            session_count: 0,
+            running_count: 0,
+            waiting_count: 0,
+        });
+        app.selected_index = 0;
+        let g = app.selected_group();
+        assert!(g.is_some());
+        assert_eq!(g.unwrap().path, "work");
+    }
+
+    // --- search_matches ---
+
+    #[test]
+    fn test_search_matches_returns_empty_when_no_query() {
+        let app = make_app_with_sessions(3);
+        assert!(app.search_matches().is_empty());
+    }
+
+    #[test]
+    fn test_search_matches_returns_empty_when_query_is_empty_string() {
+        let mut app = make_app_with_sessions(3);
+        app.search_query = Some(String::new());
+        assert!(app.search_matches().is_empty());
+    }
+
+    #[test]
+    fn test_search_matches_finds_matching_sessions() {
+        let mut app = App::new(false);
+        let mut s1 = make_session("a");
+        s1.title = "alpha-task".to_string();
+        let mut s2 = make_session("b");
+        s2.title = "beta-task".to_string();
+        let mut s3 = make_session("c");
+        s3.title = "gamma-work".to_string();
+        app.list_rows.push(ListRow::Session(Box::new(s1)));
+        app.list_rows.push(ListRow::Session(Box::new(s2)));
+        app.list_rows.push(ListRow::Session(Box::new(s3)));
+        app.search_query = Some("task".to_string());
+
+        let matches = app.search_matches();
+        assert_eq!(matches.len(), 2);
+        assert!(matches.contains(&0));
+        assert!(matches.contains(&1));
+    }
+
+    #[test]
+    fn test_search_matches_is_case_insensitive() {
+        let mut app = App::new(false);
+        let mut s = make_session("a");
+        s.title = "Alpha-Task".to_string();
+        app.list_rows.push(ListRow::Session(Box::new(s)));
+        app.search_query = Some("alpha".to_string());
+        assert_eq!(app.search_matches(), vec![0]);
+    }
+
+    // --- CommandPalette ---
+
+    #[test]
+    fn test_command_palette_new_shows_all_items() {
+        let cp = CommandPalette::new();
+        assert_eq!(cp.filtered.len(), cp.items.len());
+        assert_eq!(cp.selected, 0);
+        assert!(cp.query.is_empty());
+    }
+
+    #[test]
+    fn test_command_palette_filter_empty_shows_all() {
+        let mut cp = CommandPalette::new();
+        cp.query = String::new();
+        cp.filter();
+        assert_eq!(cp.filtered.len(), cp.items.len());
+    }
+
+    #[test]
+    fn test_command_palette_filter_matches_by_label() {
+        let mut cp = CommandPalette::new();
+        cp.query = "session".to_string();
+        cp.filter();
+        assert!(
+            !cp.filtered.is_empty(),
+            "should match items with 'session' in label"
+        );
+        for &idx in &cp.filtered {
+            assert!(
+                cp.items[idx].label.to_lowercase().contains("session"),
+                "item '{}' should contain 'session'",
+                cp.items[idx].label
+            );
+        }
+    }
+
+    #[test]
+    fn test_command_palette_filter_resets_selected_to_zero() {
+        let mut cp = CommandPalette::new();
+        cp.selected = 5;
+        cp.query = "quit".to_string();
+        cp.filter();
+        assert_eq!(cp.selected, 0);
+    }
+
+    #[test]
+    fn test_command_palette_filter_no_match_returns_empty() {
+        let mut cp = CommandPalette::new();
+        cp.query = "zzznomatch".to_string();
+        cp.filter();
+        assert!(cp.filtered.is_empty());
+    }
+
+    #[test]
+    fn test_command_palette_filter_is_case_insensitive() {
+        let mut cp = CommandPalette::new();
+        cp.query = "QUIT".to_string();
+        cp.filter();
+        assert_eq!(cp.filtered.len(), 1);
+        assert_eq!(cp.items[cp.filtered[0]].label, "Quit");
+    }
+}
