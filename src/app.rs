@@ -49,21 +49,74 @@ pub enum CommandAction {
 impl CommandPalette {
     pub fn new() -> Self {
         let items = vec![
-            CommandItem { label: "New Session".to_string(), key_hint: "n".to_string(), action: CommandAction::NewSession },
-            CommandItem { label: "Stop Session".to_string(), key_hint: "s".to_string(), action: CommandAction::StopSession },
-            CommandItem { label: "Restart Session".to_string(), key_hint: "r".to_string(), action: CommandAction::RestartSession },
-            CommandItem { label: "Delete Session".to_string(), key_hint: "d".to_string(), action: CommandAction::DeleteSession },
-            CommandItem { label: "Rename".to_string(), key_hint: "R".to_string(), action: CommandAction::RenameSession },
-            CommandItem { label: "Move to Group".to_string(), key_hint: "m".to_string(), action: CommandAction::MoveSession },
-            CommandItem { label: "Toggle Notifications".to_string(), key_hint: "!".to_string(), action: CommandAction::ToggleNotify },
-            CommandItem { label: "Toggle Follow-up".to_string(), key_hint: "i".to_string(), action: CommandAction::ToggleFollowUp },
-            CommandItem { label: "Export Log".to_string(), key_hint: "e".to_string(), action: CommandAction::ExportLog },
-            CommandItem { label: "Create Group".to_string(), key_hint: "g".to_string(), action: CommandAction::CreateGroup },
-            CommandItem { label: "Search Sessions".to_string(), key_hint: "/".to_string(), action: CommandAction::Search },
-            CommandItem { label: "Quit".to_string(), key_hint: "q".to_string(), action: CommandAction::Quit },
+            CommandItem {
+                label: "New Session".to_string(),
+                key_hint: "n".to_string(),
+                action: CommandAction::NewSession,
+            },
+            CommandItem {
+                label: "Stop Session".to_string(),
+                key_hint: "s".to_string(),
+                action: CommandAction::StopSession,
+            },
+            CommandItem {
+                label: "Restart Session".to_string(),
+                key_hint: "r".to_string(),
+                action: CommandAction::RestartSession,
+            },
+            CommandItem {
+                label: "Delete Session".to_string(),
+                key_hint: "d".to_string(),
+                action: CommandAction::DeleteSession,
+            },
+            CommandItem {
+                label: "Rename".to_string(),
+                key_hint: "R".to_string(),
+                action: CommandAction::RenameSession,
+            },
+            CommandItem {
+                label: "Move to Group".to_string(),
+                key_hint: "m".to_string(),
+                action: CommandAction::MoveSession,
+            },
+            CommandItem {
+                label: "Toggle Notifications".to_string(),
+                key_hint: "!".to_string(),
+                action: CommandAction::ToggleNotify,
+            },
+            CommandItem {
+                label: "Toggle Follow-up".to_string(),
+                key_hint: "i".to_string(),
+                action: CommandAction::ToggleFollowUp,
+            },
+            CommandItem {
+                label: "Export Log".to_string(),
+                key_hint: "e".to_string(),
+                action: CommandAction::ExportLog,
+            },
+            CommandItem {
+                label: "Create Group".to_string(),
+                key_hint: "g".to_string(),
+                action: CommandAction::CreateGroup,
+            },
+            CommandItem {
+                label: "Search Sessions".to_string(),
+                key_hint: "/".to_string(),
+                action: CommandAction::Search,
+            },
+            CommandItem {
+                label: "Quit".to_string(),
+                key_hint: "q".to_string(),
+                action: CommandAction::Quit,
+            },
         ];
         let filtered: Vec<usize> = (0..items.len()).collect();
-        Self { query: String::new(), items, filtered, selected: 0 }
+        Self {
+            query: String::new(),
+            items,
+            filtered,
+            selected: 0,
+        }
     }
 
     pub fn filter(&mut self) {
@@ -71,7 +124,10 @@ impl CommandPalette {
         if q.is_empty() {
             self.filtered = (0..self.items.len()).collect();
         } else {
-            self.filtered = self.items.iter().enumerate()
+            self.filtered = self
+                .items
+                .iter()
+                .enumerate()
                 .filter(|(_, item)| item.label.to_lowercase().contains(&q))
                 .map(|(i, _)| i)
                 .collect();

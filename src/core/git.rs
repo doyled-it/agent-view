@@ -120,7 +120,9 @@ pub fn create_worktree(
         // Create a new branch, optionally from a base
         let base = base_branch.unwrap_or("HEAD");
         Command::new("git")
-            .args(["-C", repo_dir, "worktree", "add", "-b", branch, &wt_path, base])
+            .args([
+                "-C", repo_dir, "worktree", "add", "-b", branch, &wt_path, base,
+            ])
             .output()
             .map_err(|e| format!("Failed to run git: {}", e))?
     };
@@ -180,10 +182,7 @@ fn parse_worktree_list(output: &str) -> Vec<Worktree> {
         } else if let Some(rest) = line.strip_prefix("HEAD ") {
             commit = rest.to_string();
         } else if let Some(rest) = line.strip_prefix("branch ") {
-            branch = rest
-                .strip_prefix("refs/heads/")
-                .unwrap_or(rest)
-                .to_string();
+            branch = rest.strip_prefix("refs/heads/").unwrap_or(rest).to_string();
         } else if line == "bare" {
             bare = true;
         } else if line == "detached" {

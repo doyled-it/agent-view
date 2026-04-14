@@ -71,7 +71,12 @@ pub fn build_notification_command(options: &NotificationOptions) -> (String, Vec
         // Linux: notify-send
         (
             "notify-send".to_string(),
-            vec!["-u".to_string(), "critical".to_string(), safe_title, safe_body],
+            vec![
+                "-u".to_string(),
+                "critical".to_string(),
+                safe_title,
+                safe_body,
+            ],
         )
     }
 }
@@ -109,9 +114,7 @@ pub fn send_notification(options: NotificationOptions) {
             // terminal-notifier failed, try osascript fallback on macOS
             if cfg!(target_os = "macos") && check_terminal_notifier() {
                 let (fallback_cmd, fallback_args) = build_osascript_fallback(&options);
-                let _ = Command::new(&fallback_cmd)
-                    .args(&fallback_args)
-                    .output();
+                let _ = Command::new(&fallback_cmd).args(&fallback_args).output();
             }
             if options.sound {
                 // Bell fallback

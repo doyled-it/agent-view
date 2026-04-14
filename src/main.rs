@@ -95,7 +95,10 @@ fn run_tui(
 
             // Open fresh storage connection each tick
             let bg_storage = match crate::core::storage::Storage::open_default() {
-                Ok(s) => { let _ = s.migrate(); s }
+                Ok(s) => {
+                    let _ = s.migrate();
+                    s
+                }
                 Err(_) => continue,
             };
             let sessions = bg_storage.load_sessions().unwrap_or_default();
@@ -273,20 +276,10 @@ fn run_tui(
                             )?;
                         }
                         crate::app::Overlay::NewSession(_) => {
-                            handle_new_session_key(
-                                &mut app,
-                                key,
-                                &storage,
-                                &session_ops,
-                            )?;
+                            handle_new_session_key(&mut app, key, &storage, &session_ops)?;
                         }
                         crate::app::Overlay::Confirm(_) => {
-                            handle_confirm_key(
-                                &mut app,
-                                key,
-                                &storage,
-                                &session_ops,
-                            )?;
+                            handle_confirm_key(&mut app, key, &storage, &session_ops)?;
                         }
                         crate::app::Overlay::Rename(_) => {
                             handle_rename_key(&mut app, key, &storage)?;
@@ -298,12 +291,7 @@ fn run_tui(
                             handle_group_key(&mut app, key, &storage)?;
                         }
                         crate::app::Overlay::CommandPalette(_) => {
-                            handle_palette_key(
-                                &mut app,
-                                key,
-                                &storage,
-                                &session_ops,
-                            )?;
+                            handle_palette_key(&mut app, key, &storage, &session_ops)?;
                         }
                     }
                 }
@@ -364,8 +352,7 @@ fn handle_main_key(
     };
 
     match (key.modifiers, key.code) {
-        (KeyModifiers::NONE, KeyCode::Char('q'))
-        | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+        (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
             app.should_quit = true;
         }
         (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
@@ -375,8 +362,7 @@ fn handle_main_key(
             app.move_selection_down();
         }
         (KeyModifiers::NONE, KeyCode::Char('n')) => {
-            app.overlay =
-                crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
+            app.overlay = crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
         }
         (KeyModifiers::NONE, KeyCode::Right) | (KeyModifiers::NONE, KeyCode::Char('l')) => {
             if let Some(group) = app.selected_group() {
@@ -420,10 +406,7 @@ fn handle_main_key(
                     // alternate screen state, and all attributes in one shot.
                     // This prevents the scroll-to-bottom effect while also
                     // restoring normal terminal mode for paste etc.
-                    let _ = std::io::Write::write_all(
-                        &mut std::io::stdout(),
-                        b"\x1bc",
-                    );
+                    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1bc");
                     let _ = std::io::Write::flush(&mut std::io::stdout());
 
                     let _ = crate::core::tmux::attach_session_sync(&tmux_name);
@@ -500,7 +483,8 @@ fn handle_main_key(
                     format!("Notifications off: {}", title)
                 };
                 app.toast_message = Some(msg);
-                app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                app.toast_expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('i')) => {
@@ -529,7 +513,8 @@ fn handle_main_key(
                             app.toast_message = Some(format!("Export failed: {}", e));
                         }
                     }
-                    app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                 }
             }
         }
@@ -538,7 +523,9 @@ fn handle_main_key(
         }
         (KeyModifiers::NONE, KeyCode::Char('m')) => {
             if let Some(session) = app.selected_session() {
-                let groups: Vec<(String, String)> = app.groups.iter()
+                let groups: Vec<(String, String)> = app
+                    .groups
+                    .iter()
                     .map(|g| (g.path.clone(), g.name.clone()))
                     .collect();
                 if !groups.is_empty() {
@@ -591,14 +578,19 @@ fn export_session_log(tmux_session: &str, title: &str) -> Result<String, String>
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let safe_name: String = title
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .take(30)
         .collect();
     let filename = format!("{}-{}.log", safe_name, timestamp);
     let filepath = logs_dir.join(&filename);
 
-    std::fs::write(&filepath, &output)
-        .map_err(|e| format!("Write failed: {}", e))?;
+    std::fs::write(&filepath, &output).map_err(|e| format!("Write failed: {}", e))?;
 
     Ok(filepath.to_string_lossy().to_string())
 }
@@ -737,7 +729,9 @@ fn handle_rename_key(
                         }
                         crate::app::RenameTarget::Group => {
                             if let Ok(groups) = storage.load_groups() {
-                                if let Some(mut group) = groups.into_iter().find(|g| g.path == form.target_id) {
+                                if let Some(mut group) =
+                                    groups.into_iter().find(|g| g.path == form.target_id)
+                                {
                                     group.name = new_name;
                                     let _ = storage.save_group(&group);
                                 }
@@ -795,7 +789,8 @@ fn handle_move_key(
                     app.groups = storage.load_groups().unwrap_or_default();
                     app.rebuild_list_rows();
                     app.toast_message = Some(format!("Moved to {}", name));
-                    app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
                 }
                 app.overlay = crate::app::Overlay::None;
             }
@@ -913,7 +908,9 @@ fn execute_command_action(
             app.search_query = Some(String::new());
         }
         CommandAction::CreateGroup => {
-            app.overlay = Overlay::GroupManage(crate::app::GroupForm { name: String::new() });
+            app.overlay = Overlay::GroupManage(crate::app::GroupForm {
+                name: String::new(),
+            });
         }
         CommandAction::Quit => {
             app.should_quit = true;
@@ -958,7 +955,9 @@ fn execute_command_action(
         }
         CommandAction::MoveSession => {
             if let Some(session) = app.selected_session() {
-                let groups: Vec<(String, String)> = app.groups.iter()
+                let groups: Vec<(String, String)> = app
+                    .groups
+                    .iter()
                     .map(|g| (g.path.clone(), g.name.clone()))
                     .collect();
                 if !groups.is_empty() {
@@ -1001,11 +1000,13 @@ fn execute_command_action(
                     match export_session_log(&tmux_name, &title) {
                         Ok(path) => {
                             app.toast_message = Some(format!("Exported to {}", path));
-                            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                            app.toast_expire =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                         }
                         Err(e) => {
                             app.toast_message = Some(format!("Export failed: {}", e));
-                            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                            app.toast_expire =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                         }
                     }
                 }

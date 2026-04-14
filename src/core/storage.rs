@@ -661,7 +661,11 @@ mod tests {
         storage.save_session(&session).unwrap();
 
         storage
-            .write_status("s1", crate::types::SessionStatus::Running, crate::types::Tool::Claude)
+            .write_status(
+                "s1",
+                crate::types::SessionStatus::Running,
+                crate::types::Tool::Claude,
+            )
             .unwrap();
 
         let loaded = storage.get_session("s1").unwrap().unwrap();
@@ -689,8 +693,12 @@ mod tests {
         let session = make_test_session("s1");
         storage.save_session(&session).unwrap();
 
-        storage.update_status_history("s1", crate::types::SessionStatus::Running, 1700000001000).unwrap();
-        storage.update_status_history("s1", crate::types::SessionStatus::Waiting, 1700000002000).unwrap();
+        storage
+            .update_status_history("s1", crate::types::SessionStatus::Running, 1700000001000)
+            .unwrap();
+        storage
+            .update_status_history("s1", crate::types::SessionStatus::Waiting, 1700000002000)
+            .unwrap();
 
         let loaded = storage.get_session("s1").unwrap().unwrap();
         assert_eq!(loaded.status_history.len(), 2);
@@ -720,7 +728,11 @@ mod tests {
 
         for i in 0..60 {
             storage
-                .update_status_history("s1", crate::types::SessionStatus::Running, 1700000000000 + i)
+                .update_status_history(
+                    "s1",
+                    crate::types::SessionStatus::Running,
+                    1700000000000 + i,
+                )
                 .unwrap();
         }
 

@@ -71,7 +71,10 @@ pub fn flatten_group_tree(sessions: &[Session], groups: &[Group]) -> Vec<ListRow
         sorted_groups.iter().map(|g| g.path.as_str()).collect();
 
     for group in &sorted_groups {
-        let group_sessions = by_group.get(&group.path).map(|v| v.as_slice()).unwrap_or(&[]);
+        let group_sessions = by_group
+            .get(&group.path)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
 
         // Hide default group when empty
         if group.path == DEFAULT_GROUP_PATH && group_sessions.is_empty() {

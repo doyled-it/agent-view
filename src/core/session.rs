@@ -3,23 +3,22 @@
 use crate::core::notify::{send_notification, NotificationOptions};
 use crate::core::storage::Storage;
 use crate::core::tmux::SessionCache;
-use crate::types::{Session, SessionCreateOptions, SessionStatus};
 #[cfg(test)]
 use crate::types::Tool;
+use crate::types::{Session, SessionCreateOptions, SessionStatus};
 use std::collections::HashMap;
 use std::time::Instant;
 
 // Name generation word lists
 const ADJECTIVES: &[&str] = &[
-    "swift", "bright", "calm", "deep", "eager", "fair", "gentle", "happy",
-    "keen", "light", "mild", "noble", "proud", "quick", "rich", "safe",
-    "true", "vivid", "warm", "wise", "bold", "cool", "dark", "fast",
+    "swift", "bright", "calm", "deep", "eager", "fair", "gentle", "happy", "keen", "light", "mild",
+    "noble", "proud", "quick", "rich", "safe", "true", "vivid", "warm", "wise", "bold", "cool",
+    "dark", "fast",
 ];
 
 const NOUNS: &[&str] = &[
-    "fox", "owl", "wolf", "bear", "hawk", "lion", "deer", "crow",
-    "dove", "seal", "swan", "hare", "lynx", "moth", "newt", "orca",
-    "pike", "rook", "toad", "vole", "wren", "yak", "bass", "crab",
+    "fox", "owl", "wolf", "bear", "hawk", "lion", "deer", "crow", "dove", "seal", "swan", "hare",
+    "lynx", "moth", "newt", "orca", "pike", "rook", "toad", "vole", "wren", "yak", "bass", "crab",
 ];
 
 fn generate_title() -> String {
@@ -276,7 +275,6 @@ impl StatusProcessor {
 
         notified
     }
-
 }
 
 /// Session lifecycle operations (create, stop, delete, restart).
@@ -316,7 +314,9 @@ impl SessionOps {
             id: id.clone(),
             title,
             project_path: options.project_path,
-            group_path: options.group_path.unwrap_or_else(|| "my-sessions".to_string()),
+            group_path: options
+                .group_path
+                .unwrap_or_else(|| "my-sessions".to_string()),
             order: storage.load_sessions().unwrap_or_default().len() as i32,
             command,
             wrapper: String::new(),
@@ -413,10 +413,7 @@ impl SessionOps {
 
         let new_tmux_name = crate::core::tmux::generate_session_name(&session.title);
         let mut env = HashMap::new();
-        env.insert(
-            "AGENT_ORCHESTRATOR_SESSION".to_string(),
-            session.id.clone(),
-        );
+        env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), session.id.clone());
 
         crate::core::tmux::create_session(
             &new_tmux_name,
@@ -538,7 +535,12 @@ mod tests {
     fn test_maybe_notify_returns_false_when_attached() {
         let mut mgr = StatusProcessor::new();
         let session = make_test_session("s1", true);
-        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
+        let result = mgr.maybe_notify(
+            &session,
+            SessionStatus::Waiting,
+            Some("agentorch_s1"),
+            false,
+        );
         assert!(!result);
     }
 
@@ -573,7 +575,12 @@ mod tests {
         let mut mgr = StatusProcessor::new();
         let session = make_test_session("s1", true);
         // Attached to this exact session — should suppress
-        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
+        let result = mgr.maybe_notify(
+            &session,
+            SessionStatus::Waiting,
+            Some("agentorch_s1"),
+            false,
+        );
         assert!(!result);
     }
 
@@ -582,7 +589,12 @@ mod tests {
         let mut mgr = StatusProcessor::new();
         let session = make_test_session("s2", true);
         // Attached to a DIFFERENT session — should allow notification
-        let result = mgr.maybe_notify(&session, SessionStatus::Waiting, Some("agentorch_s1"), false);
+        let result = mgr.maybe_notify(
+            &session,
+            SessionStatus::Waiting,
+            Some("agentorch_s1"),
+            false,
+        );
         assert!(result);
     }
 

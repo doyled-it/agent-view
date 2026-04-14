@@ -9,16 +9,15 @@ pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // When the terminal is wide enough, split horizontally: list on left, detail on right
-    let (list_area, detail_area) =
-        if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH {
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(0), Constraint::Length(36)])
-                .split(area);
-            (cols[0], Some(cols[1]))
-        } else {
-            (area, None)
-        };
+    let (list_area, detail_area) = if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(36)])
+            .split(area);
+        (cols[0], Some(cols[1]))
+    } else {
+        (area, None)
+    };
 
     // Layout: header (1), body (fill), footer (1)
     let chunks = Layout::default()
@@ -88,7 +87,10 @@ fn render_header(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme)
     let version = env!("CARGO_PKG_VERSION");
     let header = Line::from(vec![
         Span::styled("agent-view ", Style::default().fg(theme.primary).bold()),
-        Span::styled(format!("v{}", version), Style::default().fg(theme.text_muted)),
+        Span::styled(
+            format!("v{}", version),
+            Style::default().fg(theme.text_muted),
+        ),
     ]);
     frame.render_widget(Paragraph::new(header), area);
 }
@@ -120,7 +122,11 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     running_count,
                     waiting_count,
                 } => {
-                    let arrow = if group.expanded { "\u{25BC}" } else { "\u{25B6}" };
+                    let arrow = if group.expanded {
+                        "\u{25BC}"
+                    } else {
+                        "\u{25B6}"
+                    };
                     let mut spans = vec![
                         Span::styled(
                             format!(" {} ", arrow),
@@ -133,7 +139,11 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                         Span::styled(
                             group.name.clone(),
                             Style::default()
-                                .fg(if is_selected { theme.selected_item_text } else { theme.text })
+                                .fg(if is_selected {
+                                    theme.selected_item_text
+                                } else {
+                                    theme.text
+                                })
                                 .bold(),
                         ),
                         Span::styled(
@@ -194,7 +204,10 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                             Style::default().fg(status_color),
                         ),
                         Span::styled(notify_indicator, Style::default().fg(theme.warning)),
-                        Span::styled(session.title.clone(), Style::default().fg(title_color).bold()),
+                        Span::styled(
+                            session.title.clone(),
+                            Style::default().fg(title_color).bold(),
+                        ),
                         Span::raw("  "),
                         Span::styled(
                             truncate_path(&session.project_path, 30),

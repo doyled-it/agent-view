@@ -23,7 +23,12 @@ impl SessionCache {
     /// Refresh cache by querying tmux for all windows
     pub fn refresh(&mut self) {
         let output = Command::new("tmux")
-            .args(["list-windows", "-a", "-F", "#{session_name}\t#{window_activity}"])
+            .args([
+                "list-windows",
+                "-a",
+                "-F",
+                "#{session_name}\t#{window_activity}",
+            ])
             .output();
 
         match output {
@@ -227,7 +232,12 @@ pub fn get_attached_sessions() -> std::collections::HashSet<String> {
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout.trim().lines().filter(|l| !l.is_empty()).map(|l| l.to_string()).collect()
+            stdout
+                .trim()
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect()
         }
         _ => std::collections::HashSet::new(),
     }
@@ -260,17 +270,60 @@ pub fn attach_session_sync(session_name: &str) -> Result<bool, String> {
 
     let _ = Command::new("tmux")
         .args([
-            "bind-key", "-n", "C-q", "detach-client", ";",
-            "bind-key", "-n", "C-k", "run-shell",
+            "bind-key",
+            "-n",
+            "C-q",
+            "detach-client",
+            ";",
+            "bind-key",
+            "-n",
+            "C-k",
+            "run-shell",
             &format!("touch {} && tmux detach-client", signal_file),
             ";",
-            "bind-key", "-n", "C-t", "split-window", "-v", "-c", "#{pane_current_path}", ";",
-            "set-option", "-t", session_name, "status", "on", ";",
-            "set-option", "-t", session_name, "status-position", "bottom", ";",
-            "set-option", "-t", session_name, "status-style", "bg=#1e1e2e,fg=#cdd6f4", ";",
-            "set-option", "-t", session_name, "status-left", "", ";",
-            "set-option", "-t", session_name, "status-right-length", "120", ";",
-            "set-option", "-t", session_name, "status-right", status_right,
+            "bind-key",
+            "-n",
+            "C-t",
+            "split-window",
+            "-v",
+            "-c",
+            "#{pane_current_path}",
+            ";",
+            "set-option",
+            "-t",
+            session_name,
+            "status",
+            "on",
+            ";",
+            "set-option",
+            "-t",
+            session_name,
+            "status-position",
+            "bottom",
+            ";",
+            "set-option",
+            "-t",
+            session_name,
+            "status-style",
+            "bg=#1e1e2e,fg=#cdd6f4",
+            ";",
+            "set-option",
+            "-t",
+            session_name,
+            "status-left",
+            "",
+            ";",
+            "set-option",
+            "-t",
+            session_name,
+            "status-right-length",
+            "120",
+            ";",
+            "set-option",
+            "-t",
+            session_name,
+            "status-right",
+            status_right,
         ])
         .output();
 
@@ -285,9 +338,17 @@ pub fn attach_session_sync(session_name: &str) -> Result<bool, String> {
     // Unbind keys
     let _ = Command::new("tmux")
         .args([
-            "unbind-key", "-n", "C-q", ";",
-            "unbind-key", "-n", "C-k", ";",
-            "unbind-key", "-n", "C-t",
+            "unbind-key",
+            "-n",
+            "C-q",
+            ";",
+            "unbind-key",
+            "-n",
+            "C-k",
+            ";",
+            "unbind-key",
+            "-n",
+            "C-t",
         ])
         .output();
 
@@ -296,10 +357,11 @@ pub fn attach_session_sync(session_name: &str) -> Result<bool, String> {
     let _ = std::io::stdout().flush();
 
     match result {
-        Ok(status) if !status.success() => {
-            Err("tmux attach failed: this is usually caused by a tmux version mismatch. \
-                 Run 'tmux kill-server' in a terminal to fix this.".to_string())
-        }
+        Ok(status) if !status.success() => Err(
+            "tmux attach failed: this is usually caused by a tmux version mismatch. \
+                 Run 'tmux kill-server' in a terminal to fix this."
+                .to_string(),
+        ),
         Err(e) => Err(format!("Failed to attach: {}", e)),
         Ok(_) => {
             // Check if command palette was requested

@@ -48,22 +48,22 @@ impl Theme {
     /// Catppuccin Latte (light theme)
     pub fn light() -> Theme {
         Theme {
-            primary: Color::Rgb(136, 57, 239),           // #8839ef
-            secondary: Color::Rgb(30, 102, 245),         // #1e66f5
-            accent: Color::Rgb(234, 118, 203),           // #ea76cb
-            error: Color::Rgb(210, 15, 57),              // #d20f39
-            warning: Color::Rgb(254, 100, 11),           // #fe640b
-            success: Color::Rgb(64, 160, 43),            // #40a02b
-            info: Color::Rgb(4, 165, 229),               // #04a5e5
-            text: Color::Rgb(76, 79, 105),               // #4c4f69
-            text_muted: Color::Rgb(156, 160, 176),       // #9ca0b0
+            primary: Color::Rgb(136, 57, 239),             // #8839ef
+            secondary: Color::Rgb(30, 102, 245),           // #1e66f5
+            accent: Color::Rgb(234, 118, 203),             // #ea76cb
+            error: Color::Rgb(210, 15, 57),                // #d20f39
+            warning: Color::Rgb(254, 100, 11),             // #fe640b
+            success: Color::Rgb(64, 160, 43),              // #40a02b
+            info: Color::Rgb(4, 165, 229),                 // #04a5e5
+            text: Color::Rgb(76, 79, 105),                 // #4c4f69
+            text_muted: Color::Rgb(156, 160, 176),         // #9ca0b0
             selected_item_text: Color::Rgb(239, 241, 245), // #eff1f5
-            background: Color::Rgb(239, 241, 245),       // #eff1f5
-            background_panel: Color::Rgb(230, 233, 239), // #e6e9ef
+            background: Color::Rgb(239, 241, 245),         // #eff1f5
+            background_panel: Color::Rgb(230, 233, 239),   // #e6e9ef
             background_element: Color::Rgb(204, 208, 218), // #ccd0da
-            border: Color::Rgb(204, 208, 218),           // #ccd0da
-            border_active: Color::Rgb(136, 57, 239),     // #8839ef
-            border_subtle: Color::Rgb(230, 233, 239),    // #e6e9ef
+            border: Color::Rgb(204, 208, 218),             // #ccd0da
+            border_active: Color::Rgb(136, 57, 239),       // #8839ef
+            border_subtle: Color::Rgb(230, 233, 239),      // #e6e9ef
         }
     }
 }

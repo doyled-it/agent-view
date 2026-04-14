@@ -73,10 +73,7 @@ pub fn render_new_session(
     } else {
         Style::default().fg(theme.text_muted)
     };
-    frame.render_widget(
-        Paragraph::new("Project Path:").style(path_style),
-        chunks[3],
-    );
+    frame.render_widget(Paragraph::new("Project Path:").style(path_style), chunks[3]);
 
     let path_display = if form.focused_field == 1 {
         format!("{}\u{2588}", form.project_path)
@@ -127,8 +124,7 @@ pub fn render_rename(
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new(format!("{}\u{2588}", form.input))
-            .style(Style::default().fg(theme.text)),
+        Paragraph::new(format!("{}\u{2588}", form.input)).style(Style::default().fg(theme.text)),
         chunks[1],
     );
 }
@@ -205,7 +201,9 @@ pub fn render_move(
         .enumerate()
         .map(|(i, (_, name))| {
             let style = if i == form.selected {
-                Style::default().bg(theme.primary).fg(theme.selected_item_text)
+                Style::default()
+                    .bg(theme.primary)
+                    .fg(theme.selected_item_text)
             } else {
                 Style::default().fg(theme.text)
             };
@@ -264,7 +262,9 @@ pub fn render_command_palette(
         .map(|(i, &idx)| {
             let item = &palette.items[idx];
             let style = if i == palette.selected {
-                Style::default().bg(theme.primary).fg(theme.selected_item_text)
+                Style::default()
+                    .bg(theme.primary)
+                    .fg(theme.selected_item_text)
             } else {
                 Style::default().fg(theme.text)
             };
@@ -273,7 +273,9 @@ pub fn render_command_palette(
                 Span::styled(
                     format!("  {}", item.key_hint),
                     if i == palette.selected {
-                        Style::default().bg(theme.primary).fg(theme.selected_item_text)
+                        Style::default()
+                            .bg(theme.primary)
+                            .fg(theme.selected_item_text)
                     } else {
                         Style::default().fg(theme.text_muted)
                     },

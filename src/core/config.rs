@@ -70,10 +70,7 @@ pub fn load_config() -> AppConfig {
         Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
             Ok(config) => config,
             Err(_) => {
-                eprintln!(
-                    "Warning: Failed to parse config from {}",
-                    path.display()
-                );
+                eprintln!("Warning: Failed to parse config from {}", path.display());
                 AppConfig::default()
             }
         },
