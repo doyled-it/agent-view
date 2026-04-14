@@ -336,6 +336,7 @@ impl SessionOps {
             status_changed_at: now,
             restart_count: 0,
             last_started_at: now,
+            notes: vec![],
             status_history: vec![crate::types::StatusHistoryEntry {
                 status: "running".to_string(),
                 timestamp: now,
@@ -474,6 +475,7 @@ mod tests {
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,
+            notes: vec![],
             status_history: vec![],
             pinned: false,
             tokens_used: 0,

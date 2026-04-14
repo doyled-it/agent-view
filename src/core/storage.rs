@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, Result as SqlResult};
 use std::fs;
 use std::path::PathBuf;
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 pub struct Storage {
     conn: Connection,
@@ -142,6 +142,14 @@ impl Storage {
             );
         }
 
+        // v5 -> v6
+        if version < 6 {
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN notes TEXT NOT NULL DEFAULT '[]'",
+                [],
+            );
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -161,8 +169,8 @@ impl Storage {
                 parent_session_id, worktree_path, worktree_repo, worktree_branch,
                 tool_data, acknowledged,
                 notify, follow_up, status_changed_at, restart_count, status_history,
-                pinned, tokens_used, last_started_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+                pinned, tokens_used, last_started_at, notes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
             params![
                 session.id,
                 session.title,
@@ -190,6 +198,7 @@ impl Storage {
                 session.pinned as i32,
                 session.tokens_used,
                 session.last_started_at,
+                session.notes_json(),
             ],
         )?;
         Ok(())
@@ -204,7 +213,7 @@ impl Storage {
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
                     notify, follow_up, status_changed_at, restart_count, status_history,
-                    pinned, tokens_used, last_started_at
+                    pinned, tokens_used, last_started_at, notes
              FROM sessions ORDER BY sort_order",
         )?;
 
@@ -250,6 +259,10 @@ impl Storage {
                         created_at
                     }
                 },
+                notes: {
+                    let json: String = row.get(26).unwrap_or_else(|_| "[]".to_string());
+                    serde_json::from_str(&json).unwrap_or_default()
+                },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
                 pinned: row.get::<_, i32>(23)? == 1,
                 tokens_used: row.get(24)?,
@@ -268,7 +281,7 @@ impl Storage {
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
                     notify, follow_up, status_changed_at, restart_count, status_history,
-                    pinned, tokens_used, last_started_at
+                    pinned, tokens_used, last_started_at, notes
              FROM sessions WHERE id = ?1",
         )?;
 
@@ -313,6 +326,10 @@ impl Storage {
                     } else {
                         created_at
                     }
+                },
+                notes: {
+                    let json: String = row.get(26).unwrap_or_else(|_| "[]".to_string());
+                    serde_json::from_str(&json).unwrap_or_default()
                 },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
                 pinned: row.get::<_, i32>(23)? == 1,
@@ -635,7 +652,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("5".to_string()));
+        assert_eq!(version, Some("6".to_string()));
     }
 
     #[test]
@@ -643,7 +660,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("5".to_string()));
+        assert_eq!(version, Some("6".to_string()));
     }
 
     #[test]
@@ -708,6 +725,7 @@ mod tests {
             status_changed_at: 1700000000000,
             restart_count: 0,
             last_started_at: 1700000000000,
+            notes: vec![],
             status_history: vec![],
             pinned: false,
             tokens_used: 0,

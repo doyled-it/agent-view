@@ -135,6 +135,12 @@ pub struct StatusHistoryEntry {
     pub timestamp: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteEntry {
+    pub timestamp: i64,
+    pub text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: String,
@@ -160,6 +166,7 @@ pub struct Session {
     pub status_changed_at: i64,
     pub restart_count: i32,
     pub last_started_at: i64,
+    pub notes: Vec<NoteEntry>,
     pub status_history: Vec<StatusHistoryEntry>,
     pub pinned: bool,
     pub tokens_used: i64,
@@ -168,6 +175,10 @@ pub struct Session {
 impl Session {
     pub fn status_history_json(&self) -> String {
         serde_json::to_string(&self.status_history).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn notes_json(&self) -> String {
+        serde_json::to_string(&self.notes).unwrap_or_else(|_| "[]".to_string())
     }
 }
 
@@ -437,6 +448,7 @@ mod tests {
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,
+            notes: vec![],
             status_history: vec![],
             pinned: false,
             tokens_used: 0,
@@ -470,6 +482,7 @@ mod tests {
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,
+            notes: vec![],
             status_history: vec![
                 StatusHistoryEntry {
                     status: "running".to_string(),
@@ -523,5 +536,31 @@ mod tests {
     fn test_crashed_sort_priority() {
         // Crashed should sort higher priority than Error (user needs to see it)
         assert!(SessionStatus::Crashed.sort_priority() < SessionStatus::Error.sort_priority());
+    }
+
+    #[test]
+    fn test_note_entry_serialize_roundtrip() {
+        let notes = vec![
+            NoteEntry {
+                timestamp: 1700000000000,
+                text: "first note".to_string(),
+            },
+            NoteEntry {
+                timestamp: 1700000001000,
+                text: "second note".to_string(),
+            },
+        ];
+        let json = serde_json::to_string(&notes).unwrap();
+        let parsed: Vec<NoteEntry> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].text, "first note");
+        assert_eq!(parsed[1].timestamp, 1700000001000);
+    }
+
+    #[test]
+    fn test_empty_notes_serialize() {
+        let notes: Vec<NoteEntry> = vec![];
+        let json = serde_json::to_string(&notes).unwrap();
+        assert_eq!(json, "[]");
     }
 }
