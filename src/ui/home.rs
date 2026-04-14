@@ -15,16 +15,15 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 
     // When the terminal is wide enough, split horizontally: list on left, detail on right
-    let (list_area, detail_area) =
-        if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH {
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(0), Constraint::Length(36)])
-                .split(area);
-            (cols[0], Some(cols[1]))
-        } else {
-            (area, None)
-        };
+    let (list_area, detail_area) = if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(36)])
+            .split(area);
+        (cols[0], Some(cols[1]))
+    } else {
+        (area, None)
+    };
 
     // Layout: header (1), body (fill), activity feed (dynamic), footer (1)
     let show_feed = app.show_activity_feed && !app.activity_feed.is_empty();
@@ -136,10 +135,7 @@ fn render_activity_feed(frame: &mut Frame, area: Rect, app: &App) {
                     Style::default().fg(theme.text),
                 ),
                 Span::styled("-> ", Style::default().fg(theme.text_muted)),
-                Span::styled(
-                    event.new_status.as_str(),
-                    Style::default().fg(status_color),
-                ),
+                Span::styled(event.new_status.as_str(), Style::default().fg(status_color)),
             ])
         })
         .collect();
@@ -164,7 +160,10 @@ fn render_header(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme)
     let version = env!("CARGO_PKG_VERSION");
     let header = Line::from(vec![
         Span::styled("agent-view ", Style::default().fg(theme.primary).bold()),
-        Span::styled(format!("v{}", version), Style::default().fg(theme.text_muted)),
+        Span::styled(
+            format!("v{}", version),
+            Style::default().fg(theme.text_muted),
+        ),
     ]);
     frame.render_widget(Paragraph::new(header), area);
 }
@@ -196,7 +195,11 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     running_count,
                     waiting_count,
                 } => {
-                    let arrow = if group.expanded { "\u{25BC}" } else { "\u{25B6}" };
+                    let arrow = if group.expanded {
+                        "\u{25BC}"
+                    } else {
+                        "\u{25B6}"
+                    };
                     let mut spans = vec![
                         Span::styled(
                             format!(" {} ", arrow),
@@ -209,7 +212,11 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                         Span::styled(
                             group.name.clone(),
                             Style::default()
-                                .fg(if is_selected { theme.selected_item_text } else { theme.text })
+                                .fg(if is_selected {
+                                    theme.selected_item_text
+                                } else {
+                                    theme.text
+                                })
                                 .bold(),
                         ),
                         Span::styled(
@@ -267,14 +274,20 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     };
 
                     let line = Line::from(vec![
-                        Span::styled(format!(" {}", pin_indicator), Style::default().fg(theme.accent)),
+                        Span::styled(
+                            format!(" {}", pin_indicator),
+                            Style::default().fg(theme.accent),
+                        ),
                         Span::styled(follow_up_indicator, Style::default().fg(theme.warning)),
                         Span::styled(notify_indicator, Style::default().fg(theme.info)),
                         Span::styled(
                             format!(" {} ", session.status.icon()),
                             Style::default().fg(status_color),
                         ),
-                        Span::styled(session.title.clone(), Style::default().fg(title_color).bold()),
+                        Span::styled(
+                            session.title.clone(),
+                            Style::default().fg(title_color).bold(),
+                        ),
                         Span::raw("  "),
                         Span::styled(
                             truncate_path(&session.project_path, 30),
@@ -307,12 +320,12 @@ fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
 
 fn status_to_sparkline_char(status: &str) -> char {
     match status {
-        "idle" | "stopped" => '\u{2581}',     // ▁
-        "running" => '\u{2588}',              // █
-        "waiting" => '\u{2585}',              // ▅
+        "idle" | "stopped" => '\u{2581}',      // ▁
+        "running" => '\u{2588}',               // █
+        "waiting" => '\u{2585}',               // ▅
         "paused" | "compacting" => '\u{2583}', // ▃
-        "error" => '\u{2587}',               // ▇
-        _ => '\u{2581}',                      // ▁
+        "error" => '\u{2587}',                 // ▇
+        _ => '\u{2581}',                       // ▁
     }
 }
 
@@ -414,10 +427,22 @@ mod tests {
     fn test_sparkline_from_history() {
         use crate::types::StatusHistoryEntry;
         let history = vec![
-            StatusHistoryEntry { status: "idle".to_string(), timestamp: 1000 },
-            StatusHistoryEntry { status: "running".to_string(), timestamp: 2000 },
-            StatusHistoryEntry { status: "waiting".to_string(), timestamp: 3000 },
-            StatusHistoryEntry { status: "idle".to_string(), timestamp: 4000 },
+            StatusHistoryEntry {
+                status: "idle".to_string(),
+                timestamp: 1000,
+            },
+            StatusHistoryEntry {
+                status: "running".to_string(),
+                timestamp: 2000,
+            },
+            StatusHistoryEntry {
+                status: "waiting".to_string(),
+                timestamp: 3000,
+            },
+            StatusHistoryEntry {
+                status: "idle".to_string(),
+                timestamp: 4000,
+            },
         ];
         let spark = render_sparkline_str(&history, 4);
         assert_eq!(spark, "\u{2581}\u{2588}\u{2585}\u{2581}");

@@ -9,7 +9,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Show toast if active and not expired
     if let Some(ref msg) = app.toast_message {
-        if app.toast_expire.map_or(false, |t| t > std::time::Instant::now()) {
+        if app
+            .toast_expire
+            .map_or(false, |t| t > std::time::Instant::now())
+        {
             let toast = Line::from(Span::styled(
                 msg.as_str(),
                 Style::default().fg(theme.info).bold(),
@@ -62,7 +65,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             vec![("Enter", "create"), ("Esc", "cancel")]
         }
         Overlay::CommandPalette(_) => {
-            vec![("Tab/arrows", "navigate"), ("Enter", "execute"), ("Esc", "close")]
+            vec![
+                ("Tab/arrows", "navigate"),
+                ("Enter", "execute"),
+                ("Esc", "close"),
+            ]
         }
         Overlay::Help => {
             vec![("Esc", "close")]

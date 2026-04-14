@@ -4,8 +4,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 
 lazy_static! {
-    static ref TOKEN_PATTERN: Regex =
-        Regex::new(r"(\d+(?:\.\d+)?)\s*([kKmM])?\s*tokens?").unwrap();
+    static ref TOKEN_PATTERN: Regex = Regex::new(r"(\d+(?:\.\d+)?)\s*([kKmM])?\s*tokens?").unwrap();
 }
 
 pub fn parse_token_count(text: &str) -> Option<i64> {

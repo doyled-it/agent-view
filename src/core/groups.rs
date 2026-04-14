@@ -53,7 +53,9 @@ pub fn sort_sessions(sessions: &mut [&Session], mode: crate::types::SortMode) {
             _ => {}
         }
         match mode {
-            crate::types::SortMode::StatusPriority => a.status.sort_priority().cmp(&b.status.sort_priority()),
+            crate::types::SortMode::StatusPriority => {
+                a.status.sort_priority().cmp(&b.status.sort_priority())
+            }
             crate::types::SortMode::LastActivity => b.status_changed_at.cmp(&a.status_changed_at),
             crate::types::SortMode::Name => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
             crate::types::SortMode::Created => b.created_at.cmp(&a.created_at),
@@ -64,7 +66,11 @@ pub fn sort_sessions(sessions: &mut [&Session], mode: crate::types::SortMode) {
 /// Flatten groups and sessions into a navigable list.
 /// Groups appear as headers; if expanded, their sessions follow.
 /// Orphan sessions (in groups that don't exist) get an implicit group.
-pub fn flatten_group_tree(sessions: &[Session], groups: &[Group], sort_mode: crate::types::SortMode) -> Vec<ListRow> {
+pub fn flatten_group_tree(
+    sessions: &[Session],
+    groups: &[Group],
+    sort_mode: crate::types::SortMode,
+) -> Vec<ListRow> {
     let mut result = Vec::new();
 
     let mut sorted_groups = groups.to_vec();
@@ -90,7 +96,10 @@ pub fn flatten_group_tree(sessions: &[Session], groups: &[Group], sort_mode: cra
         sorted_groups.iter().map(|g| g.path.as_str()).collect();
 
     for group in &sorted_groups {
-        let group_sessions = by_group.get(&group.path).map(|v| v.as_slice()).unwrap_or(&[]);
+        let group_sessions = by_group
+            .get(&group.path)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
 
         // Hide default group when empty
         if group.path == DEFAULT_GROUP_PATH && group_sessions.is_empty() {
@@ -309,8 +318,14 @@ mod tests {
         let groups = vec![make_group("work", "Work", 0)];
         let rows = flatten_group_tree(&[s1, s2, s3], &groups, SortMode::StatusPriority);
         // Group header + 3 sessions
-        if let ListRow::Session(first) = &rows[1] { assert_eq!(first.id, "s2"); } // waiting first
-        if let ListRow::Session(second) = &rows[2] { assert_eq!(second.id, "s3"); } // running second
-        if let ListRow::Session(third) = &rows[3] { assert_eq!(third.id, "s1"); } // idle last
+        if let ListRow::Session(first) = &rows[1] {
+            assert_eq!(first.id, "s2");
+        } // waiting first
+        if let ListRow::Session(second) = &rows[2] {
+            assert_eq!(second.id, "s3");
+        } // running second
+        if let ListRow::Session(third) = &rows[3] {
+            assert_eq!(third.id, "s1");
+        } // idle last
     }
 }

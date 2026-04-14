@@ -19,9 +19,8 @@ pub struct ToolStatus {
 
 /// Spinner characters used by Claude Code when processing
 const SPINNER_CHARS: &[&str] = &[
-    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
-    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}", "\u{2733}", "\u{273d}",
-    "\u{2736}", "\u{2722}",
+    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}",
+    "\u{2807}", "\u{280f}", "\u{2733}", "\u{273d}", "\u{2736}", "\u{2722}",
 ];
 
 lazy_static! {
@@ -122,12 +121,15 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
 
     if tool == Some("claude") {
         // Check if Claude has exited
-        status.has_exited = CLAUDE_EXITED_PATTERNS.iter().any(|p| p.is_match(&last_lines));
+        status.has_exited = CLAUDE_EXITED_PATTERNS
+            .iter()
+            .any(|p| p.is_match(&last_lines));
 
         if !status.has_exited {
             // Compacting
-            status.is_compacting =
-                CLAUDE_COMPACTING_PATTERNS.iter().any(|p| p.is_match(&last_lines));
+            status.is_compacting = CLAUDE_COMPACTING_PATTERNS
+                .iter()
+                .any(|p| p.is_match(&last_lines));
 
             // Busy (actively working)
             status.is_busy = CLAUDE_BUSY_PATTERNS.iter().any(|p| p.is_match(&last_lines))
@@ -140,8 +142,9 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
 
             // Waiting — only when there's NO idle prompt
             if !status.has_idle_prompt {
-                status.is_waiting =
-                    CLAUDE_WAITING_PATTERNS.iter().any(|p| p.is_match(&last_few_lines));
+                status.is_waiting = CLAUDE_WAITING_PATTERNS
+                    .iter()
+                    .any(|p| p.is_match(&last_few_lines));
             }
 
             // Question detection when at idle prompt
@@ -151,11 +154,7 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
                     .iter()
                     .rposition(|l| IDLE_PROMPT_RE.is_match(l))
                 {
-                    let scan_start = if prompt_idx > 20 {
-                        prompt_idx - 20
-                    } else {
-                        0
-                    };
+                    let scan_start = if prompt_idx > 20 { prompt_idx - 20 } else { 0 };
                     let lines_above = &trimmed_lines[scan_start..prompt_idx];
                     let mut content_checked = 0;
 
@@ -419,7 +418,8 @@ mod tests {
 
     #[test]
     fn test_question_several_lines_above_prompt() {
-        let output = "Would you like me to proceed with this approach?\n\nSome blank lines\n\n\u{276f} \n";
+        let output =
+            "Would you like me to proceed with this approach?\n\nSome blank lines\n\n\u{276f} \n";
         let status = parse_tool_status(output, Some("claude"));
         assert!(status.has_idle_prompt);
         assert!(status.has_question);

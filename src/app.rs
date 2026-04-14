@@ -79,25 +79,94 @@ pub enum CommandAction {
 impl CommandPalette {
     pub fn new() -> Self {
         let items = vec![
-            CommandItem { label: "New Session".to_string(), key_hint: "n".to_string(), action: CommandAction::NewSession },
-            CommandItem { label: "Stop Session".to_string(), key_hint: "s".to_string(), action: CommandAction::StopSession },
-            CommandItem { label: "Restart Session".to_string(), key_hint: "r".to_string(), action: CommandAction::RestartSession },
-            CommandItem { label: "Delete Session".to_string(), key_hint: "d".to_string(), action: CommandAction::DeleteSession },
-            CommandItem { label: "Rename".to_string(), key_hint: "R".to_string(), action: CommandAction::RenameSession },
-            CommandItem { label: "Move to Group".to_string(), key_hint: "m".to_string(), action: CommandAction::MoveSession },
-            CommandItem { label: "Toggle Notifications".to_string(), key_hint: "!".to_string(), action: CommandAction::ToggleNotify },
-            CommandItem { label: "Toggle Follow-up".to_string(), key_hint: "i".to_string(), action: CommandAction::ToggleFollowUp },
-            CommandItem { label: "Export Log".to_string(), key_hint: "e".to_string(), action: CommandAction::ExportLog },
-            CommandItem { label: "Create Group".to_string(), key_hint: "g".to_string(), action: CommandAction::CreateGroup },
-            CommandItem { label: "Search Sessions".to_string(), key_hint: "/".to_string(), action: CommandAction::Search },
-            CommandItem { label: "Cycle Sort Mode".to_string(), key_hint: "S".to_string(), action: CommandAction::CycleSort },
-            CommandItem { label: "Pin/Unpin Session".to_string(), key_hint: "p".to_string(), action: CommandAction::PinSession },
-            CommandItem { label: "Select Theme".to_string(), key_hint: "t".to_string(), action: CommandAction::SelectTheme },
-            CommandItem { label: "Show Help".to_string(), key_hint: "?".to_string(), action: CommandAction::ShowHelp },
-            CommandItem { label: "Quit".to_string(), key_hint: "q".to_string(), action: CommandAction::Quit },
+            CommandItem {
+                label: "New Session".to_string(),
+                key_hint: "n".to_string(),
+                action: CommandAction::NewSession,
+            },
+            CommandItem {
+                label: "Stop Session".to_string(),
+                key_hint: "s".to_string(),
+                action: CommandAction::StopSession,
+            },
+            CommandItem {
+                label: "Restart Session".to_string(),
+                key_hint: "r".to_string(),
+                action: CommandAction::RestartSession,
+            },
+            CommandItem {
+                label: "Delete Session".to_string(),
+                key_hint: "d".to_string(),
+                action: CommandAction::DeleteSession,
+            },
+            CommandItem {
+                label: "Rename".to_string(),
+                key_hint: "R".to_string(),
+                action: CommandAction::RenameSession,
+            },
+            CommandItem {
+                label: "Move to Group".to_string(),
+                key_hint: "m".to_string(),
+                action: CommandAction::MoveSession,
+            },
+            CommandItem {
+                label: "Toggle Notifications".to_string(),
+                key_hint: "!".to_string(),
+                action: CommandAction::ToggleNotify,
+            },
+            CommandItem {
+                label: "Toggle Follow-up".to_string(),
+                key_hint: "i".to_string(),
+                action: CommandAction::ToggleFollowUp,
+            },
+            CommandItem {
+                label: "Export Log".to_string(),
+                key_hint: "e".to_string(),
+                action: CommandAction::ExportLog,
+            },
+            CommandItem {
+                label: "Create Group".to_string(),
+                key_hint: "g".to_string(),
+                action: CommandAction::CreateGroup,
+            },
+            CommandItem {
+                label: "Search Sessions".to_string(),
+                key_hint: "/".to_string(),
+                action: CommandAction::Search,
+            },
+            CommandItem {
+                label: "Cycle Sort Mode".to_string(),
+                key_hint: "S".to_string(),
+                action: CommandAction::CycleSort,
+            },
+            CommandItem {
+                label: "Pin/Unpin Session".to_string(),
+                key_hint: "p".to_string(),
+                action: CommandAction::PinSession,
+            },
+            CommandItem {
+                label: "Select Theme".to_string(),
+                key_hint: "t".to_string(),
+                action: CommandAction::SelectTheme,
+            },
+            CommandItem {
+                label: "Show Help".to_string(),
+                key_hint: "?".to_string(),
+                action: CommandAction::ShowHelp,
+            },
+            CommandItem {
+                label: "Quit".to_string(),
+                key_hint: "q".to_string(),
+                action: CommandAction::Quit,
+            },
         ];
         let filtered: Vec<usize> = (0..items.len()).collect();
-        Self { query: String::new(), items, filtered, selected: 0 }
+        Self {
+            query: String::new(),
+            items,
+            filtered,
+            selected: 0,
+        }
     }
 
     pub fn filter(&mut self) {
@@ -105,7 +174,10 @@ impl CommandPalette {
         if q.is_empty() {
             self.filtered = (0..self.items.len()).collect();
         } else {
-            self.filtered = self.items.iter().enumerate()
+            self.filtered = self
+                .items
+                .iter()
+                .enumerate()
                 .filter(|(_, item)| item.label.to_lowercase().contains(&q))
                 .map(|(i, _)| i)
                 .collect();
@@ -207,7 +279,11 @@ impl App {
             last_storage_mtime: 0,
             attach_session: None,
             theme: if light { Theme::light() } else { Theme::dark() },
-            theme_name: if light { "light".to_string() } else { "dark".to_string() },
+            theme_name: if light {
+                "light".to_string()
+            } else {
+                "dark".to_string()
+            },
             search_query: None,
             toast_message: None,
             toast_expire: None,
@@ -249,7 +325,8 @@ impl App {
     /// Rebuild the flattened list from current sessions and groups
     pub fn rebuild_list_rows(&mut self) {
         let groups = crate::core::groups::ensure_default_group(&self.groups);
-        self.list_rows = crate::core::groups::flatten_group_tree(&self.sessions, &groups, self.sort_mode);
+        self.list_rows =
+            crate::core::groups::flatten_group_tree(&self.sessions, &groups, self.sort_mode);
         self.clamp_selection();
     }
 

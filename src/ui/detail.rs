@@ -64,7 +64,10 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
         if !session.worktree_branch.is_empty() {
             lines.push(Line::from(vec![
                 Span::styled("Branch: ", Style::default().fg(theme.text_muted)),
-                Span::styled(&session.worktree_branch, Style::default().fg(theme.secondary)),
+                Span::styled(
+                    &session.worktree_branch,
+                    Style::default().fg(theme.secondary),
+                ),
             ]));
         }
     }

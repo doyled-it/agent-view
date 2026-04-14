@@ -21,10 +21,7 @@ pub fn append_to_log(path: &Path, content: &str) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(content.as_bytes())?;
     Ok(())
 }
@@ -91,7 +88,8 @@ impl SessionLogger {
         let _ = append_to_log(&log_path, &new_content);
         let _ = rotate_if_needed(&log_path, MAX_LOG_SIZE);
 
-        self.last_line_counts.insert(session_id.to_string(), total_lines);
+        self.last_line_counts
+            .insert(session_id.to_string(), total_lines);
     }
 
     pub fn remove_session(&mut self, session_id: &str) {
