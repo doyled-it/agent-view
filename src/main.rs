@@ -89,6 +89,8 @@ fn run_tui(
     let _bg_handle = std::thread::spawn(move || {
         let mut cache = crate::core::tmux::SessionCache::new();
         let mut processor = crate::core::session::StatusProcessor::new();
+        let mut logger = crate::core::logger::SessionLogger::new();
+        let mut log_tick: u32 = 0;
 
         loop {
             std::thread::sleep(Duration::from_millis(500));
@@ -185,6 +187,19 @@ fn run_tui(
 
             if any_changed {
                 let _ = bg_storage.touch();
+            }
+
+            // Log capture every 10 ticks (5s at 500ms interval)
+            log_tick += 1;
+            if log_tick >= 10 {
+                log_tick = 0;
+                for session in &sessions {
+                    if !session.tmux_session.is_empty()
+                        && session.status != crate::types::SessionStatus::Stopped
+                    {
+                        logger.capture_and_log(&session.tmux_session, &session.id);
+                    }
+                }
             }
         }
     });
