@@ -20,9 +20,15 @@ pub fn render(frame: &mut Frame, app: &App) {
             (area, None)
         };
 
-    // Layout: header (1), body (fill), activity feed (0 or 4), footer (1)
+    // Layout: header (1), body (fill), activity feed (dynamic), footer (1)
     let show_feed = app.show_activity_feed && !app.activity_feed.is_empty();
-    let feed_height = if show_feed { 4 } else { 0 };
+    let feed_height = if show_feed {
+        // 1 for border + 1 per event, capped at 8 lines total
+        let events = app.activity_feed.len().min(7) as u16;
+        events + 1
+    } else {
+        0
+    };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
