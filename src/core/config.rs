@@ -60,7 +60,12 @@ pub fn config_path() -> PathBuf {
 /// Returns defaults if file doesn't exist or fails to parse.
 pub fn load_config() -> AppConfig {
     let path = config_path();
-    match fs::read_to_string(&path) {
+    load_config_from_path(&path)
+}
+
+/// Load config from an explicit path. Returns defaults if the file is missing or unparseable.
+pub fn load_config_from_path(path: &std::path::Path) -> AppConfig {
+    match fs::read_to_string(path) {
         Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
             Ok(config) => config,
             Err(_) => {
@@ -70,6 +75,16 @@ pub fn load_config() -> AppConfig {
         },
         Err(_) => AppConfig::default(),
     }
+}
+
+/// Save a config to the given path, creating parent directories as needed.
+pub fn save_config_to_path(path: &std::path::Path, config: &AppConfig) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    fs::write(path, json)
 }
 
 #[cfg(test)]
@@ -128,5 +143,58 @@ mod tests {
         // but we test the parsing logic
         let result: Result<AppConfig, _> = serde_json::from_str("not valid json!!!");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_save_and_reload_config() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+
+        let original = AppConfig {
+            default_tool: "gemini".to_string(),
+            theme: "light".to_string(),
+            default_group: "work".to_string(),
+            notifications: NotificationConfig { sound: true },
+        };
+
+        save_config_to_path(&path, &original).expect("save should succeed");
+
+        let reloaded = load_config_from_path(&path);
+        assert_eq!(reloaded.default_tool, "gemini");
+        assert_eq!(reloaded.theme, "light");
+        assert_eq!(reloaded.default_group, "work");
+        assert!(reloaded.notifications.sound);
+    }
+
+    #[test]
+    fn test_load_config_from_missing_path_returns_default() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nonexistent.json");
+
+        let config = load_config_from_path(&path);
+        assert_eq!(config.default_tool, "claude");
+        assert_eq!(config.theme, "dark");
+        assert_eq!(config.default_group, "default");
+        assert!(!config.notifications.sound);
+    }
+
+    #[test]
+    fn test_save_config_creates_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("sub").join("config.json");
+
+        // File and parent directory do not exist yet.
+        assert!(!path.exists());
+
+        let config = AppConfig::default();
+        save_config_to_path(&path, &config).expect("save should create parent dirs and file");
+
+        assert!(path.exists());
+
+        // Verify the file contains valid JSON that round-trips correctly.
+        let contents = fs::read_to_string(&path).unwrap();
+        let parsed: AppConfig = serde_json::from_str(&contents).expect("saved file must be valid JSON");
+        assert_eq!(parsed.default_tool, config.default_tool);
+        assert_eq!(parsed.theme, config.theme);
     }
 }
