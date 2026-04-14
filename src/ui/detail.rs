@@ -112,6 +112,30 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
         ]));
     }
 
+    if !session.notes.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![Span::styled(
+            "Notes:",
+            Style::default().fg(theme.text_muted),
+        )]));
+        for note in session.notes.iter().rev().take(5) {
+            let age = format_note_age(note.timestamp);
+            // Truncate long notes for the detail panel
+            let display_text = if note.text.len() > 60 {
+                format!("{}...", &note.text[..57])
+            } else {
+                note.text.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {}: ", age),
+                    Style::default().fg(theme.text_muted),
+                ),
+                Span::styled(display_text, Style::default().fg(theme.text)),
+            ]));
+        }
+    }
+
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, inner);
 }
@@ -148,5 +172,27 @@ fn format_session_duration(created_at_ms: i64, _status: crate::types::SessionSta
         format!("{}m", minutes)
     } else {
         "< 1m".to_string()
+    }
+}
+
+fn format_note_age(timestamp_ms: i64) -> String {
+    let now = chrono::Utc::now().timestamp_millis();
+    let diff_ms = now - timestamp_ms;
+    if diff_ms < 0 {
+        return "now".to_string();
+    }
+
+    let minutes = diff_ms / 60_000;
+    let hours = minutes / 60;
+    let days = hours / 24;
+
+    if days > 0 {
+        format!("{}d ago", days)
+    } else if hours > 0 {
+        format!("{}h ago", hours)
+    } else if minutes > 0 {
+        format!("{}m ago", minutes)
+    } else {
+        "now".to_string()
     }
 }
