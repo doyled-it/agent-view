@@ -290,7 +290,8 @@ pub fn render_command_palette(
 /// Render the keybinding help overlay
 pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
     let width = area.width.min(72);
-    let height = area.height.min(22);
+    let row_count = 10; // max of left_bindings.len(), right_bindings.len()
+    let height = area.height.min(row_count + 2); // +2 for top/bottom border
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
     let popup = Rect::new(area.x + x, area.y + y, width, height);
