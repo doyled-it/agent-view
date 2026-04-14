@@ -296,6 +296,25 @@ pub fn detect_crashed_statuses(sessions: &[crate::types::Session]) -> Vec<String
         .collect()
 }
 
+/// Build the command to use when restarting a session.
+/// For Claude: uses --resume <id> if we captured the session ID, otherwise --continue.
+/// For other tools: re-runs the original command.
+pub fn build_restart_command(
+    tool: crate::types::Tool,
+    original_command: &str,
+    tool_data: &str,
+) -> String {
+    if tool == crate::types::Tool::Claude {
+        if let Ok(data) = serde_json::from_str::<serde_json::Value>(tool_data) {
+            if let Some(session_id) = data.get("claude_session_id").and_then(|v| v.as_str()) {
+                return format!("claude --resume {}", session_id);
+            }
+        }
+        return "claude --continue".to_string();
+    }
+    original_command.to_string()
+}
+
 /// Session lifecycle operations (create, stop, delete, restart).
 /// Stateless — lives on the main thread.
 pub struct SessionOps;
@@ -430,7 +449,9 @@ impl SessionOps {
             .ok_or_else(|| "Session not found".to_string())?;
 
         if !session.tmux_session.is_empty() {
-            crate::core::tmux::kill_session(&session.tmux_session)?;
+            if crate::core::tmux::session_exists(&session.tmux_session) {
+                crate::core::tmux::kill_session(&session.tmux_session)?;
+            }
             cache.remove(&session.tmux_session);
         }
 
@@ -438,9 +459,10 @@ impl SessionOps {
         let mut env = HashMap::new();
         env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), session.id.clone());
 
+        let restart_cmd = build_restart_command(session.tool, &session.command, &session.tool_data);
         crate::core::tmux::create_session(
             &new_tmux_name,
-            Some(&session.command),
+            Some(&restart_cmd),
             Some(&session.project_path),
             Some(&env),
         )?;
@@ -452,6 +474,14 @@ impl SessionOps {
         let now = chrono::Utc::now().timestamp_millis();
         session.last_accessed = now;
         session.last_started_at = now;
+
+        // Clear old Claude session ID — new session will get a new one
+        if session.tool == crate::types::Tool::Claude {
+            if let Ok(mut data) = serde_json::from_str::<serde_json::Value>(&session.tool_data) {
+                data.as_object_mut().map(|o| o.remove("claude_session_id"));
+                session.tool_data = data.to_string();
+            }
+        }
 
         storage
             .save_session(&session)
@@ -659,5 +689,26 @@ mod tests {
 
         let crashed = detect_crashed_statuses(&[session]);
         assert!(crashed.is_empty());
+    }
+
+    #[test]
+    fn test_build_restart_command_claude_with_session_id() {
+        let tool_data = r#"{"claude_session_id": "abc123"}"#;
+        let cmd = build_restart_command(crate::types::Tool::Claude, "claude", tool_data);
+        assert_eq!(cmd, "claude --resume abc123");
+    }
+
+    #[test]
+    fn test_build_restart_command_claude_without_session_id() {
+        let tool_data = "{}";
+        let cmd = build_restart_command(crate::types::Tool::Claude, "claude", tool_data);
+        assert_eq!(cmd, "claude --continue");
+    }
+
+    #[test]
+    fn test_build_restart_command_non_claude() {
+        let tool_data = "{}";
+        let cmd = build_restart_command(crate::types::Tool::Gemini, "gemini", tool_data);
+        assert_eq!(cmd, "gemini");
     }
 }
