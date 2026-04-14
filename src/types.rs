@@ -212,4 +212,63 @@ mod tests {
     fn test_tool_unknown_defaults_to_shell() {
         assert_eq!(Tool::from_str("unknown"), Tool::Shell);
     }
+
+    #[test]
+    fn test_session_status_icon_not_empty() {
+        let statuses = [
+            SessionStatus::Running,
+            SessionStatus::Waiting,
+            SessionStatus::Paused,
+            SessionStatus::Compacting,
+            SessionStatus::Idle,
+            SessionStatus::Error,
+            SessionStatus::Stopped,
+        ];
+        for s in statuses {
+            assert!(!s.icon().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_session_status_display() {
+        assert_eq!(format!("{}", SessionStatus::Running), "running");
+        assert_eq!(format!("{}", SessionStatus::Stopped), "stopped");
+    }
+
+    #[test]
+    fn test_tool_command() {
+        assert_eq!(Tool::Claude.command(), "claude");
+        assert_eq!(Tool::Gemini.command(), "gemini");
+        assert_eq!(Tool::Shell.command(), "bash");
+    }
+
+    #[test]
+    fn test_session_status_history_json_empty() {
+        let session = Session {
+            id: "test".to_string(),
+            title: "Test".to_string(),
+            project_path: "/tmp".to_string(),
+            group_path: "default".to_string(),
+            order: 0,
+            command: String::new(),
+            wrapper: String::new(),
+            tool: Tool::Claude,
+            status: SessionStatus::Idle,
+            tmux_session: String::new(),
+            created_at: 0,
+            last_accessed: 0,
+            parent_session_id: String::new(),
+            worktree_path: String::new(),
+            worktree_repo: String::new(),
+            worktree_branch: String::new(),
+            tool_data: "{}".to_string(),
+            acknowledged: false,
+            notify: false,
+            follow_up: false,
+            status_changed_at: 0,
+            restart_count: 0,
+            status_history: vec![],
+        };
+        assert_eq!(session.status_history_json(), "[]");
+    }
 }
