@@ -245,6 +245,19 @@ pub fn execute_command_action(
         CommandAction::SelectTheme => {
             app.overlay = Overlay::ThemeSelect(crate::app::ThemeSelectForm::new(&app.theme_name));
         }
+        CommandAction::CyclePanel => {
+            app.detail_mode = app.detail_mode.next();
+            let mut config = crate::core::config::load_config();
+            config.detail_panel_mode = app.detail_mode.as_config_str().to_string();
+            let _ = crate::core::config::save_config(&config);
+            app.config_changed
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            app.preview_content.clear();
+            app.preview_last_session = None;
+            app.preview_last_capture = None;
+            app.toast_message = Some(format!("Panel: {}", app.detail_mode.label()));
+            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+        }
     }
     Ok(())
 }

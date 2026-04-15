@@ -80,6 +80,7 @@ pub enum CommandAction {
     PinSession,
     ShowHelp,
     SelectTheme,
+    CyclePanel,
     Quit,
 }
 
@@ -157,6 +158,11 @@ impl CommandPalette {
                 action: CommandAction::SelectTheme,
             },
             CommandItem {
+                label: "Cycle Panel".to_string(),
+                key_hint: "v".to_string(),
+                action: CommandAction::CyclePanel,
+            },
+            CommandItem {
                 label: "Show Help".to_string(),
                 key_hint: "?".to_string(),
                 action: CommandAction::ShowHelp,
@@ -224,6 +230,8 @@ pub struct NewSessionForm {
     pub title: String,
     pub project_path: String,
     pub focused_field: usize,
+    pub completions: Vec<String>,
+    pub completion_index: Option<usize>,
 }
 
 impl NewSessionForm {
@@ -235,6 +243,8 @@ impl NewSessionForm {
             title: String::new(),
             project_path: home,
             focused_field: 0,
+            completions: Vec::new(),
+            completion_index: None,
         }
     }
 }
@@ -251,6 +261,56 @@ pub enum ConfirmAction {
     StopSession(String),
     BulkDelete,
     BulkStop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DetailPanelMode {
+    None,
+    Preview,
+    Metadata,
+    Both,
+}
+
+impl DetailPanelMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::None => Self::Preview,
+            Self::Preview => Self::Metadata,
+            Self::Metadata => Self::Both,
+            Self::Both => Self::None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "Off",
+            Self::Preview => "Preview",
+            Self::Metadata => "Details",
+            Self::Both => "Both",
+        }
+    }
+
+    pub fn shows_preview(self) -> bool {
+        matches!(self, Self::Preview | Self::Both)
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "none" => Self::None,
+            "preview" => Self::Preview,
+            "both" => Self::Both,
+            _ => Self::Metadata,
+        }
+    }
+
+    pub fn as_config_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Preview => "preview",
+            Self::Metadata => "metadata",
+            Self::Both => "both",
+        }
+    }
 }
 
 pub struct App {
@@ -272,6 +332,10 @@ pub struct App {
     pub show_activity_feed: bool,
     pub bulk_selected: HashSet<String>,
     pub config_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub detail_mode: DetailPanelMode,
+    pub preview_content: String,
+    pub preview_last_session: Option<String>,
+    pub preview_last_capture: Option<std::time::Instant>,
 }
 
 impl App {
@@ -299,6 +363,10 @@ impl App {
             show_activity_feed: true,
             bulk_selected: HashSet::new(),
             config_changed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            detail_mode: DetailPanelMode::Metadata,
+            preview_content: String::new(),
+            preview_last_session: None,
+            preview_last_capture: None,
         }
     }
 
@@ -454,6 +522,52 @@ mod tests {
         app.sessions = sessions;
         app.rebuild_list_rows();
         app
+    }
+
+    #[test]
+    fn test_detail_panel_mode_cycles() {
+        use crate::app::DetailPanelMode;
+        assert_eq!(DetailPanelMode::None.next(), DetailPanelMode::Preview);
+        assert_eq!(DetailPanelMode::Preview.next(), DetailPanelMode::Metadata);
+        assert_eq!(DetailPanelMode::Metadata.next(), DetailPanelMode::Both);
+        assert_eq!(DetailPanelMode::Both.next(), DetailPanelMode::None);
+    }
+
+    #[test]
+    fn test_detail_panel_mode_labels() {
+        use crate::app::DetailPanelMode;
+        assert_eq!(DetailPanelMode::None.label(), "Off");
+        assert_eq!(DetailPanelMode::Preview.label(), "Preview");
+        assert_eq!(DetailPanelMode::Metadata.label(), "Details");
+        assert_eq!(DetailPanelMode::Both.label(), "Both");
+    }
+
+    #[test]
+    fn test_detail_panel_mode_from_str() {
+        use crate::app::DetailPanelMode;
+        assert_eq!(DetailPanelMode::from_str("none"), DetailPanelMode::None);
+        assert_eq!(
+            DetailPanelMode::from_str("preview"),
+            DetailPanelMode::Preview
+        );
+        assert_eq!(
+            DetailPanelMode::from_str("metadata"),
+            DetailPanelMode::Metadata
+        );
+        assert_eq!(DetailPanelMode::from_str("both"), DetailPanelMode::Both);
+        assert_eq!(
+            DetailPanelMode::from_str("unknown"),
+            DetailPanelMode::Metadata
+        );
+    }
+
+    #[test]
+    fn test_detail_panel_mode_as_config_str() {
+        use crate::app::DetailPanelMode;
+        assert_eq!(DetailPanelMode::None.as_config_str(), "none");
+        assert_eq!(DetailPanelMode::Preview.as_config_str(), "preview");
+        assert_eq!(DetailPanelMode::Metadata.as_config_str(), "metadata");
+        assert_eq!(DetailPanelMode::Both.as_config_str(), "both");
     }
 
     #[test]

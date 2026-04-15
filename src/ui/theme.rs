@@ -331,6 +331,7 @@ pub fn status_color(theme: &Theme, status: crate::types::SessionStatus) -> Color
     match status {
         crate::types::SessionStatus::Running => theme.success,
         crate::types::SessionStatus::Waiting => theme.warning,
+        crate::types::SessionStatus::Draft => theme.info,
         crate::types::SessionStatus::Paused => theme.secondary,
         crate::types::SessionStatus::Compacting => theme.accent,
         crate::types::SessionStatus::Idle => theme.text_muted,

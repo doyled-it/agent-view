@@ -15,15 +15,17 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 
     // When the terminal is wide enough, split horizontally: list on left, detail on right
-    let (list_area, detail_area) = if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(36)])
-            .split(area);
-        (cols[0], Some(cols[1]))
-    } else {
-        (area, None)
-    };
+    let detail_width = crate::ui::detail::panel_width(app.detail_mode, area.width);
+    let (list_area, detail_area) =
+        if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH && detail_width > 0 {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(0), Constraint::Length(detail_width)])
+                .split(area);
+            (cols[0], Some(cols[1]))
+        } else {
+            (area, None)
+        };
 
     // Layout: header (1), body (fill), activity feed (dynamic), footer (1)
     let show_feed = app.show_activity_feed && !app.activity_feed.is_empty();
@@ -35,12 +37,14 @@ pub fn render(frame: &mut Frame, app: &App) {
         0
     };
 
+    let footer_sep = if show_feed { 1u16 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(feed_height),
+            Constraint::Length(footer_sep),
             Constraint::Length(1),
         ])
         .split(list_area);
@@ -49,6 +53,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_session_list(frame, chunks[1], app);
     if show_feed {
         render_activity_feed(frame, chunks[2], app);
+        // Separator between activity feed and footer
+        let sep = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(app.theme.border));
+        frame.render_widget(sep, chunks[3]);
     }
     if let Some(ref query) = app.search_query {
         let matches = app.search_matches();
@@ -66,15 +75,22 @@ pub fn render(frame: &mut Frame, app: &App) {
                 Style::default().fg(app.theme.text_muted),
             ),
         ]);
-        frame.render_widget(Paragraph::new(search_line), chunks[3]);
+        frame.render_widget(Paragraph::new(search_line), chunks[4]);
     } else {
-        crate::ui::footer::render(frame, chunks[3], app);
+        crate::ui::footer::render(frame, chunks[4], app);
     }
 
     // Render detail panel for selected session when wide enough
     if let Some(detail_rect) = detail_area {
         if let Some(session) = app.selected_session() {
-            crate::ui::detail::render(frame, detail_rect, session, &app.theme);
+            crate::ui::detail::render_detail_panel(
+                frame,
+                detail_rect,
+                session,
+                &app.theme,
+                app.detail_mode,
+                &app.preview_content,
+            );
         }
     }
 
@@ -343,7 +359,7 @@ fn status_activity_level(status: &str) -> u8 {
         "running" => 5,
         "waiting" => 4,
         "error" => 3,
-        "paused" | "compacting" => 2,
+        "draft" | "paused" | "compacting" => 2,
         "idle" | "stopped" => 1,
         _ => 0,
     }

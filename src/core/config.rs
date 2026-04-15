@@ -20,6 +20,8 @@ pub struct AppConfig {
     pub default_group: String,
     #[serde(default)]
     pub notifications: NotificationConfig,
+    #[serde(default = "default_detail_panel_mode")]
+    pub detail_panel_mode: String,
 }
 
 fn default_tool() -> String {
@@ -34,6 +36,10 @@ fn default_group() -> String {
     "default".to_string()
 }
 
+fn default_detail_panel_mode() -> String {
+    "metadata".to_string()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -41,6 +47,7 @@ impl Default for AppConfig {
             theme: default_theme(),
             default_group: default_group(),
             notifications: NotificationConfig::default(),
+            detail_panel_mode: default_detail_panel_mode(),
         }
     }
 }
@@ -85,6 +92,28 @@ pub fn save_config(config: &AppConfig) -> Result<(), std::io::Error> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_parse_config_with_detail_panel_mode() {
+        let json = r#"{ "detail_panel_mode": "preview" }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.detail_panel_mode, "preview");
+    }
+
+    #[test]
+    fn test_default_detail_panel_mode_is_metadata() {
+        let config = AppConfig::default();
+        assert_eq!(config.detail_panel_mode, "metadata");
+    }
+
+    #[test]
+    fn test_parse_detail_panel_mode_all_variants() {
+        for mode in &["none", "preview", "metadata", "both"] {
+            let json = format!(r#"{{ "detail_panel_mode": "{}" }}"#, mode);
+            let config: AppConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(config.detail_panel_mode, *mode);
+        }
+    }
 
     #[test]
     fn test_default_config() {
@@ -183,6 +212,7 @@ mod tests {
             theme: "gruvbox".to_string(),
             default_group: "work".to_string(),
             notifications: NotificationConfig { sound: true },
+            detail_panel_mode: "preview".to_string(),
         };
 
         // Write manually using save_config logic (bypass the hardcoded path)
@@ -203,6 +233,7 @@ mod tests {
             theme: "solarized".to_string(),
             default_group: "research".to_string(),
             notifications: NotificationConfig { sound: false },
+            detail_panel_mode: "both".to_string(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: AppConfig = serde_json::from_str(&json).unwrap();

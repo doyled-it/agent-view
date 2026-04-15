@@ -60,7 +60,8 @@ pub fn spawn(
                     }
                 } else {
                     let is_active = cache.is_session_active(&session.tmux_session, 2);
-                    match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100)) {
+                    match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100), false)
+                    {
                         Ok(output) => {
                             let tool_str = if session.tool == crate::types::Tool::Claude {
                                 Some("claude")
@@ -96,6 +97,9 @@ pub fn spawn(
                                 crate::types::SessionStatus::Idle
                             } else if parsed.has_error {
                                 crate::types::SessionStatus::Error
+                            } else if parsed.has_draft {
+                                // User has typed text at the prompt — draft overrides paused
+                                crate::types::SessionStatus::Draft
                             } else if parsed.has_idle_prompt && parsed.has_question {
                                 crate::types::SessionStatus::Paused
                             } else if parsed.has_idle_prompt {
@@ -155,7 +159,7 @@ pub fn spawn(
                         && session.status != crate::types::SessionStatus::Stopped
                     {
                         if let Ok(output) =
-                            crate::core::tmux::capture_pane(&session.tmux_session, Some(-50))
+                            crate::core::tmux::capture_pane(&session.tmux_session, Some(-50), false)
                         {
                             if let Some(tokens) =
                                 crate::core::tokens::extract_latest_tokens(&output)

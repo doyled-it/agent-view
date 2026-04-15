@@ -19,6 +19,8 @@ uuid = { version = "1", features = ["v4"] }
 lazy_static = "1"
 libc = "0.2"
 notify = "7"
+ansi-to-tui = "8"
+ratatui-core = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

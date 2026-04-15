@@ -14,8 +14,10 @@ pub fn render_new_session(
     form: &NewSessionForm,
     theme: &crate::ui::theme::Theme,
 ) {
+    let has_completions = form.completions.len() > 1;
     let overlay_width = 60u16.min(area.width.saturating_sub(4));
-    let overlay_height = 9u16.min(area.height.saturating_sub(4));
+    let overlay_height =
+        if has_completions { 11u16 } else { 9u16 }.min(area.height.saturating_sub(4));
 
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;
@@ -34,15 +36,20 @@ pub fn render_new_session(
     frame.render_widget(block, overlay_area);
 
     // Layout fields vertically
+    let mut constraints = vec![
+        Constraint::Length(1), // Title label
+        Constraint::Length(1), // Title input
+        Constraint::Length(1), // Spacer
+        Constraint::Length(1), // Path label
+        Constraint::Length(1), // Path input
+    ];
+    if has_completions {
+        constraints.push(Constraint::Length(1)); // Completion hints
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1), // Title label
-            Constraint::Length(1), // Title input
-            Constraint::Length(1), // Spacer
-            Constraint::Length(1), // Path label
-            Constraint::Length(1), // Path input
-        ])
+        .constraints(constraints)
         .split(inner);
 
     // Title field
@@ -87,6 +94,36 @@ pub fn render_new_session(
         Paragraph::new(path_display).style(Style::default().fg(theme.text)),
         chunks[4],
     );
+
+    // Completion hint line
+    if has_completions {
+        let max_width = inner.width as usize;
+        let mut spans = Vec::new();
+        let mut used_width = 0;
+
+        for (i, candidate) in form.completions.iter().enumerate() {
+            let is_active = form.completion_index == Some(i);
+
+            if used_width + candidate.len() + 1 > max_width {
+                break;
+            }
+
+            if i > 0 {
+                spans.push(Span::raw(" "));
+                used_width += 1;
+            }
+
+            let style = if is_active {
+                Style::default().fg(theme.primary).bold()
+            } else {
+                Style::default().fg(theme.text_muted)
+            };
+            spans.push(Span::styled(candidate.as_str(), style));
+            used_width += candidate.len();
+        }
+
+        frame.render_widget(Paragraph::new(Line::from(spans)), chunks[5]);
+    }
 }
 
 /// Render the rename overlay for sessions and groups
@@ -294,8 +331,7 @@ pub fn render_command_palette(
 /// Render the keybinding help overlay
 pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
     let width = area.width.min(72);
-    let row_count = 11; // max of left_bindings.len(), right_bindings.len()
-    let height = area.height.min(row_count + 2); // +2 for top/bottom border
+    let height = area.height.min(24);
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
     let popup = Rect::new(area.x + x, area.y + y, width, height);
@@ -311,63 +347,65 @@ pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Them
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let left_bindings = vec![
-        ("j / k", "Navigate"),
-        ("Enter", "Attach session"),
-        ("n", "New session"),
-        ("s", "Stop session"),
-        ("r", "Restart session"),
-        ("d", "Delete session"),
-        ("R", "Rename"),
-        ("m", "Move to group"),
-        ("g", "Create group"),
-        ("J / K", "Move group up/dn"),
-        ("t", "Select theme"),
-    ];
-
-    let right_bindings = vec![
-        ("Space", "Select session"),
-        ("Ctrl+A", "Select all"),
-        ("S", "Cycle sort"),
-        ("p", "Pin/unpin"),
-        ("i", "Follow-up flag"),
-        ("!", "Notifications"),
-        ("e", "Export log"),
-        ("a", "Activity feed"),
-        ("/", "Search"),
-        ("Ctrl+K", "Command palette"),
-    ];
-
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(inner);
 
-    let left_lines: Vec<Line> = left_bindings
-        .iter()
-        .map(|(key, desc)| {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {:>9} ", key),
-                    Style::default().fg(theme.secondary).bold(),
-                ),
-                Span::styled(*desc, Style::default().fg(theme.text)),
-            ])
-        })
-        .collect();
+    let section_style = Style::default().fg(theme.accent).bold();
+    let key_style = Style::default().fg(theme.secondary).bold();
+    let desc_style = Style::default().fg(theme.text);
 
-    let right_lines: Vec<Line> = right_bindings
-        .iter()
-        .map(|(key, desc)| {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {:>9} ", key),
-                    Style::default().fg(theme.secondary).bold(),
-                ),
-                Span::styled(*desc, Style::default().fg(theme.text)),
-            ])
-        })
-        .collect();
+    fn section_header<'a>(title: &'a str, style: Style) -> Line<'a> {
+        Line::from(Span::styled(format!(" {}", title), style))
+    }
+
+    fn binding<'a>(key: &'a str, desc: &'a str, ks: Style, ds: Style) -> Line<'a> {
+        Line::from(vec![
+            Span::styled(format!(" {:>9} ", key), ks),
+            Span::styled(desc, ds),
+        ])
+    }
+
+    let left_lines: Vec<Line> = vec![
+        section_header("Navigation", section_style),
+        binding("j / k", "Navigate", key_style, desc_style),
+        binding("Enter", "Attach session", key_style, desc_style),
+        binding("Home/End", "First/Last", key_style, desc_style),
+        binding("PgUp/Dn", "Page scroll", key_style, desc_style),
+        binding("1-9", "Jump to group", key_style, desc_style),
+        binding("/", "Search", key_style, desc_style),
+        Line::from(""),
+        section_header("View", section_style),
+        binding("v", "Cycle panel", key_style, desc_style),
+        binding("a", "Activity feed", key_style, desc_style),
+        binding("t", "Select theme", key_style, desc_style),
+        binding("?", "This help", key_style, desc_style),
+        Line::from(""),
+        section_header("Groups", section_style),
+        binding("g", "Create group", key_style, desc_style),
+        binding("J / K", "Move group", key_style, desc_style),
+    ];
+
+    let right_lines: Vec<Line> = vec![
+        section_header("Sessions", section_style),
+        binding("n", "New session", key_style, desc_style),
+        binding("s", "Stop session", key_style, desc_style),
+        binding("r", "Restart", key_style, desc_style),
+        binding("d", "Delete", key_style, desc_style),
+        binding("R", "Rename", key_style, desc_style),
+        binding("m", "Move to group", key_style, desc_style),
+        Line::from(""),
+        section_header("Actions", section_style),
+        binding("Space", "Select session", key_style, desc_style),
+        binding("Ctrl+A", "Select all", key_style, desc_style),
+        binding("e", "Export log", key_style, desc_style),
+        binding("!", "Notifications", key_style, desc_style),
+        binding("i", "Follow-up flag", key_style, desc_style),
+        binding("p", "Pin/unpin", key_style, desc_style),
+        binding("S", "Cycle sort", key_style, desc_style),
+        binding("Ctrl+K", "Command palette", key_style, desc_style),
+    ];
 
     frame.render_widget(Paragraph::new(left_lines), cols[0]);
     frame.render_widget(Paragraph::new(right_lines), cols[1]);

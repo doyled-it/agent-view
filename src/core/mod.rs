@@ -5,6 +5,7 @@ pub mod git;
 pub mod groups;
 pub mod logger;
 pub mod notify;
+pub mod path_complete;
 pub mod session;
 pub mod status;
 pub mod storage;

@@ -212,9 +212,15 @@ pub fn send_keys(name: &str, keys: &str) -> Result<(), String> {
 }
 
 /// Capture pane content from a tmux session
-pub fn capture_pane(name: &str, start_line: Option<i32>) -> Result<String, String> {
+/// Capture pane content from a tmux session.
+/// If `escape` is true, ANSI escape sequences are preserved (-e flag).
+pub fn capture_pane(name: &str, start_line: Option<i32>, escape: bool) -> Result<String, String> {
     let mut args = vec!["capture-pane", "-t", name, "-p"];
     let start_str;
+
+    if escape {
+        args.push("-e");
+    }
 
     if let Some(start) = start_line {
         start_str = start.to_string();

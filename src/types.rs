@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum SessionStatus {
     Running,
     Waiting,
+    Draft,
     Paused,
     Compacting,
     Idle,
@@ -20,12 +21,13 @@ impl SessionStatus {
         match self {
             Self::Crashed => 0,
             Self::Waiting => 1,
-            Self::Paused => 2,
-            Self::Running => 3,
-            Self::Compacting => 4,
-            Self::Idle => 5,
-            Self::Stopped => 6,
-            Self::Error => 7,
+            Self::Draft => 2,
+            Self::Paused => 3,
+            Self::Running => 4,
+            Self::Compacting => 5,
+            Self::Idle => 6,
+            Self::Stopped => 7,
+            Self::Error => 8,
         }
     }
 
@@ -33,6 +35,7 @@ impl SessionStatus {
         match self {
             Self::Running => "running",
             Self::Waiting => "waiting",
+            Self::Draft => "draft",
             Self::Paused => "paused",
             Self::Compacting => "compacting",
             Self::Idle => "idle",
@@ -46,6 +49,7 @@ impl SessionStatus {
         match s {
             "running" => Self::Running,
             "waiting" => Self::Waiting,
+            "draft" => Self::Draft,
             "paused" => Self::Paused,
             "compacting" => Self::Compacting,
             "idle" => Self::Idle,
@@ -60,6 +64,7 @@ impl SessionStatus {
         match self {
             Self::Running => "●",
             Self::Waiting => "◐",
+            Self::Draft => "✎",
             Self::Paused => "◆",
             Self::Compacting => "◌",
             Self::Idle => "○",

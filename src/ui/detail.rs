@@ -1,15 +1,158 @@
-//! Detail panel — shows session metadata on the right side
+//! Detail panel — shows session metadata and/or terminal preview on the right side
 
+use crate::app::DetailPanelMode;
 use crate::types::Session;
 use crate::ui::theme::Theme;
+use ansi_to_tui::IntoText;
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
 /// Minimum terminal width to show the detail panel
-pub const DETAIL_PANEL_MIN_WIDTH: u16 = 100;
+pub const DETAIL_PANEL_MIN_WIDTH: u16 = 80;
+
+/// Width of the panel when showing preview (wider modes)
+pub const WIDE_PANEL_PERCENT: u16 = 45;
+
+/// Width of the panel when showing metadata only
+pub const NARROW_PANEL_WIDTH: u16 = 36;
+
+/// Dispatch rendering to the appropriate sub-renderer based on mode
+pub fn render_detail_panel(
+    frame: &mut Frame,
+    area: Rect,
+    session: &Session,
+    theme: &Theme,
+    mode: DetailPanelMode,
+    preview_content: &str,
+) {
+    match mode {
+        DetailPanelMode::None => {}
+        DetailPanelMode::Preview => {
+            render_preview(frame, area, session, theme, preview_content);
+        }
+        DetailPanelMode::Metadata => {
+            render_metadata(frame, area, session, theme);
+        }
+        DetailPanelMode::Both => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                .split(area);
+            render_preview(frame, chunks[0], session, theme, preview_content);
+            render_metadata(frame, chunks[1], session, theme);
+        }
+    }
+}
+
+/// Compute the panel width based on mode and terminal width
+pub fn panel_width(mode: DetailPanelMode, terminal_width: u16) -> u16 {
+    match mode {
+        DetailPanelMode::None => 0,
+        DetailPanelMode::Metadata => NARROW_PANEL_WIDTH,
+        DetailPanelMode::Preview | DetailPanelMode::Both => {
+            (terminal_width * WIDE_PANEL_PERCENT / 100).max(NARROW_PANEL_WIDTH)
+        }
+    }
+}
+
+/// Render the terminal preview pane
+fn render_preview(
+    frame: &mut Frame,
+    area: Rect,
+    session: &Session,
+    theme: &Theme,
+    preview_content: &str,
+) {
+    let block = Block::default()
+        .title(" Preview ")
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // No active tmux session — show pulsating alert
+    let no_tmux = session.tmux_session.is_empty()
+        || matches!(
+            session.status,
+            crate::types::SessionStatus::Stopped | crate::types::SessionStatus::Crashed
+        );
+
+    if no_tmux {
+        render_alert_icon(frame, inner, theme);
+        return;
+    }
+
+    if preview_content.is_empty() {
+        let loading = Paragraph::new("Loading...").style(Style::default().fg(theme.text_muted));
+        frame.render_widget(loading, inner);
+        return;
+    }
+
+    // Convert ANSI content to ratatui Text, keeping only lines that fit
+    let height = inner.height as usize;
+
+    match preview_content.into_text() {
+        Ok(core_text) => {
+            // Convert ratatui_core types to ratatui types for rendering
+            let line_count = core_text.lines.len();
+            let skip = line_count.saturating_sub(height);
+            let visible_lines: Vec<Line> = core_text
+                .lines
+                .into_iter()
+                .skip(skip)
+                .map(convert_core_line)
+                .collect();
+            frame.render_widget(Paragraph::new(visible_lines), inner);
+        }
+        Err(_) => {
+            // Fall back to plain text rendering
+            let lines: Vec<&str> = preview_content.lines().collect();
+            let skip = if lines.len() > height {
+                lines.len() - height
+            } else {
+                0
+            };
+            let visible: Vec<Line> = lines.into_iter().skip(skip).map(Line::raw).collect();
+            frame.render_widget(Paragraph::new(visible), inner);
+        }
+    }
+}
+
+/// Render a pulsating red alert icon for sessions without an active terminal
+fn render_alert_icon(frame: &mut Frame, area: Rect, theme: &Theme) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as f64;
+
+    // Pulse over a 2-second cycle using a sine wave
+    let t = (now_ms / 2000.0) * std::f64::consts::TAU;
+    let brightness = ((t.sin() + 1.0) / 2.0 * 200.0 + 55.0) as u8; // 55–255
+
+    let color = Color::Rgb(brightness, 0, 0);
+
+    let icon = Paragraph::new(vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  ⚠  No terminal",
+            Style::default().fg(color).bold(),
+        )]),
+        Line::from(vec![Span::styled(
+            "  Session not running",
+            Style::default().fg(theme.text_muted),
+        )]),
+    ]);
+
+    frame.render_widget(icon, area);
+}
 
 /// Render the detail panel for the selected session
-pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
+fn render_metadata(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
     let block = Block::default()
         .title(" Details ")
         .title_style(Style::default().fg(theme.primary).bold())
@@ -154,6 +297,85 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, inner);
+}
+
+/// Convert a `ratatui_core::Color` to a `ratatui::Color`
+fn convert_core_color(c: ratatui_core::style::Color) -> Color {
+    use ratatui_core::style::Color as CC;
+    match c {
+        CC::Reset => Color::Reset,
+        CC::Black => Color::Black,
+        CC::Red => Color::Red,
+        CC::Green => Color::Green,
+        CC::Yellow => Color::Yellow,
+        CC::Blue => Color::Blue,
+        CC::Magenta => Color::Magenta,
+        CC::Cyan => Color::Cyan,
+        CC::Gray => Color::Gray,
+        CC::DarkGray => Color::DarkGray,
+        CC::LightRed => Color::LightRed,
+        CC::LightGreen => Color::LightGreen,
+        CC::LightYellow => Color::LightYellow,
+        CC::LightBlue => Color::LightBlue,
+        CC::LightMagenta => Color::LightMagenta,
+        CC::LightCyan => Color::LightCyan,
+        CC::White => Color::White,
+        CC::Rgb(r, g, b) => Color::Rgb(r, g, b),
+        CC::Indexed(i) => Color::Indexed(i),
+    }
+}
+
+/// Convert a `ratatui_core::Style` to a `ratatui::Style`
+fn convert_core_style(s: ratatui_core::style::Style) -> Style {
+    let mut out = Style::default();
+    if let Some(fg) = s.fg {
+        out = out.fg(convert_core_color(fg));
+    }
+    if let Some(bg) = s.bg {
+        out = out.bg(convert_core_color(bg));
+    }
+    if s.add_modifier.contains(ratatui_core::style::Modifier::BOLD) {
+        out = out.bold();
+    }
+    if s.add_modifier
+        .contains(ratatui_core::style::Modifier::ITALIC)
+    {
+        out = out.italic();
+    }
+    if s.add_modifier
+        .contains(ratatui_core::style::Modifier::UNDERLINED)
+    {
+        out = out.underlined();
+    }
+    if s.add_modifier.contains(ratatui_core::style::Modifier::DIM) {
+        out = out.dim();
+    }
+    if s.add_modifier
+        .contains(ratatui_core::style::Modifier::CROSSED_OUT)
+    {
+        out = out.crossed_out();
+    }
+    if s.add_modifier
+        .contains(ratatui_core::style::Modifier::REVERSED)
+    {
+        out = out.reversed();
+    }
+    out
+}
+
+/// Convert a `ratatui_core::Span` to a `ratatui::Span`
+fn convert_core_span(s: ratatui_core::text::Span<'_>) -> Span<'_> {
+    Span::styled(s.content, convert_core_style(s.style))
+}
+
+/// Convert a `ratatui_core::Line` to a `ratatui::Line`
+fn convert_core_line(l: ratatui_core::text::Line<'_>) -> Line<'_> {
+    Line::from(
+        l.spans
+            .into_iter()
+            .map(convert_core_span)
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn format_timestamp(ms: i64) -> String {

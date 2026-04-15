@@ -48,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = crate::app::App::new(false); // we set theme manually below
     app.theme = crate::ui::theme::Theme::from_name(&theme_name);
     app.theme_name = theme_name;
+    app.detail_mode = crate::app::DetailPanelMode::from_str(&config.detail_panel_mode);
 
     // Load sessions from storage
     app.sessions = storage.load_sessions()?;
@@ -330,8 +331,52 @@ fn run_tui(
             let new_config = crate::core::config::load_config();
             app.theme = crate::ui::theme::Theme::from_name(&new_config.theme);
             app.theme_name = new_config.theme;
+            app.detail_mode = crate::app::DetailPanelMode::from_str(&new_config.detail_panel_mode);
             app.toast_message = Some("Config reloaded".to_string());
             app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
+        }
+
+        // Refresh preview content for the selected session (throttled)
+        if app.detail_mode.shows_preview() {
+            let should_capture = if let Some(session) = app.selected_session() {
+                let session_id = session.id.clone();
+                let tmux_empty = session.tmux_session.is_empty();
+                let status = session.status;
+                let session_changed =
+                    app.preview_last_session.as_deref() != Some(session_id.as_str());
+                let time_elapsed = app
+                    .preview_last_capture
+                    .map(|t| t.elapsed() >= std::time::Duration::from_millis(200))
+                    .unwrap_or(true);
+                if session_changed {
+                    app.preview_last_session = Some(session_id);
+                    app.preview_content.clear();
+                }
+                (session_changed || time_elapsed)
+                    && !tmux_empty
+                    && status != crate::types::SessionStatus::Stopped
+                    && status != crate::types::SessionStatus::Crashed
+            } else {
+                false
+            };
+
+            if should_capture {
+                if let Some(session) = app.selected_session() {
+                    let tmux_name = session.tmux_session.clone();
+                    match crate::core::tmux::capture_pane(&tmux_name, Some(-50), true) {
+                        Ok(content) => {
+                            app.preview_content = content;
+                        }
+                        Err(_) => {
+                            app.preview_content.clear();
+                        }
+                    }
+                    app.preview_last_capture = Some(std::time::Instant::now());
+                }
+            }
+        } else if !app.preview_content.is_empty() {
+            app.preview_content.clear();
+            app.preview_last_session = None;
         }
 
         // Sleep briefly to avoid busy-spinning when idle

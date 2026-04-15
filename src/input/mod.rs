@@ -325,6 +325,23 @@ pub fn handle_main_key(
                 });
             }
         }
+        (KeyModifiers::NONE, KeyCode::Char('v')) => {
+            app.detail_mode = app.detail_mode.next();
+            // Persist to config
+            let mut config = crate::core::config::load_config();
+            config.detail_panel_mode = app.detail_mode.as_config_str().to_string();
+            let _ = crate::core::config::save_config(&config);
+            // Suppress config watcher from re-applying (we just wrote it)
+            app.config_changed
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            // Clear preview state on mode change
+            app.preview_content.clear();
+            app.preview_last_session = None;
+            app.preview_last_capture = None;
+            // Toast
+            app.toast_message = Some(format!("Panel: {}", app.detail_mode.label()));
+            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+        }
         (KeyModifiers::NONE, KeyCode::Char('a')) => {
             app.show_activity_feed = !app.show_activity_feed;
         }

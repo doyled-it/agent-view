@@ -16,6 +16,7 @@ pub struct ToolStatus {
     pub has_exited: bool,
     pub has_idle_prompt: bool,
     pub has_question: bool,
+    pub has_draft: bool,
 }
 
 /// Spinner characters used by Claude Code when processing
@@ -71,8 +72,8 @@ lazy_static! {
         Regex::new(r"(?i)panic:").unwrap(),
     ];
 
-    // Idle prompt pattern
-    static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}\s").unwrap();
+    // Idle prompt pattern (used only for question detection scan guard)
+    static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}").unwrap();
 
     /// Match "claude --resume <session-id>" to extract the session ID
     static ref CLAUDE_SESSION_ID_RE: Regex = Regex::new(r"claude\s+--resume\s+([\w-]+)").unwrap();
@@ -140,8 +141,22 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
                 || has_spinner(&last_few_lines);
 
             // Idle prompt detection — BEFORE waiting patterns
+            // Only check the LAST ❯ line within the last few lines of output
+            // to avoid matching old submitted commands in scrollback
             if !status.is_busy && !status.is_compacting {
-                status.has_idle_prompt = IDLE_PROMPT_RE.is_match(&last_few_lines);
+                let recent_lines = &trimmed_lines[last_10_start..];
+                if let Some(rel_idx) = recent_lines.iter().rposition(|l| l.starts_with('\u{276f}'))
+                {
+                    let prompt_line = recent_lines[rel_idx];
+                    let after_prompt = prompt_line.strip_prefix('\u{276f}').unwrap_or("");
+                    // Check if there's typed text (not just whitespace/NBSP/cursor)
+                    let meaningful: String = after_prompt
+                        .chars()
+                        .filter(|c| !c.is_whitespace() && *c != '\u{00a0}' && *c != '\u{2588}')
+                        .collect();
+                    status.has_idle_prompt = true;
+                    status.has_draft = !meaningful.is_empty();
+                }
             }
 
             // Waiting — only when there's NO idle prompt
@@ -452,6 +467,58 @@ mod tests {
             "Some output\nResume this session with: claude --resume abc123-def456\nMore output";
         let id = extract_claude_session_id(output);
         assert_eq!(id, Some("abc123-def456".to_string()));
+    }
+
+    #[test]
+    fn test_draft_detected_when_text_after_prompt() {
+        let output = "Claude finished.\n\u{276f} fix the bug in\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.has_draft);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_draft_not_detected_at_empty_prompt() {
+        let output = "Claude finished.\n\u{276f} \n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(!status.has_draft);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_draft_not_detected_at_cursor_only_prompt() {
+        // Claude shows ❯ followed by the block cursor █ when idle
+        let output = "Claude finished.\n\u{276f} \u{2588}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(!status.has_draft);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_draft_not_detected_at_nbsp_prompt() {
+        // Claude's actual idle prompt uses NBSP (U+00A0) after ❯
+        let output = "Claude finished.\n\u{276f}\u{00a0}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(!status.has_draft);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_draft_overrides_question() {
+        // Claude asked a question, but user has started typing a response
+        let output = "What file should I edit?\n\u{276f} src/main\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.has_draft);
+        assert!(status.has_idle_prompt);
+        // Question detection still fires, but poller will choose Draft over Paused
+    }
+
+    #[test]
+    fn test_draft_not_detected_when_busy() {
+        let output = "\u{276f} some text\nctrl+c to interrupt\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.is_busy);
+        assert!(!status.has_draft);
     }
 
     #[test]
