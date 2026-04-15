@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.0] - 2026-04-15
+
+### Changed
+
+- feat!: v1.0.0 — session notes, crash recovery, Claude resume (#5) (@doyled-it)
+
 ## [1.0.0] - 2026-04-14
 
 ### Added
