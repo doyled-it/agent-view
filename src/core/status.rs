@@ -75,9 +75,8 @@ lazy_static! {
     // Idle prompt pattern (❯ followed by whitespace or NBSP — nothing typed)
     static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}[\s\u{00a0}]").unwrap();
 
-    // Draft prompt pattern (❯ followed by text that isn't just whitespace/NBSP/cursor)
-    // Claude's idle prompt uses ❯ + NBSP (U+00A0) or ❯ + space + cursor block (U+2588)
-    static ref DRAFT_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}[\s\u{00a0}]*[^\s\u{00a0}\u{2588}]").unwrap();
+    // Prompt line pattern — matches any line starting with ❯ (captures rest of line)
+    static ref PROMPT_LINE_RE: Regex = Regex::new(r"(?m)^\u{276f}(.*)$").unwrap();
 
     /// Match "claude --resume <session-id>" to extract the session ID
     static ref CLAUDE_SESSION_ID_RE: Regex = Regex::new(r"claude\s+--resume\s+([\w-]+)").unwrap();
@@ -146,11 +145,17 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
 
             // Idle prompt detection — BEFORE waiting patterns
             if !status.is_busy && !status.is_compacting {
-                // Draft detection: prompt with typed text (❯ followed by non-whitespace)
-                status.has_draft = DRAFT_PROMPT_RE.is_match(&last_few_lines);
-                // Idle prompt: ❯ with only whitespace (or draft — both have the prompt)
-                status.has_idle_prompt =
-                    status.has_draft || IDLE_PROMPT_RE.is_match(&last_few_lines);
+                if let Some(caps) = PROMPT_LINE_RE.captures(&last_few_lines) {
+                    status.has_idle_prompt = true;
+                    // Check if there's typed text after ❯ on the same line
+                    // Strip whitespace, NBSP (U+00A0), and cursor block (U+2588)
+                    let after_prompt = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                    let meaningful: String = after_prompt
+                        .chars()
+                        .filter(|c| !c.is_whitespace() && *c != '\u{00a0}' && *c != '\u{2588}')
+                        .collect();
+                    status.has_draft = !meaningful.is_empty();
+                }
             }
 
             // Waiting — only when there's NO idle prompt
