@@ -14,10 +14,63 @@ pub fn handle_new_session_key(
                 app.overlay = crate::app::Overlay::None;
             }
             KeyCode::Tab => {
-                form.focused_field = (form.focused_field + 1) % 2;
+                if form.focused_field == 1 {
+                    // Path field: do filesystem completion
+                    if !form.completions.is_empty() && form.completions.len() > 1 {
+                        // Already have ambiguous completions — cycle through them
+                        let idx = match form.completion_index {
+                            Some(i) => (i + 1) % form.completions.len(),
+                            None => 0,
+                        };
+                        form.completion_index = Some(idx);
+                        // Build the completed path from parent + candidate
+                        let expanded = if form.project_path.starts_with('~') {
+                            let home = dirs::home_dir()
+                                .map(|h| h.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            form.project_path.replacen('~', &home, 1)
+                        } else {
+                            form.project_path.clone()
+                        };
+                        let parent = if let Some(pos) = expanded.rfind('/') {
+                            &expanded[..=pos]
+                        } else {
+                            ""
+                        };
+                        let candidate = &form.completions[idx];
+                        let new_path = format!("{}{}/", parent, candidate);
+                        // Restore ~ if original used it
+                        if form.project_path.starts_with('~') {
+                            let home = dirs::home_dir()
+                                .map(|h| h.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            if let Some(rest) = new_path.strip_prefix(&home) {
+                                form.project_path = format!("~{}", rest);
+                            } else {
+                                form.project_path = new_path;
+                            }
+                        } else {
+                            form.project_path = new_path;
+                        }
+                    } else {
+                        // First Tab press — get completions
+                        let result =
+                            crate::core::path_complete::complete_path(&form.project_path);
+                        form.project_path = result.completed;
+                        form.completions = result.candidates;
+                        form.completion_index = None;
+                    }
+                } else {
+                    // Title field: advance to path field
+                    form.focused_field = 1;
+                    form.completions.clear();
+                    form.completion_index = None;
+                }
             }
             KeyCode::BackTab => {
                 form.focused_field = if form.focused_field == 0 { 1 } else { 0 };
+                form.completions.clear();
+                form.completion_index = None;
             }
             KeyCode::Enter => {
                 let title = if form.title.is_empty() {
@@ -56,7 +109,11 @@ pub fn handle_new_session_key(
             }
             KeyCode::Char(c) => match form.focused_field {
                 0 => form.title.push(c),
-                1 => form.project_path.push(c),
+                1 => {
+                    form.project_path.push(c);
+                    form.completions.clear();
+                    form.completion_index = None;
+                }
                 _ => {}
             },
             KeyCode::Backspace => match form.focused_field {
@@ -65,6 +122,8 @@ pub fn handle_new_session_key(
                 }
                 1 => {
                     form.project_path.pop();
+                    form.completions.clear();
+                    form.completion_index = None;
                 }
                 _ => {}
             },
