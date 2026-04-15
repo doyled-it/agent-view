@@ -41,9 +41,7 @@ pub fn complete_path(input: &str) -> CompletionResult {
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             if name.starts_with(prefix) {
-                if e.file_type().map(|ft| ft.is_symlink()).unwrap_or(false)
-                    && !e.path().is_dir()
-                {
+                if e.file_type().map(|ft| ft.is_symlink()).unwrap_or(false) && !e.path().is_dir() {
                     return None;
                 }
                 Some(name)
