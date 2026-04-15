@@ -72,11 +72,12 @@ lazy_static! {
         Regex::new(r"(?i)panic:").unwrap(),
     ];
 
-    // Idle prompt pattern (❯ followed by just whitespace — nothing typed)
-    static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}\s").unwrap();
+    // Idle prompt pattern (❯ followed by whitespace or NBSP — nothing typed)
+    static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}[\s\u{00a0}]").unwrap();
 
-    // Draft prompt pattern (❯ followed by text that isn't just the cursor block █)
-    static ref DRAFT_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}\s*[^\s\u{2588}]").unwrap();
+    // Draft prompt pattern (❯ followed by text that isn't just whitespace/NBSP/cursor)
+    // Claude's idle prompt uses ❯ + NBSP (U+00A0) or ❯ + space + cursor block (U+2588)
+    static ref DRAFT_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}[\s\u{00a0}]*[^\s\u{00a0}\u{2588}]").unwrap();
 
     /// Match "claude --resume <session-id>" to extract the session ID
     static ref CLAUDE_SESSION_ID_RE: Regex = Regex::new(r"claude\s+--resume\s+([\w-]+)").unwrap();
@@ -482,6 +483,15 @@ mod tests {
     fn test_draft_not_detected_at_cursor_only_prompt() {
         // Claude shows ❯ followed by the block cursor █ when idle
         let output = "Claude finished.\n\u{276f} \u{2588}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(!status.has_draft);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_draft_not_detected_at_nbsp_prompt() {
+        // Claude's actual idle prompt uses NBSP (U+00A0) after ❯
+        let output = "Claude finished.\n\u{276f}\u{00a0}\n";
         let status = parse_tool_status(output, Some("claude"));
         assert!(!status.has_draft);
         assert!(status.has_idle_prompt);
