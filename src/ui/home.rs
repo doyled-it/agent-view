@@ -15,15 +15,18 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 
     // When the terminal is wide enough, split horizontally: list on left, detail on right
-    let (list_area, detail_area) = if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(36)])
-            .split(area);
-        (cols[0], Some(cols[1]))
-    } else {
-        (area, None)
-    };
+    let detail_width =
+        crate::ui::detail::panel_width(app.detail_mode, area.width);
+    let (list_area, detail_area) =
+        if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH && detail_width > 0 {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(0), Constraint::Length(detail_width)])
+                .split(area);
+            (cols[0], Some(cols[1]))
+        } else {
+            (area, None)
+        };
 
     // Layout: header (1), body (fill), activity feed (dynamic), footer (1)
     let show_feed = app.show_activity_feed && !app.activity_feed.is_empty();
@@ -74,7 +77,14 @@ pub fn render(frame: &mut Frame, app: &App) {
     // Render detail panel for selected session when wide enough
     if let Some(detail_rect) = detail_area {
         if let Some(session) = app.selected_session() {
-            crate::ui::detail::render(frame, detail_rect, session, &app.theme);
+            crate::ui::detail::render_detail_panel(
+                frame,
+                detail_rect,
+                session,
+                &app.theme,
+                app.detail_mode,
+                &app.preview_content,
+            );
         }
     }
 

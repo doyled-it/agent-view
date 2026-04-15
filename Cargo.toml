@@ -19,7 +19,7 @@ uuid = { version = "1", features = ["v4"] }
 lazy_static = "1"
 libc = "0.2"
 notify = "7"
-ansi-to-tui = "8"
+ansi-to-tui = "7"
 
 [dev-dependencies]
 tempfile = "3"
