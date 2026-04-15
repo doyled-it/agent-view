@@ -39,6 +39,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ("j/k", "navigate"),
                     ("Enter", "attach"),
                     ("n", "new"),
+                    ("N", "note"),
                     ("Space", "select"),
                     ("?", "help"),
                     ("q", "quit"),
@@ -76,6 +77,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
         Overlay::ThemeSelect(_) => {
             vec![("j/k", "preview"), ("Enter", "confirm"), ("Esc", "cancel")]
+        }
+        Overlay::AddNote(_) => {
+            vec![("Enter", "save"), ("C-j", "newline"), ("Esc", "cancel")]
         }
     };
 

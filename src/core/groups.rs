@@ -194,6 +194,7 @@ mod tests {
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,
+            notes: vec![],
             status_history: vec![],
             pinned: false,
             tokens_used: 0,

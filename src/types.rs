@@ -11,19 +11,21 @@ pub enum SessionStatus {
     Compacting,
     Idle,
     Error,
+    Crashed,
     Stopped,
 }
 
 impl SessionStatus {
     pub fn sort_priority(&self) -> u8 {
         match self {
-            Self::Waiting => 0,
-            Self::Paused => 1,
-            Self::Running => 2,
-            Self::Compacting => 3,
-            Self::Idle => 4,
-            Self::Stopped => 5,
-            Self::Error => 6,
+            Self::Crashed => 0,
+            Self::Waiting => 1,
+            Self::Paused => 2,
+            Self::Running => 3,
+            Self::Compacting => 4,
+            Self::Idle => 5,
+            Self::Stopped => 6,
+            Self::Error => 7,
         }
     }
 
@@ -35,6 +37,7 @@ impl SessionStatus {
             Self::Compacting => "compacting",
             Self::Idle => "idle",
             Self::Error => "error",
+            Self::Crashed => "crashed",
             Self::Stopped => "stopped",
         }
     }
@@ -47,6 +50,7 @@ impl SessionStatus {
             "compacting" => Self::Compacting,
             "idle" => Self::Idle,
             "error" => Self::Error,
+            "crashed" => Self::Crashed,
             "stopped" => Self::Stopped,
             _ => Self::Idle,
         }
@@ -60,6 +64,7 @@ impl SessionStatus {
             Self::Compacting => "◌",
             Self::Idle => "○",
             Self::Error => "✗",
+            Self::Crashed => "⚠",
             Self::Stopped => "◻",
         }
     }
@@ -130,6 +135,12 @@ pub struct StatusHistoryEntry {
     pub timestamp: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteEntry {
+    pub timestamp: i64,
+    pub text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: String,
@@ -155,6 +166,7 @@ pub struct Session {
     pub status_changed_at: i64,
     pub restart_count: i32,
     pub last_started_at: i64,
+    pub notes: Vec<NoteEntry>,
     pub status_history: Vec<StatusHistoryEntry>,
     pub pinned: bool,
     pub tokens_used: i64,
@@ -163,6 +175,10 @@ pub struct Session {
 impl Session {
     pub fn status_history_json(&self) -> String {
         serde_json::to_string(&self.status_history).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn notes_json(&self) -> String {
+        serde_json::to_string(&self.notes).unwrap_or_else(|_| "[]".to_string())
     }
 }
 
@@ -266,6 +282,7 @@ mod tests {
             SessionStatus::Compacting,
             SessionStatus::Idle,
             SessionStatus::Error,
+            SessionStatus::Crashed,
             SessionStatus::Stopped,
         ];
         for s in statuses {
@@ -323,6 +340,7 @@ mod tests {
             SessionStatus::Compacting,
             SessionStatus::Idle,
             SessionStatus::Error,
+            SessionStatus::Crashed,
             SessionStatus::Stopped,
         ];
         let icons: HashSet<&str> = statuses.iter().map(|s| s.icon()).collect();
@@ -342,6 +360,7 @@ mod tests {
             SessionStatus::Compacting,
             SessionStatus::Idle,
             SessionStatus::Error,
+            SessionStatus::Crashed,
             SessionStatus::Stopped,
         ];
         for s in statuses {
@@ -358,6 +377,7 @@ mod tests {
             SessionStatus::Compacting,
             SessionStatus::Idle,
             SessionStatus::Error,
+            SessionStatus::Crashed,
             SessionStatus::Stopped,
         ];
         for s in statuses {
@@ -367,7 +387,8 @@ mod tests {
 
     #[test]
     fn test_session_status_sort_priority_ordering() {
-        // Waiting < Paused < Running < Compacting < Idle < Stopped < Error
+        // Crashed < Waiting < Paused < Running < Compacting < Idle < Stopped < Error
+        assert!(SessionStatus::Crashed.sort_priority() < SessionStatus::Waiting.sort_priority());
         assert!(SessionStatus::Waiting.sort_priority() < SessionStatus::Paused.sort_priority());
         assert!(SessionStatus::Paused.sort_priority() < SessionStatus::Running.sort_priority());
         assert!(SessionStatus::Running.sort_priority() < SessionStatus::Compacting.sort_priority());
@@ -427,6 +448,7 @@ mod tests {
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,
+            notes: vec![],
             status_history: vec![],
             pinned: false,
             tokens_used: 0,
@@ -460,6 +482,7 @@ mod tests {
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,
+            notes: vec![],
             status_history: vec![
                 StatusHistoryEntry {
                     status: "running".to_string(),
@@ -498,5 +521,46 @@ mod tests {
         assert_eq!(SortMode::LastActivity.label(), "activity");
         assert_eq!(SortMode::Name.label(), "name");
         assert_eq!(SortMode::Created.label(), "created");
+    }
+
+    #[test]
+    fn test_crashed_status_properties() {
+        let status = SessionStatus::Crashed;
+        assert_eq!(status.as_str(), "crashed");
+        assert_eq!(SessionStatus::from_str("crashed"), SessionStatus::Crashed);
+        assert!(!status.icon().is_empty());
+        assert_eq!(format!("{}", status), "crashed");
+    }
+
+    #[test]
+    fn test_crashed_sort_priority() {
+        // Crashed should sort higher priority than Error (user needs to see it)
+        assert!(SessionStatus::Crashed.sort_priority() < SessionStatus::Error.sort_priority());
+    }
+
+    #[test]
+    fn test_note_entry_serialize_roundtrip() {
+        let notes = vec![
+            NoteEntry {
+                timestamp: 1700000000000,
+                text: "first note".to_string(),
+            },
+            NoteEntry {
+                timestamp: 1700000001000,
+                text: "second note".to_string(),
+            },
+        ];
+        let json = serde_json::to_string(&notes).unwrap();
+        let parsed: Vec<NoteEntry> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].text, "first note");
+        assert_eq!(parsed[1].timestamp, 1700000001000);
+    }
+
+    #[test]
+    fn test_empty_notes_serialize() {
+        let notes: Vec<NoteEntry> = vec![];
+        let json = serde_json::to_string(&notes).unwrap();
+        assert_eq!(json, "[]");
     }
 }

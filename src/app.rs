@@ -17,6 +17,13 @@ pub enum Overlay {
     CommandPalette(CommandPalette),
     Help,
     ThemeSelect(ThemeSelectForm),
+    AddNote(NoteForm),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteForm {
+    pub session_id: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -424,6 +431,7 @@ mod tests {
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,
+            notes: vec![],
             status_history: vec![],
             pinned: false,
             tokens_used: 0,
