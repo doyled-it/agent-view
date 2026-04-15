@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.0] - 2026-04-15
+
+### Changed
+
+- feat: path autocomplete and terminal preview pane (#7) (@doyled-it)
+
 ## [1.0.0] - 2026-04-15
 
 ### Changed
