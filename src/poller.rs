@@ -96,6 +96,9 @@ pub fn spawn(
                                 crate::types::SessionStatus::Idle
                             } else if parsed.has_error {
                                 crate::types::SessionStatus::Error
+                            } else if parsed.has_draft {
+                                // User has typed text at the prompt — draft overrides paused
+                                crate::types::SessionStatus::Draft
                             } else if parsed.has_idle_prompt && parsed.has_question {
                                 crate::types::SessionStatus::Paused
                             } else if parsed.has_idle_prompt {

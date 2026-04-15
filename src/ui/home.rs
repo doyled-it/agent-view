@@ -360,7 +360,7 @@ fn status_activity_level(status: &str) -> u8 {
         "running" => 5,
         "waiting" => 4,
         "error" => 3,
-        "paused" | "compacting" => 2,
+        "draft" | "paused" | "compacting" => 2,
         "idle" | "stopped" => 1,
         _ => 0,
     }
