@@ -1398,11 +1398,18 @@ fn handle_add_note_key(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::KeyCode;
 
-    match key.code {
-        KeyCode::Esc => {
+    use crossterm::event::KeyModifiers;
+
+    match (key.modifiers, key.code) {
+        (_, KeyCode::Esc) => {
             app.overlay = crate::app::Overlay::None;
         }
-        KeyCode::Enter => {
+        (KeyModifiers::SHIFT, KeyCode::Enter) => {
+            if let crate::app::Overlay::AddNote(ref mut form) = app.overlay {
+                form.text.push('\n');
+            }
+        }
+        (_, KeyCode::Enter) => {
             let (text, session_id) = if let crate::app::Overlay::AddNote(ref form) = app.overlay {
                 (form.text.trim().to_string(), form.session_id.clone())
             } else {
@@ -1422,12 +1429,12 @@ fn handle_add_note_key(
             }
             app.overlay = crate::app::Overlay::None;
         }
-        KeyCode::Backspace => {
+        (_, KeyCode::Backspace) => {
             if let crate::app::Overlay::AddNote(ref mut form) = app.overlay {
                 form.text.pop();
             }
         }
-        KeyCode::Char(c) => {
+        (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
             if let crate::app::Overlay::AddNote(ref mut form) = app.overlay {
                 form.text.push(c);
             }
