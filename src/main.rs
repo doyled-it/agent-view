@@ -1404,7 +1404,7 @@ fn handle_add_note_key(
         (_, KeyCode::Esc) => {
             app.overlay = crate::app::Overlay::None;
         }
-        (KeyModifiers::SHIFT, KeyCode::Enter) => {
+        (KeyModifiers::ALT, KeyCode::Enter) => {
             if let crate::app::Overlay::AddNote(ref mut form) = app.overlay {
                 form.text.push('\n');
             }
