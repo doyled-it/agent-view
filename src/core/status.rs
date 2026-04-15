@@ -72,11 +72,8 @@ lazy_static! {
         Regex::new(r"(?i)panic:").unwrap(),
     ];
 
-    // Idle prompt pattern (❯ followed by whitespace or NBSP — nothing typed)
-    static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}[\s\u{00a0}]").unwrap();
-
-    // Prompt line pattern — matches any line starting with ❯ (captures rest of line)
-    static ref PROMPT_LINE_RE: Regex = Regex::new(r"(?m)^\u{276f}(.*)$").unwrap();
+    // Idle prompt pattern (used only for question detection scan guard)
+    static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}").unwrap();
 
     /// Match "claude --resume <session-id>" to extract the session ID
     static ref CLAUDE_SESSION_ID_RE: Regex = Regex::new(r"claude\s+--resume\s+([\w-]+)").unwrap();
@@ -144,16 +141,22 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
                 || has_spinner(&last_few_lines);
 
             // Idle prompt detection — BEFORE waiting patterns
+            // Only check the LAST ❯ line within the last few lines of output
+            // to avoid matching old submitted commands in scrollback
             if !status.is_busy && !status.is_compacting {
-                if let Some(caps) = PROMPT_LINE_RE.captures(&last_few_lines) {
-                    status.has_idle_prompt = true;
-                    // Check if there's typed text after ❯ on the same line
-                    // Strip whitespace, NBSP (U+00A0), and cursor block (U+2588)
-                    let after_prompt = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let recent_lines = &trimmed_lines[last_10_start..];
+                if let Some(rel_idx) = recent_lines
+                    .iter()
+                    .rposition(|l| l.starts_with('\u{276f}'))
+                {
+                    let prompt_line = recent_lines[rel_idx];
+                    let after_prompt = prompt_line.strip_prefix('\u{276f}').unwrap_or("");
+                    // Check if there's typed text (not just whitespace/NBSP/cursor)
                     let meaningful: String = after_prompt
                         .chars()
                         .filter(|c| !c.is_whitespace() && *c != '\u{00a0}' && *c != '\u{2588}')
                         .collect();
+                    status.has_idle_prompt = true;
                     status.has_draft = !meaningful.is_empty();
                 }
             }
