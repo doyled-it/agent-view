@@ -80,6 +80,7 @@ pub enum CommandAction {
     PinSession,
     ShowHelp,
     SelectTheme,
+    CyclePanel,
     Quit,
 }
 
@@ -155,6 +156,11 @@ impl CommandPalette {
                 label: "Select Theme".to_string(),
                 key_hint: "t".to_string(),
                 action: CommandAction::SelectTheme,
+            },
+            CommandItem {
+                label: "Cycle Panel".to_string(),
+                key_hint: "v".to_string(),
+                action: CommandAction::CyclePanel,
             },
             CommandItem {
                 label: "Show Help".to_string(),
