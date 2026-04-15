@@ -16,7 +16,14 @@ pub fn handle_new_session_key(
             KeyCode::Tab => {
                 if form.focused_field == 1 {
                     // Path field: do filesystem completion
-                    if !form.completions.is_empty() && form.completions.len() > 1 {
+                    // If we've cycled to a candidate (path ends with /) and have
+                    // an active selection, treat next Tab as descending into that
+                    // directory rather than continuing to cycle siblings.
+                    let should_cycle = !form.completions.is_empty()
+                        && form.completions.len() > 1
+                        && !(form.completion_index.is_some()
+                            && form.project_path.ends_with('/'));
+                    if should_cycle {
                         // Already have ambiguous completions — cycle through them
                         let idx = match form.completion_index {
                             Some(i) => (i + 1) % form.completions.len(),
