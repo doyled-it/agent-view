@@ -48,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = crate::app::App::new(false); // we set theme manually below
     app.theme = crate::ui::theme::Theme::from_name(&theme_name);
     app.theme_name = theme_name;
+    app.detail_mode = crate::app::DetailPanelMode::from_str(&config.detail_panel_mode);
 
     // Load sessions from storage
     app.sessions = storage.load_sessions()?;
@@ -330,6 +331,7 @@ fn run_tui(
             let new_config = crate::core::config::load_config();
             app.theme = crate::ui::theme::Theme::from_name(&new_config.theme);
             app.theme_name = new_config.theme;
+            app.detail_mode = crate::app::DetailPanelMode::from_str(&new_config.detail_panel_mode);
             app.toast_message = Some("Config reloaded".to_string());
             app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
         }
