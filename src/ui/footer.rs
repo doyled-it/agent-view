@@ -79,11 +79,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             vec![("j/k", "preview"), ("Enter", "confirm"), ("Esc", "cancel")]
         }
         Overlay::AddNote(_) => {
-            vec![
-                ("Enter", "save"),
-                ("Alt+Enter", "newline"),
-                ("Esc", "cancel"),
-            ]
+            vec![("Enter", "save"), ("C-j", "newline"), ("Esc", "cancel")]
         }
     };
 
