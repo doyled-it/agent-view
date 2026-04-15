@@ -38,12 +38,14 @@ pub fn render(frame: &mut Frame, app: &App) {
         0
     };
 
+    let footer_sep = if show_feed { 1u16 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(feed_height),
+            Constraint::Length(footer_sep),
             Constraint::Length(1),
         ])
         .split(list_area);
@@ -52,6 +54,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_session_list(frame, chunks[1], app);
     if show_feed {
         render_activity_feed(frame, chunks[2], app);
+        // Separator between activity feed and footer
+        let sep = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(app.theme.border));
+        frame.render_widget(sep, chunks[3]);
     }
     if let Some(ref query) = app.search_query {
         let matches = app.search_matches();
@@ -69,9 +76,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                 Style::default().fg(app.theme.text_muted),
             ),
         ]);
-        frame.render_widget(Paragraph::new(search_line), chunks[3]);
+        frame.render_widget(Paragraph::new(search_line), chunks[4]);
     } else {
-        crate::ui::footer::render(frame, chunks[3], app);
+        crate::ui::footer::render(frame, chunks[4], app);
     }
 
     // Render detail panel for selected session when wide enough
