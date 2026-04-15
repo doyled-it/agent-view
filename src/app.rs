@@ -294,13 +294,7 @@ impl DetailPanelMode {
         matches!(self, Self::Preview | Self::Both)
     }
 
-    pub fn shows_metadata(self) -> bool {
-        matches!(self, Self::Metadata | Self::Both)
-    }
 
-    pub fn has_panel(self) -> bool {
-        !matches!(self, Self::None)
-    }
 
     pub fn from_str(s: &str) -> Self {
         match s {
