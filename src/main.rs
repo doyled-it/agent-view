@@ -336,6 +336,48 @@ fn run_tui(
             app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
         }
 
+        // Refresh preview content for the selected session (throttled)
+        if app.detail_mode.shows_preview() {
+            let should_capture = if let Some(session) = app.selected_session() {
+                let session_id = session.id.clone();
+                let tmux_empty = session.tmux_session.is_empty();
+                let status = session.status;
+                let session_changed =
+                    app.preview_last_session.as_deref() != Some(session_id.as_str());
+                let time_elapsed = app.preview_last_capture
+                    .map(|t| t.elapsed() >= std::time::Duration::from_millis(200))
+                    .unwrap_or(true);
+                if session_changed {
+                    app.preview_last_session = Some(session_id);
+                    app.preview_content.clear();
+                }
+                (session_changed || time_elapsed)
+                    && !tmux_empty
+                    && status != crate::types::SessionStatus::Stopped
+                    && status != crate::types::SessionStatus::Crashed
+            } else {
+                false
+            };
+
+            if should_capture {
+                if let Some(session) = app.selected_session() {
+                    let tmux_name = session.tmux_session.clone();
+                    match crate::core::tmux::capture_pane(&tmux_name, Some(-50), true) {
+                        Ok(content) => {
+                            app.preview_content = content;
+                        }
+                        Err(_) => {
+                            app.preview_content.clear();
+                        }
+                    }
+                    app.preview_last_capture = Some(std::time::Instant::now());
+                }
+            }
+        } else if !app.preview_content.is_empty() {
+            app.preview_content.clear();
+            app.preview_last_session = None;
+        }
+
         // Sleep briefly to avoid busy-spinning when idle
         if !event::poll(Duration::from_millis(16))? {
             // No input arrived in 16ms — just loop back to render
