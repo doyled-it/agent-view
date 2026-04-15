@@ -31,7 +31,7 @@ pub fn export_session_log(
     }
 
     // Fallback to live capture
-    let output = crate::core::tmux::capture_pane(tmux_session, Some(-10000))
+    let output = crate::core::tmux::capture_pane(tmux_session, Some(-10000), false)
         .map_err(|e| format!("Capture failed: {}", e))?;
     std::fs::write(&filepath, &output).map_err(|e| format!("Write failed: {}", e))?;
 

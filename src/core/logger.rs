@@ -68,7 +68,7 @@ impl SessionLogger {
     }
 
     pub fn capture_and_log(&mut self, tmux_session: &str, session_id: &str) {
-        let output = match crate::core::tmux::capture_pane(tmux_session, Some(-10000)) {
+        let output = match crate::core::tmux::capture_pane(tmux_session, Some(-10000), false) {
             Ok(o) => o,
             Err(_) => return,
         };
