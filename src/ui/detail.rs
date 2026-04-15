@@ -120,19 +120,35 @@ pub fn render(frame: &mut Frame, area: Rect, session: &Session, theme: &Theme) {
         )]));
         for note in session.notes.iter().rev().take(5) {
             let age = format_note_age(note.timestamp);
-            // Truncate long notes for the detail panel
-            let display_text = if note.text.len() > 60 {
-                format!("{}...", &note.text[..57])
+            let note_lines: Vec<&str> = note.text.lines().collect();
+            // First line gets the timestamp prefix
+            let first_line = note_lines.first().copied().unwrap_or("");
+            let first_display = if first_line.len() > 60 {
+                format!("{}...", &first_line[..57])
             } else {
-                note.text.clone()
+                first_line.to_string()
             };
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("  {}: ", age),
                     Style::default().fg(theme.text_muted),
                 ),
-                Span::styled(display_text, Style::default().fg(theme.text)),
+                Span::styled(first_display, Style::default().fg(theme.text)),
             ]));
+            // Continuation lines indented to align with first line text
+            for cont_line in note_lines.iter().skip(1).take(3) {
+                let padding = format!("  {}: ", age);
+                let indent = " ".repeat(padding.len());
+                let display = if cont_line.len() > 60 {
+                    format!("{}...", &cont_line[..57])
+                } else {
+                    cont_line.to_string()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(indent, Style::default().fg(theme.text_muted)),
+                    Span::styled(display, Style::default().fg(theme.text)),
+                ]));
+            }
         }
     }
 
