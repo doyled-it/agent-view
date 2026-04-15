@@ -23,14 +23,17 @@ pub fn handle_new_session_key(
                             None => 0,
                         };
                         form.completion_index = Some(idx);
-                        // Build the completed path from parent + candidate
-                        let expanded = if form.project_path.starts_with('~') {
+                        // Build the completed path from parent + candidate.
+                        // Strip trailing '/' first so rfind lands on the parent separator,
+                        // not the one we appended during a previous cycle.
+                        let raw = form.project_path.trim_end_matches('/').to_string();
+                        let expanded = if raw.starts_with('~') {
                             let home = dirs::home_dir()
                                 .map(|h| h.to_string_lossy().to_string())
                                 .unwrap_or_default();
-                            form.project_path.replacen('~', &home, 1)
+                            raw.replacen('~', &home, 1)
                         } else {
-                            form.project_path.clone()
+                            raw.clone()
                         };
                         let parent = if let Some(pos) = expanded.rfind('/') {
                             &expanded[..=pos]
