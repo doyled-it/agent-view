@@ -294,8 +294,6 @@ impl DetailPanelMode {
         matches!(self, Self::Preview | Self::Both)
     }
 
-
-
     pub fn from_str(s: &str) -> Self {
         match s {
             "none" => Self::None,
@@ -548,10 +546,19 @@ mod tests {
     fn test_detail_panel_mode_from_str() {
         use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::from_str("none"), DetailPanelMode::None);
-        assert_eq!(DetailPanelMode::from_str("preview"), DetailPanelMode::Preview);
-        assert_eq!(DetailPanelMode::from_str("metadata"), DetailPanelMode::Metadata);
+        assert_eq!(
+            DetailPanelMode::from_str("preview"),
+            DetailPanelMode::Preview
+        );
+        assert_eq!(
+            DetailPanelMode::from_str("metadata"),
+            DetailPanelMode::Metadata
+        );
         assert_eq!(DetailPanelMode::from_str("both"), DetailPanelMode::Both);
-        assert_eq!(DetailPanelMode::from_str("unknown"), DetailPanelMode::Metadata);
+        assert_eq!(
+            DetailPanelMode::from_str("unknown"),
+            DetailPanelMode::Metadata
+        );
     }
 
     #[test]

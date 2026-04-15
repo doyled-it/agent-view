@@ -16,8 +16,8 @@ pub fn render_new_session(
 ) {
     let has_completions = form.completions.len() > 1;
     let overlay_width = 60u16.min(area.width.saturating_sub(4));
-    let overlay_height = if has_completions { 11u16 } else { 9u16 }
-        .min(area.height.saturating_sub(4));
+    let overlay_height =
+        if has_completions { 11u16 } else { 9u16 }.min(area.height.saturating_sub(4));
 
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;

@@ -86,8 +86,7 @@ fn render_preview(
     }
 
     if preview_content.is_empty() {
-        let loading = Paragraph::new("Loading...")
-            .style(Style::default().fg(theme.text_muted));
+        let loading = Paragraph::new("Loading...").style(Style::default().fg(theme.text_muted));
         frame.render_widget(loading, inner);
         return;
     }
@@ -99,11 +98,7 @@ fn render_preview(
         Ok(core_text) => {
             // Convert ratatui_core types to ratatui types for rendering
             let line_count = core_text.lines.len();
-            let skip = if line_count > height {
-                line_count - height
-            } else {
-                0
-            };
+            let skip = line_count.saturating_sub(height);
             let visible_lines: Vec<Line> = core_text
                 .lines
                 .into_iter()
@@ -375,7 +370,12 @@ fn convert_core_span(s: ratatui_core::text::Span<'_>) -> Span<'_> {
 
 /// Convert a `ratatui_core::Line` to a `ratatui::Line`
 fn convert_core_line(l: ratatui_core::text::Line<'_>) -> Line<'_> {
-    Line::from(l.spans.into_iter().map(convert_core_span).collect::<Vec<_>>())
+    Line::from(
+        l.spans
+            .into_iter()
+            .map(convert_core_span)
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn format_timestamp(ms: i64) -> String {

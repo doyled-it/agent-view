@@ -60,7 +60,8 @@ pub fn spawn(
                     }
                 } else {
                     let is_active = cache.is_session_active(&session.tmux_session, 2);
-                    match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100), false) {
+                    match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100), false)
+                    {
                         Ok(output) => {
                             let tool_str = if session.tool == crate::types::Tool::Claude {
                                 Some("claude")

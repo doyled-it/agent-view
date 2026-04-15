@@ -57,8 +57,7 @@ pub fn handle_new_session_key(
                         }
                     } else {
                         // First Tab press — get completions
-                        let result =
-                            crate::core::path_complete::complete_path(&form.project_path);
+                        let result = crate::core::path_complete::complete_path(&form.project_path);
                         form.project_path = result.completed;
                         form.completions = result.candidates;
                         form.completion_index = None;

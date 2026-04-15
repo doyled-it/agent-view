@@ -15,8 +15,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 
     // When the terminal is wide enough, split horizontally: list on left, detail on right
-    let detail_width =
-        crate::ui::detail::panel_width(app.detail_mode, area.width);
+    let detail_width = crate::ui::detail::panel_width(app.detail_mode, area.width);
     let (list_area, detail_area) =
         if area.width >= crate::ui::detail::DETAIL_PANEL_MIN_WIDTH && detail_width > 0 {
             let cols = Layout::default()

@@ -344,7 +344,8 @@ fn run_tui(
                 let status = session.status;
                 let session_changed =
                     app.preview_last_session.as_deref() != Some(session_id.as_str());
-                let time_elapsed = app.preview_last_capture
+                let time_elapsed = app
+                    .preview_last_capture
                     .map(|t| t.elapsed() >= std::time::Duration::from_millis(200))
                     .unwrap_or(true);
                 if session_changed {

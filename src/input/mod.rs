@@ -332,7 +332,8 @@ pub fn handle_main_key(
             config.detail_panel_mode = app.detail_mode.as_config_str().to_string();
             let _ = crate::core::config::save_config(&config);
             // Suppress config watcher from re-applying (we just wrote it)
-            app.config_changed.store(false, std::sync::atomic::Ordering::Relaxed);
+            app.config_changed
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             // Clear preview state on mode change
             app.preview_content.clear();
             app.preview_last_session = None;

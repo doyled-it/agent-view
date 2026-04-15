@@ -145,9 +145,7 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
             // to avoid matching old submitted commands in scrollback
             if !status.is_busy && !status.is_compacting {
                 let recent_lines = &trimmed_lines[last_10_start..];
-                if let Some(rel_idx) = recent_lines
-                    .iter()
-                    .rposition(|l| l.starts_with('\u{276f}'))
+                if let Some(rel_idx) = recent_lines.iter().rposition(|l| l.starts_with('\u{276f}'))
                 {
                     let prompt_line = recent_lines[rel_idx];
                     let after_prompt = prompt_line.strip_prefix('\u{276f}').unwrap_or("");

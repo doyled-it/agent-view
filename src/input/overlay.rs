@@ -250,7 +250,8 @@ pub fn execute_command_action(
             let mut config = crate::core::config::load_config();
             config.detail_panel_mode = app.detail_mode.as_config_str().to_string();
             let _ = crate::core::config::save_config(&config);
-            app.config_changed.store(false, std::sync::atomic::Ordering::Relaxed);
+            app.config_changed
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             app.preview_content.clear();
             app.preview_last_session = None;
             app.preview_last_capture = None;

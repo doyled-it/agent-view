@@ -41,10 +41,10 @@ pub fn complete_path(input: &str) -> CompletionResult {
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             if name.starts_with(prefix) {
-                if e.file_type().map(|ft| ft.is_symlink()).unwrap_or(false) {
-                    if !e.path().is_dir() {
-                        return None;
-                    }
+                if e.file_type().map(|ft| ft.is_symlink()).unwrap_or(false)
+                    && !e.path().is_dir()
+                {
+                    return None;
                 }
                 Some(name)
             } else {
@@ -166,7 +166,10 @@ mod tests {
         let input = format!("{}/proj", dir.path().display());
         let result = complete_path(&input);
 
-        assert_eq!(result.completed, format!("{}/projects/", dir.path().display()));
+        assert_eq!(
+            result.completed,
+            format!("{}/projects/", dir.path().display())
+        );
         assert_eq!(result.candidates, vec!["projects"]);
     }
 
@@ -217,7 +220,10 @@ mod tests {
     fn test_complete_path_nonexistent_parent() {
         let result = complete_path("/tmp/definitely_does_not_exist_xyz123/sub");
         assert!(result.candidates.is_empty());
-        assert_eq!(result.completed, "/tmp/definitely_does_not_exist_xyz123/sub");
+        assert_eq!(
+            result.completed,
+            "/tmp/definitely_does_not_exist_xyz123/sub"
+        );
     }
 
     #[test]
@@ -238,6 +244,8 @@ mod tests {
     fn test_complete_path_tilde_expansion() {
         let home = dirs::home_dir().unwrap();
         let result = complete_path("~/");
-        assert!(result.completed.starts_with(&home.to_string_lossy().to_string()));
+        assert!(result
+            .completed
+            .starts_with(&home.to_string_lossy().to_string()));
     }
 }
