@@ -121,10 +121,8 @@ pub fn send_notification(options: NotificationOptions) {
                 print!("\x07");
             }
         }
-        Err(_) => {
-            if options.sound {
-                print!("\x07");
-            }
+        Err(_) if options.sound => {
+            print!("\x07");
         }
         _ => {}
     }
