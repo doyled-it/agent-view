@@ -15,9 +15,30 @@ pub fn render_new_session(
     theme: &crate::ui::theme::Theme,
 ) {
     let has_completions = form.completions.len() > 1;
+    let max_completion_rows: usize = 8;
     let overlay_width = 60u16.min(area.width.saturating_sub(4));
-    let overlay_height =
-        if has_completions { 11u16 } else { 9u16 }.min(area.height.saturating_sub(4));
+
+    // Calculate multi-column layout for completions
+    let (num_columns, completion_rows) = if has_completions {
+        // Inner width = overlay - 2 (borders), leave 2 char padding per column
+        let inner_w = overlay_width.saturating_sub(2) as usize;
+        let max_candidate_len = form.completions.iter().map(|c| c.len()).max().unwrap_or(0);
+        let col_width = max_candidate_len + 3; // 2 leading spaces + 1 trailing
+        let cols = (inner_w / col_width).max(1);
+        let rows = form.completions.len().div_ceil(cols);
+        let visible_rows = rows.min(max_completion_rows);
+        (cols, visible_rows)
+    } else {
+        (1, 0)
+    };
+
+    // Base: 7 inner rows (title label + input + spacer + path label + input) + 2 border = 9
+    // With completions: + 1 label row + completion_rows
+    let overlay_height = if has_completions {
+        (9 + 1 + completion_rows as u16).min(area.height.saturating_sub(4))
+    } else {
+        9u16.min(area.height.saturating_sub(4))
+    };
 
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;
@@ -44,7 +65,8 @@ pub fn render_new_session(
         Constraint::Length(1), // Path input
     ];
     if has_completions {
-        constraints.push(Constraint::Length(1)); // Completion hints
+        constraints.push(Constraint::Length(1)); // Completion label
+        constraints.push(Constraint::Length(completion_rows as u16)); // Completion grid
     }
 
     let chunks = Layout::default()
@@ -95,34 +117,58 @@ pub fn render_new_session(
         chunks[4],
     );
 
-    // Completion hint line
+    // Completion grid (multi-column)
     if has_completions {
-        let max_width = inner.width as usize;
-        let mut spans = Vec::new();
-        let mut used_width = 0;
+        let total_rows = form.completions.len().div_ceil(num_columns);
+        let more = if total_rows > max_completion_rows {
+            format!(" ({} matches, Tab to cycle)", form.completions.len())
+        } else {
+            " (Tab to cycle)".to_string()
+        };
+        frame.render_widget(
+            Paragraph::new(more).style(Style::default().fg(theme.text_muted)),
+            chunks[5],
+        );
 
-        for (i, candidate) in form.completions.iter().enumerate() {
-            let is_active = form.completion_index == Some(i);
+        // Determine scroll offset to keep selected row visible
+        let selected = form.completion_index.unwrap_or(0);
+        let selected_row = selected / num_columns;
+        let scroll_offset = if selected_row >= max_completion_rows {
+            selected_row - max_completion_rows + 1
+        } else {
+            0
+        };
 
-            if used_width + candidate.len() + 1 > max_width {
-                break;
+        // Build lines row by row, column by column
+        let grid_area = chunks[6];
+        let col_width = grid_area.width as usize / num_columns;
+        let mut lines: Vec<Line> = Vec::new();
+
+        for row in scroll_offset..(scroll_offset + completion_rows) {
+            let mut spans: Vec<Span> = Vec::new();
+            for col in 0..num_columns {
+                let idx = row * num_columns + col;
+                if idx < form.completions.len() {
+                    let candidate = &form.completions[idx];
+                    let is_active = form.completion_index == Some(idx);
+                    let display = format!("  {:width$}", candidate, width = col_width - 2);
+                    // Truncate to col_width to prevent overflow
+                    let display: String = display.chars().take(col_width).collect();
+                    let style = if is_active {
+                        Style::default()
+                            .bg(theme.primary)
+                            .fg(theme.selected_item_text)
+                            .bold()
+                    } else {
+                        Style::default().fg(theme.text)
+                    };
+                    spans.push(Span::styled(display, style));
+                }
             }
-
-            if i > 0 {
-                spans.push(Span::raw(" "));
-                used_width += 1;
-            }
-
-            let style = if is_active {
-                Style::default().fg(theme.primary).bold()
-            } else {
-                Style::default().fg(theme.text_muted)
-            };
-            spans.push(Span::styled(candidate.as_str(), style));
-            used_width += candidate.len();
+            lines.push(Line::from(spans));
         }
 
-        frame.render_widget(Paragraph::new(Line::from(spans)), chunks[5]);
+        frame.render_widget(Paragraph::new(lines), grid_area);
     }
 }
 
