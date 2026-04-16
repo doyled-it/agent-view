@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.2] - 2026-04-16
+
+### Changed
+
+- chore: remove legacy TypeScript codebase and JS tooling (#9) (@doyled-it)
+
 ## [1.1.1] - 2026-04-16
 
 ### Changed
