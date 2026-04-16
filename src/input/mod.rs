@@ -150,10 +150,8 @@ pub fn handle_main_key(
         (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
             app.select_all_visible();
         }
-        (KeyModifiers::NONE, KeyCode::Esc) => {
-            if !app.bulk_selected.is_empty() {
-                app.clear_bulk_selection();
-            }
+        (KeyModifiers::NONE, KeyCode::Esc) if !app.bulk_selected.is_empty() => {
+            app.clear_bulk_selection();
         }
         (KeyModifiers::NONE, KeyCode::Char('r')) => {
             // Restart selected session

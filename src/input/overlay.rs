@@ -59,15 +59,13 @@ pub fn handle_palette_key(
             KeyCode::Esc => {
                 app.overlay = crate::app::Overlay::None;
             }
-            KeyCode::Up | KeyCode::BackTab => {
-                if palette.selected > 0 {
-                    palette.selected -= 1;
-                }
+            KeyCode::Up | KeyCode::BackTab if palette.selected > 0 => {
+                palette.selected -= 1;
             }
-            KeyCode::Down | KeyCode::Tab => {
-                if palette.selected < palette.filtered.len().saturating_sub(1) {
-                    palette.selected += 1;
-                }
+            KeyCode::Down | KeyCode::Tab
+                if palette.selected < palette.filtered.len().saturating_sub(1) =>
+            {
+                palette.selected += 1;
             }
             KeyCode::Enter => {
                 if let Some(&idx) = palette.filtered.get(palette.selected) {

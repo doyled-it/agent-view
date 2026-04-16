@@ -251,15 +251,13 @@ pub fn handle_move_key(
             KeyCode::Esc => {
                 app.overlay = crate::app::Overlay::None;
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if form.selected > 0 {
-                    form.selected -= 1;
-                }
+            KeyCode::Up | KeyCode::Char('k') if form.selected > 0 => {
+                form.selected -= 1;
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if form.selected < form.groups.len().saturating_sub(1) {
-                    form.selected += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j')
+                if form.selected < form.groups.len().saturating_sub(1) =>
+            {
+                form.selected += 1;
             }
             KeyCode::Enter => {
                 if let Some((ref path, ref name)) = form.groups.get(form.selected).cloned() {
