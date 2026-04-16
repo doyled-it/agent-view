@@ -1,18 +1,11 @@
-# Dependencies
-node_modules/
-
 # Build output
-dist/
+/target
 bin/
 
 # Database
 *.db
 *.db-wal
 *.db-shm
-
-# Bun
-bun.lockb
-*.bun-build
 
 # OS
 .DS_Store
@@ -30,11 +23,3 @@ Thumbs.db
 # Environment
 .env
 .env.local
-
-# Test coverage
-coverage/
-
-
-# Added by cargo
-
-/target
