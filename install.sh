@@ -227,7 +227,7 @@ download_and_install() {
         echo -e "${RED}Download failed. The release may not have binaries for your platform.${NC}"
         echo -e "${MUTED}You can install from source instead:${NC}"
         echo -e "  git clone https://github.com/$REPO.git"
-        echo -e "  cd agent-view && bun install && bun run build"
+        echo -e "  cd agent-view && cargo build --release"
         rm -rf "$tmp_dir"
         exit 1
     fi

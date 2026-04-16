@@ -1,93 +1,42 @@
 # Agent View
 
-OpenTUI-based terminal interface for managing and monitoring AI coding agent sessions.
+Rust/ratatui terminal UI for managing AI coding agent sessions via tmux.
 
-## Tech Stack
-
-- **Runtime:** Bun
-- **Framework:** Solid.js
-- **UI:** OpenTUI (terminal UI framework)
-- **Storage:** SQLite (via bun:sqlite)
-- **Session Management:** tmux
-
-## Project Structure
-
-```
-src/
-├── cli/           # CLI entry point
-├── core/          # Core business logic
-│   ├── git.ts     # Git/worktree utilities
-│   ├── history.ts # History manager for autocomplete
-│   ├── session.ts # Session lifecycle management
-│   ├── storage.ts # SQLite storage layer
-│   ├── tmux.ts    # tmux session control
-│   └── types.ts   # TypeScript types
-└── tui/           # Terminal UI
-    ├── component/ # Reusable components (dialogs)
-    ├── context/   # Solid.js contexts (theme, sync, routes)
-    ├── routes/    # Page components (home, session)
-    └── ui/        # Base UI components (dialog, toast, autocomplete)
-```
-
-## Key Features
-
-- **Session Management:** Create, stop, restart, delete AI agent sessions
-- **Multiple Tools:** Claude Code, OpenCode, Gemini, Codex, Custom commands
-- **Git Worktrees:** Create sessions in isolated git worktrees
-- **Auto-suggestions:** Fuzzy search for previously used paths and branch names
-- **Status Monitoring:** Real-time session status (running, waiting, idle, error)
-
-## Installation
-
-### Quick Install (Recommended)
+## Build & Test
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/install.sh | bash
+cargo build            # Debug build
+cargo build --release  # Release build
+cargo test             # Run all tests
+cargo fmt --check      # Check formatting
+cargo clippy -- -D warnings  # Lint (warnings are errors in CI)
 ```
 
-This will:
-- Install Bun if not present
-- Clone the repository to `~/.agent-view`
-- Build the project
-- Create `agent-view` and `av` commands in `~/.local/bin`
+IMPORTANT: CI runs `rust:latest` which may be newer than the local toolchain. Always run `cargo clippy -- -D warnings` before pushing. If available, use `rustup run nightly cargo clippy -- -D warnings` to catch upcoming lint changes.
 
-### Manual Install
+## Code Style
 
-```bash
-git clone https://github.com/doyled-it/agent-view.git
-cd agent-view
-bun install
-bun run build
-```
+- Run `cargo fmt` and `cargo clippy -- -D warnings` before every commit
+- Pre-commit hooks enforce fmt and clippy — do not skip with `--no-verify`
+- Prefer match guards over if-blocks inside match arms (clippy `collapsible_match`)
 
-### Compile to Standalone Binary
+## Architecture
 
-```bash
-bun run compile        # Compile for current platform
-bun run compile:all    # Compile for all platforms (darwin/linux, x64/arm64)
-```
+- `src/core/` — business logic, storage, tmux integration (no UI imports)
+- `src/ui/` — ratatui rendering only (no mutation of app state)
+- `src/input/` — keyboard handlers that mutate `App` state
+- `src/app.rs` — central `App` struct, overlay enums, command palette
+- `src/types.rs` — shared types used across modules
 
-Binaries are output to the `bin/` directory.
+## Key Patterns
 
-### Uninstall
+- Overlays (dialogs) are rendered in `src/ui/overlay.rs`, input handled in `src/input/session.rs` and `src/input/overlay.rs`
+- Session status is detected by parsing tmux pane output in `src/core/status.rs`
+- All storage goes through `src/core/storage.rs` (SQLite via rusqlite with bundled feature)
+- Themes are defined in `src/ui/theme.rs` — all colors come from the `Theme` struct, never hardcoded
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/doyled-it/agent-view/main/uninstall.sh | bash
-```
+## Testing
 
-## Development
-
-```bash
-bun install      # Install dependencies
-bun run dev      # Run in development mode
-bun run build    # Build for production
-bun run compile  # Compile standalone binary
-bun test         # Run tests
-```
-
-## Important Files
-
-- `src/tui/component/dialog-new.tsx` - New session dialog with tool selection
-- `src/tui/routes/home.tsx` - Main home screen with session list
-- `src/core/session.ts` - Session creation and lifecycle
-- `src/core/git.ts` - Git worktree operations
+- Tests live alongside source in `#[cfg(test)] mod tests` blocks
+- Storage tests use in-memory SQLite (`:memory:`)
+- No mocking framework — use real implementations where possible
