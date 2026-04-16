@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.1] - 2026-04-16
+
+### Changed
+
+- fix(ui): render autocomplete completions as multi-column grid (#8) (@doyled-it)
+
 ## [1.1.0] - 2026-04-15
 
 ### Changed
