@@ -146,6 +146,105 @@ pub struct NoteEntry {
     pub text: String,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum RoutineStep {
+    Claude { prompt: String },
+    Shell { command: String },
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RunStatus {
+    Running,
+    Completed,
+    Failed,
+    TimedOut,
+    Crashed,
+}
+
+impl RunStatus {
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::TimedOut => "timed_out",
+            Self::Crashed => "crashed",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "running" => Self::Running,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "timed_out" => Self::TimedOut,
+            "crashed" => Self::Crashed,
+            _ => Self::Failed,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Running => "●",
+            Self::Completed => "✓",
+            Self::Failed => "✗",
+            Self::TimedOut => "⏱",
+            Self::Crashed => "⚠",
+        }
+    }
+}
+
+impl std::fmt::Display for RunStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct Routine {
+    pub id: String,
+    pub name: String,
+    pub group_path: String,
+    pub sort_order: i32,
+    pub working_dir: String,
+    pub default_tool: String,
+    pub schedule: String,
+    pub steps: Vec<RoutineStep>,
+    pub enabled: bool,
+    pub created_at: i64,
+    pub last_run_at: Option<i64>,
+    pub next_run_at: Option<i64>,
+    pub run_count: i32,
+    pub pinned: bool,
+    pub notify: bool,
+    pub step_timeout_secs: i32,
+    pub expanded: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct RoutineRun {
+    pub id: String,
+    pub routine_id: String,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub status: RunStatus,
+    pub steps_completed: i32,
+    pub steps_total: i32,
+    pub log_path: Option<String>,
+    pub tmux_session: Option<String>,
+    pub tool_data: String,
+    pub promoted_session_id: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: String,
@@ -567,5 +666,43 @@ mod tests {
         let notes: Vec<NoteEntry> = vec![];
         let json = serde_json::to_string(&notes).unwrap();
         assert_eq!(json, "[]");
+    }
+
+    #[test]
+    fn test_routine_step_serialize_roundtrip() {
+        let steps = vec![
+            RoutineStep::Claude { prompt: "Generate briefing".to_string() },
+            RoutineStep::Shell { command: "git pull".to_string() },
+        ];
+        let json = serde_json::to_string(&steps).unwrap();
+        let parsed: Vec<RoutineStep> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 2);
+        match &parsed[0] {
+            RoutineStep::Claude { prompt } => assert_eq!(prompt, "Generate briefing"),
+            _ => panic!("expected Claude step"),
+        }
+        match &parsed[1] {
+            RoutineStep::Shell { command } => assert_eq!(command, "git pull"),
+            _ => panic!("expected Shell step"),
+        }
+    }
+
+    #[test]
+    fn test_run_status_roundtrip() {
+        let statuses = [
+            RunStatus::Running,
+            RunStatus::Completed,
+            RunStatus::Failed,
+            RunStatus::TimedOut,
+            RunStatus::Crashed,
+        ];
+        for s in statuses {
+            assert_eq!(RunStatus::from_str(s.as_str()), s);
+        }
+    }
+
+    #[test]
+    fn test_run_status_unknown_defaults_to_failed() {
+        assert_eq!(RunStatus::from_str("unknown"), RunStatus::Failed);
     }
 }
