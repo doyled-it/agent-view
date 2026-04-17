@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, Result as SqlResult};
 use std::fs;
 use std::path::PathBuf;
 
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 pub struct Storage {
     conn: Connection,
@@ -148,6 +148,50 @@ impl Storage {
                 "ALTER TABLE sessions ADD COLUMN notes TEXT NOT NULL DEFAULT '[]'",
                 [],
             );
+        }
+
+        // v6 -> v7: Add routines and routine_runs tables
+        if version < 7 {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS routines (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    group_path TEXT NOT NULL DEFAULT 'my-routines',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    working_dir TEXT NOT NULL,
+                    default_tool TEXT NOT NULL DEFAULT 'claude',
+                    schedule TEXT NOT NULL,
+                    steps TEXT NOT NULL DEFAULT '[]',
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    last_run_at INTEGER,
+                    next_run_at INTEGER,
+                    run_count INTEGER NOT NULL DEFAULT 0,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    notify INTEGER NOT NULL DEFAULT 1,
+                    step_timeout_secs INTEGER NOT NULL DEFAULT 1800
+                )",
+            )?;
+
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS routine_runs (
+                    id TEXT PRIMARY KEY,
+                    routine_id TEXT NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+                    started_at INTEGER NOT NULL,
+                    finished_at INTEGER,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    steps_completed INTEGER NOT NULL DEFAULT 0,
+                    steps_total INTEGER NOT NULL,
+                    log_path TEXT,
+                    tmux_session TEXT,
+                    tool_data TEXT NOT NULL DEFAULT '{}',
+                    promoted_session_id TEXT
+                )",
+            )?;
+
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_routine_runs_routine_id ON routine_runs(routine_id)",
+            )?;
         }
 
         // Set schema version
@@ -661,7 +705,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("6".to_string()));
+        assert_eq!(version, Some("7".to_string()));
     }
 
     #[test]
@@ -669,7 +713,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("6".to_string()));
+        assert_eq!(version, Some("7".to_string()));
     }
 
     #[test]
@@ -1026,5 +1070,66 @@ mod tests {
         storage.move_session_to_group("s1", "work").unwrap();
         let loaded = storage.get_session("s1").unwrap().unwrap();
         assert_eq!(loaded.group_path, "work");
+    }
+
+    #[test]
+    fn test_v7_routines_table_exists() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO routines (id, name, working_dir, schedule, steps, created_at)
+                 VALUES ('r1', 'Test', '/tmp', '0 9 * * *', '[]', 0)",
+                [],
+            )
+            .unwrap();
+
+        let name: String = storage
+            .conn()
+            .query_row(
+                "SELECT name FROM routines WHERE id = 'r1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Test");
+    }
+
+    #[test]
+    fn test_v7_routine_runs_table_exists() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO routines (id, name, working_dir, schedule, steps, created_at)
+                 VALUES ('r1', 'Test', '/tmp', '0 9 * * *', '[]', 0)",
+                [],
+            )
+            .unwrap();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO routine_runs (id, routine_id, started_at, status, steps_total)
+                 VALUES ('run1', 'r1', 0, 'running', 2)",
+                [],
+            )
+            .unwrap();
+
+        let status: String = storage
+            .conn()
+            .query_row(
+                "SELECT status FROM routine_runs WHERE id = 'run1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "running");
+    }
+
+    #[test]
+    fn test_v7_schema_version() {
+        let (storage, _dir) = test_storage();
+        let version = storage.get_meta("schema_version").unwrap();
+        assert_eq!(version, Some("7".to_string()));
     }
 }
