@@ -8,6 +8,7 @@ pub mod notify;
 pub mod path_complete;
 pub mod session;
 pub mod status;
+pub mod schedule;
 pub mod storage;
 pub mod tmux;
 pub mod tokens;
