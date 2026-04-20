@@ -101,7 +101,30 @@ pub fn render(frame: &mut Frame, app: &App) {
                 }
             }
             crate::app::ActiveTab::Routines => {
-                // Detail panel for routines will be added in Task 12
+                match app.routine_list_rows.get(app.routine_selected_index) {
+                    Some(crate::app::RoutineListRow::Routine(routine)) => {
+                        crate::ui::detail::render_routine_detail(
+                            frame,
+                            detail_rect,
+                            routine,
+                            &app.theme,
+                            app.detail_mode,
+                            &app.preview_content,
+                        );
+                    }
+                    Some(crate::app::RoutineListRow::Run { run, routine_name }) => {
+                        crate::ui::detail::render_run_detail(
+                            frame,
+                            detail_rect,
+                            run,
+                            routine_name,
+                            &app.theme,
+                            app.detail_mode,
+                            &app.preview_content,
+                        );
+                    }
+                    _ => {}
+                }
             }
         }
     }

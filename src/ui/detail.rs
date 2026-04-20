@@ -378,6 +378,278 @@ fn convert_core_line(l: ratatui_core::text::Line<'_>) -> Line<'_> {
     )
 }
 
+/// Render detail panel for a routine
+pub fn render_routine_detail(
+    frame: &mut Frame,
+    area: Rect,
+    routine: &crate::types::Routine,
+    theme: &Theme,
+    mode: DetailPanelMode,
+    preview_content: &str,
+) {
+    match mode {
+        DetailPanelMode::None => {}
+        DetailPanelMode::Preview => {
+            render_routine_preview(frame, area, theme, preview_content);
+        }
+        DetailPanelMode::Metadata => {
+            render_routine_metadata(frame, area, routine, theme);
+        }
+        DetailPanelMode::Both => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                .split(area);
+            render_routine_preview(frame, chunks[0], theme, preview_content);
+            render_routine_metadata(frame, chunks[1], routine, theme);
+        }
+    }
+}
+
+/// Render detail panel for a run
+pub fn render_run_detail(
+    frame: &mut Frame,
+    area: Rect,
+    run: &crate::types::RoutineRun,
+    routine_name: &str,
+    theme: &Theme,
+    mode: DetailPanelMode,
+    preview_content: &str,
+) {
+    match mode {
+        DetailPanelMode::None => {}
+        DetailPanelMode::Preview => {
+            render_routine_preview(frame, area, theme, preview_content);
+        }
+        DetailPanelMode::Metadata => {
+            render_run_metadata(frame, area, run, routine_name, theme);
+        }
+        DetailPanelMode::Both => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                .split(area);
+            render_routine_preview(frame, chunks[0], theme, preview_content);
+            render_run_metadata(frame, chunks[1], run, routine_name, theme);
+        }
+    }
+}
+
+fn render_routine_preview(frame: &mut Frame, area: Rect, theme: &Theme, preview_content: &str) {
+    let block = Block::default()
+        .title(" Run Log ")
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if preview_content.is_empty() {
+        let msg =
+            Paragraph::new("No log available").style(Style::default().fg(theme.text_muted));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let height = inner.height as usize;
+    let lines: Vec<&str> = preview_content.lines().collect();
+    let skip = lines.len().saturating_sub(height);
+    let visible: Vec<Line> = lines.into_iter().skip(skip).map(Line::raw).collect();
+    frame.render_widget(Paragraph::new(visible), inner);
+}
+
+fn render_routine_metadata(
+    frame: &mut Frame,
+    area: Rect,
+    routine: &crate::types::Routine,
+    theme: &Theme,
+) {
+    let block = Block::default()
+        .title(" Routine Details ")
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let schedule_str = crate::core::schedule::human_readable(&routine.schedule);
+    let enabled_str = if routine.enabled { "Yes" } else { "No" };
+    let next_str = routine
+        .next_run_at
+        .map(|t| {
+            use chrono::{Local, TimeZone};
+            Local
+                .timestamp_millis_opt(t)
+                .single()
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| "???".to_string())
+        })
+        .unwrap_or_else(|| "N/A".to_string());
+
+    let steps_str = routine
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, step)| match step {
+            crate::types::RoutineStep::Claude { prompt } => {
+                format!("  {}. [claude] {}", i + 1, truncate(prompt, 30))
+            }
+            crate::types::RoutineStep::Shell { command } => {
+                format!("  {}. [shell] {}", i + 1, truncate(command, 30))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut all_lines = vec![
+        Line::from(vec![
+            Span::styled(" Name: ", Style::default().fg(theme.text_muted)),
+            Span::styled(&routine.name, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Schedule: ", Style::default().fg(theme.text_muted)),
+            Span::styled(schedule_str, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Enabled: ", Style::default().fg(theme.text_muted)),
+            Span::styled(enabled_str, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Next run: ", Style::default().fg(theme.text_muted)),
+            Span::styled(next_str, Style::default().fg(theme.info)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Working dir: ", Style::default().fg(theme.text_muted)),
+            Span::styled(&routine.working_dir, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Run count: ", Style::default().fg(theme.text_muted)),
+            Span::styled(routine.run_count.to_string(), Style::default().fg(theme.text)),
+        ]),
+        Line::from(Span::styled(
+            " Steps:",
+            Style::default().fg(theme.text_muted),
+        )),
+    ];
+
+    for line_str in steps_str.lines() {
+        all_lines.push(Line::from(Span::styled(
+            line_str.to_string(),
+            Style::default().fg(theme.text),
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(all_lines), inner);
+}
+
+fn render_run_metadata(
+    frame: &mut Frame,
+    area: Rect,
+    run: &crate::types::RoutineRun,
+    routine_name: &str,
+    theme: &Theme,
+) {
+    let block = Block::default()
+        .title(" Run Details ")
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    use chrono::{Local, TimeZone};
+    let started = Local
+        .timestamp_millis_opt(run.started_at)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| "???".to_string());
+    let finished = run
+        .finished_at
+        .map(|t| {
+            Local
+                .timestamp_millis_opt(t)
+                .single()
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "???".to_string())
+        })
+        .unwrap_or_else(|| "running...".to_string());
+    let duration = run
+        .finished_at
+        .map(|f| {
+            let ms = f - run.started_at;
+            let secs = ms / 1000;
+            if secs > 3600 {
+                format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
+            } else if secs > 60 {
+                format!("{}m{}s", secs / 60, secs % 60)
+            } else {
+                format!("{}s", secs)
+            }
+        })
+        .unwrap_or_else(|| "...".to_string());
+
+    let status_color = match run.status {
+        crate::types::RunStatus::Completed => theme.success,
+        crate::types::RunStatus::Running => theme.info,
+        crate::types::RunStatus::Failed => theme.error,
+        crate::types::RunStatus::TimedOut => theme.warning,
+        crate::types::RunStatus::Crashed => theme.error,
+    };
+
+    let mut all_lines = vec![
+        Line::from(vec![
+            Span::styled(" Routine: ", Style::default().fg(theme.text_muted)),
+            Span::styled(routine_name, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Status: ", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                format!("{} {}", run.status.icon(), run.status),
+                Style::default().fg(status_color),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(" Started: ", Style::default().fg(theme.text_muted)),
+            Span::styled(started, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Finished: ", Style::default().fg(theme.text_muted)),
+            Span::styled(finished, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Duration: ", Style::default().fg(theme.text_muted)),
+            Span::styled(duration, Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Steps: ", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                format!("{}/{}", run.steps_completed, run.steps_total),
+                Style::default().fg(theme.text),
+            ),
+        ]),
+    ];
+
+    if let Some(ref promoted_id) = run.promoted_session_id {
+        all_lines.push(Line::from(vec![
+            Span::styled(" Promoted: ", Style::default().fg(theme.text_muted)),
+            Span::styled(promoted_id, Style::default().fg(theme.accent)),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(all_lines), inner);
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max - 3])
+    }
+}
+
 fn format_timestamp(ms: i64) -> String {
     use chrono::{Local, TimeZone, Utc};
     let dt = Utc.timestamp_millis_opt(ms).single();

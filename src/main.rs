@@ -374,42 +374,113 @@ fn run_tui(
             app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
         }
 
-        // Refresh preview content for the selected session (throttled)
+        // Refresh preview content for the selected item (throttled)
         if app.detail_mode.shows_preview() {
-            let should_capture = if let Some(session) = app.selected_session() {
-                let session_id = session.id.clone();
-                let tmux_empty = session.tmux_session.is_empty();
-                let status = session.status;
-                let session_changed =
-                    app.preview_last_session.as_deref() != Some(session_id.as_str());
-                let time_elapsed = app
-                    .preview_last_capture
-                    .map(|t| t.elapsed() >= std::time::Duration::from_millis(200))
-                    .unwrap_or(true);
-                if session_changed {
-                    app.preview_last_session = Some(session_id);
-                    app.preview_content.clear();
-                }
-                (session_changed || time_elapsed)
-                    && !tmux_empty
-                    && status != crate::types::SessionStatus::Stopped
-                    && status != crate::types::SessionStatus::Crashed
-            } else {
-                false
-            };
-
-            if should_capture {
-                if let Some(session) = app.selected_session() {
-                    let tmux_name = session.tmux_session.clone();
-                    match crate::core::tmux::capture_pane(&tmux_name, Some(-50), true) {
-                        Ok(content) => {
-                            app.preview_content = content;
-                        }
-                        Err(_) => {
+            match app.active_tab {
+                crate::app::ActiveTab::Sessions => {
+                    let should_capture = if let Some(session) = app.selected_session() {
+                        let session_id = session.id.clone();
+                        let tmux_empty = session.tmux_session.is_empty();
+                        let status = session.status;
+                        let session_changed =
+                            app.preview_last_session.as_deref() != Some(session_id.as_str());
+                        let time_elapsed = app
+                            .preview_last_capture
+                            .map(|t| t.elapsed() >= std::time::Duration::from_millis(200))
+                            .unwrap_or(true);
+                        if session_changed {
+                            app.preview_last_session = Some(session_id);
                             app.preview_content.clear();
                         }
+                        (session_changed || time_elapsed)
+                            && !tmux_empty
+                            && status != crate::types::SessionStatus::Stopped
+                            && status != crate::types::SessionStatus::Crashed
+                    } else {
+                        false
+                    };
+
+                    if should_capture {
+                        if let Some(session) = app.selected_session() {
+                            let tmux_name = session.tmux_session.clone();
+                            match crate::core::tmux::capture_pane(&tmux_name, Some(-50), true) {
+                                Ok(content) => {
+                                    app.preview_content = content;
+                                }
+                                Err(_) => {
+                                    app.preview_content.clear();
+                                }
+                            }
+                            app.preview_last_capture = Some(std::time::Instant::now());
+                        }
                     }
-                    app.preview_last_capture = Some(std::time::Instant::now());
+                }
+                crate::app::ActiveTab::Routines => {
+                    let should_capture = app
+                        .preview_last_capture
+                        .map(|t| t.elapsed() >= std::time::Duration::from_millis(500))
+                        .unwrap_or(true);
+
+                    if should_capture {
+                        let content =
+                            match app.routine_list_rows.get(app.routine_selected_index) {
+                                Some(crate::app::RoutineListRow::Routine(routine)) => {
+                                    app.routine_runs_cache
+                                        .get(&routine.id)
+                                        .and_then(|runs| runs.first())
+                                        .and_then(|run| {
+                                            if run.finished_at.is_none() {
+                                                if let Some(ref tmux_name) = run.tmux_session {
+                                                    if crate::core::tmux::session_exists(tmux_name)
+                                                    {
+                                                        return crate::core::tmux::capture_pane(
+                                                            tmux_name,
+                                                            Some(-50),
+                                                            true,
+                                                        )
+                                                        .ok();
+                                                    }
+                                                }
+                                            }
+                                            run.log_path
+                                                .as_ref()
+                                                .and_then(|p| std::fs::read_to_string(p).ok())
+                                        })
+                                        .unwrap_or_default()
+                                }
+                                Some(crate::app::RoutineListRow::Run { run, .. }) => {
+                                    if run.finished_at.is_none() {
+                                        if let Some(ref tmux_name) = run.tmux_session {
+                                            if crate::core::tmux::session_exists(tmux_name) {
+                                                crate::core::tmux::capture_pane(
+                                                    tmux_name,
+                                                    Some(-50),
+                                                    true,
+                                                )
+                                                .unwrap_or_default()
+                                            } else {
+                                                run.log_path
+                                                    .as_ref()
+                                                    .and_then(|p| {
+                                                        std::fs::read_to_string(p).ok()
+                                                    })
+                                                    .unwrap_or_default()
+                                            }
+                                        } else {
+                                            String::new()
+                                        }
+                                    } else {
+                                        run.log_path
+                                            .as_ref()
+                                            .and_then(|p| std::fs::read_to_string(p).ok())
+                                            .unwrap_or_default()
+                                    }
+                                }
+                                _ => String::new(),
+                            };
+                        app.preview_content = content;
+                        app.preview_last_capture = Some(std::time::Instant::now());
+                    }
                 }
             }
         } else if !app.preview_content.is_empty() {
