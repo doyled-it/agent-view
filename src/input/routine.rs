@@ -30,7 +30,11 @@ pub fn handle_routine_list_key(
 
         // Enter: expand/collapse routine to show runs, or toggle group
         (KeyModifiers::NONE, KeyCode::Enter) => {
-            match app.routine_list_rows.get(app.routine_selected_index).cloned() {
+            match app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
+            {
                 Some(RoutineListRow::Group { group, .. }) => {
                     let path = group.path.clone();
                     if let Some(g) = app.groups.iter_mut().find(|g| g.path == path) {
@@ -56,8 +60,10 @@ pub fn handle_routine_list_key(
 
         // Space: toggle enabled/disabled
         (KeyModifiers::NONE, KeyCode::Char(' ')) => {
-            if let Some(RoutineListRow::Routine(routine)) =
-                app.routine_list_rows.get(app.routine_selected_index).cloned()
+            if let Some(RoutineListRow::Routine(routine)) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
             {
                 let new_enabled = !routine.enabled;
                 let _ = storage.set_routine_enabled(&routine.id, new_enabled);
@@ -79,7 +85,11 @@ pub fn handle_routine_list_key(
 
         // d: delete routine or run
         (KeyModifiers::NONE, KeyCode::Char('d')) => {
-            match app.routine_list_rows.get(app.routine_selected_index).cloned() {
+            match app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
+            {
                 Some(RoutineListRow::Routine(routine)) => {
                     app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
                         message: format!("Delete routine '{}'?", routine.name),
@@ -103,8 +113,10 @@ pub fn handle_routine_list_key(
 
         // e: edit routine
         (KeyModifiers::NONE, KeyCode::Char('e')) => {
-            if let Some(RoutineListRow::Routine(routine)) =
-                app.routine_list_rows.get(app.routine_selected_index).cloned()
+            if let Some(RoutineListRow::Routine(routine)) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
             {
                 app.overlay = Overlay::NewRoutine(NewRoutineForm::from_routine(&routine));
             }
@@ -112,8 +124,10 @@ pub fn handle_routine_list_key(
 
         // p: pin/unpin routine
         (KeyModifiers::NONE, KeyCode::Char('p')) => {
-            if let Some(RoutineListRow::Routine(routine)) =
-                app.routine_list_rows.get(app.routine_selected_index).cloned()
+            if let Some(RoutineListRow::Routine(routine)) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
             {
                 let new_pinned = !routine.pinned;
                 let _ = storage.set_routine_pinned(&routine.id, new_pinned);
@@ -123,10 +137,92 @@ pub fn handle_routine_list_key(
             }
         }
 
+        // P: promote run to session
+        (KeyModifiers::SHIFT, KeyCode::Char('P')) => {
+            if let Some(RoutineListRow::Run { run, .. }) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
+            {
+                if let Some(routine) = app
+                    .routines
+                    .iter()
+                    .find(|r| r.id == run.routine_id)
+                    .cloned()
+                {
+                    let mut session = crate::core::routine::build_promoted_session(&run, &routine);
+
+                    let tmux_alive = run
+                        .tmux_session
+                        .as_ref()
+                        .map(|t| crate::core::tmux::session_exists(t))
+                        .unwrap_or(false);
+
+                    if !tmux_alive {
+                        let tool_data: serde_json::Value = serde_json::from_str(&run.tool_data)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                        let claude_session_id = tool_data
+                            .get("claude_session_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        let tool = routine
+                            .steps
+                            .last()
+                            .map(|s| match s {
+                                crate::types::RoutineStep::Claude { .. } => {
+                                    crate::types::Tool::Claude
+                                }
+                                crate::types::RoutineStep::Shell { .. } => {
+                                    crate::types::Tool::Shell
+                                }
+                            })
+                            .unwrap_or(crate::types::Tool::Shell);
+
+                        let tmux_name = crate::core::tmux::generate_session_name(&format!(
+                            "promoted_{}",
+                            routine.name
+                        ));
+                        let command = match (tool, claude_session_id) {
+                            (crate::types::Tool::Claude, Some(sid)) => {
+                                Some(format!("claude --resume {}", sid))
+                            }
+                            _ => None,
+                        };
+                        let _ = crate::core::tmux::create_session(
+                            &tmux_name,
+                            command.as_deref(),
+                            Some(&routine.working_dir),
+                            None,
+                        );
+                        session.tmux_session = tmux_name;
+                    }
+
+                    let session_title = session.title.clone();
+                    let _ = storage.save_session(&session);
+                    let _ = storage.set_run_promoted(&run.id, &session.id);
+
+                    app.sessions = storage.load_sessions().unwrap_or_default();
+                    app.rebuild_list_rows();
+                    if let Ok(runs) = storage.load_routine_runs(&run.routine_id) {
+                        app.routine_runs_cache.insert(run.routine_id.clone(), runs);
+                    }
+                    app.rebuild_routine_list_rows();
+                    storage.touch().ok();
+
+                    app.toast_message = Some(format!("Promoted to session: {}", session_title));
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+                }
+            }
+        }
+
         // R: rename routine
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
-            if let Some(RoutineListRow::Routine(routine)) =
-                app.routine_list_rows.get(app.routine_selected_index).cloned()
+            if let Some(RoutineListRow::Routine(routine)) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
             {
                 app.overlay = Overlay::Rename(crate::app::RenameForm {
                     target_id: routine.id.clone(),
@@ -437,7 +533,6 @@ fn handle_steps_input(form: &mut NewRoutineForm, key: KeyEvent) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::app::{NewRoutineForm, ScheduleFrequency};
 
     #[test]
