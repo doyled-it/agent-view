@@ -49,8 +49,13 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(list_area);
 
-    render_header(frame, chunks[0], &app.theme);
-    render_session_list(frame, chunks[1], app);
+    render_header(frame, chunks[0], &app.theme, app.active_tab);
+    match app.active_tab {
+        crate::app::ActiveTab::Sessions => render_session_list(frame, chunks[1], app),
+        crate::app::ActiveTab::Routines => {
+            crate::ui::routines::render_routine_list(frame, chunks[1], app)
+        }
+    }
     if show_feed {
         render_activity_feed(frame, chunks[2], app);
         // Separator between activity feed and footer
@@ -80,17 +85,24 @@ pub fn render(frame: &mut Frame, app: &App) {
         crate::ui::footer::render(frame, chunks[4], app);
     }
 
-    // Render detail panel for selected session when wide enough
+    // Render detail panel when wide enough
     if let Some(detail_rect) = detail_area {
-        if let Some(session) = app.selected_session() {
-            crate::ui::detail::render_detail_panel(
-                frame,
-                detail_rect,
-                session,
-                &app.theme,
-                app.detail_mode,
-                &app.preview_content,
-            );
+        match app.active_tab {
+            crate::app::ActiveTab::Sessions => {
+                if let Some(session) = app.selected_session() {
+                    crate::ui::detail::render_detail_panel(
+                        frame,
+                        detail_rect,
+                        session,
+                        &app.theme,
+                        app.detail_mode,
+                        &app.preview_content,
+                    );
+                }
+            }
+            crate::app::ActiveTab::Routines => {
+                // Detail panel for routines will be added in Task 12
+            }
         }
     }
 
@@ -175,13 +187,33 @@ fn format_activity_age(timestamp: i64) -> String {
     }
 }
 
-fn render_header(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
+fn render_header(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &crate::ui::theme::Theme,
+    active_tab: crate::app::ActiveTab,
+) {
     let version = env!("CARGO_PKG_VERSION");
     let header = Line::from(vec![
         Span::styled("agent-view ", Style::default().fg(theme.primary).bold()),
+        Span::styled(format!("v{}", version), Style::default().fg(theme.text_muted)),
+        Span::raw("  "),
         Span::styled(
-            format!("v{}", version),
-            Style::default().fg(theme.text_muted),
+            " Sessions ",
+            if active_tab == crate::app::ActiveTab::Sessions {
+                Style::default().fg(theme.primary).bold().underlined()
+            } else {
+                Style::default().fg(theme.text_muted)
+            },
+        ),
+        Span::raw(" "),
+        Span::styled(
+            " Routines ",
+            if active_tab == crate::app::ActiveTab::Routines {
+                Style::default().fg(theme.primary).bold().underlined()
+            } else {
+                Style::default().fg(theme.text_muted)
+            },
         ),
     ]);
     frame.render_widget(Paragraph::new(header), area);
