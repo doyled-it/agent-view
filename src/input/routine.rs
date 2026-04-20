@@ -1,7 +1,144 @@
 //! Input handling for routine-related overlays
 
-use crate::app::{App, NewRoutineForm, Overlay, ScheduleFrequency};
+use crate::app::{App, NewRoutineForm, Overlay, RoutineListRow, ScheduleFrequency};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+/// Handle key input when on the Routines tab (no overlay active)
+pub fn handle_routine_list_key(
+    app: &mut App,
+    key: KeyEvent,
+    storage: &crate::core::storage::Storage,
+) {
+    match (key.modifiers, key.code) {
+        // Navigation
+        (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
+            if app.routine_selected_index > 0 {
+                app.routine_selected_index -= 1;
+            } else if !app.routine_list_rows.is_empty() {
+                app.routine_selected_index = app.routine_list_rows.len() - 1;
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Down) | (KeyModifiers::NONE, KeyCode::Char('j')) => {
+            if !app.routine_list_rows.is_empty() {
+                if app.routine_selected_index < app.routine_list_rows.len() - 1 {
+                    app.routine_selected_index += 1;
+                } else {
+                    app.routine_selected_index = 0;
+                }
+            }
+        }
+
+        // Enter: expand/collapse routine to show runs, or toggle group
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            match app.routine_list_rows.get(app.routine_selected_index).cloned() {
+                Some(RoutineListRow::Group { group, .. }) => {
+                    let path = group.path.clone();
+                    if let Some(g) = app.groups.iter_mut().find(|g| g.path == path) {
+                        g.expanded = !g.expanded;
+                    }
+                    app.rebuild_routine_list_rows();
+                }
+                Some(RoutineListRow::Routine(routine)) => {
+                    let routine_id = routine.id.clone();
+                    if let Some(r) = app.routines.iter_mut().find(|r| r.id == routine_id) {
+                        r.expanded = !r.expanded;
+                        if r.expanded && !app.routine_runs_cache.contains_key(&routine_id) {
+                            if let Ok(runs) = storage.load_routine_runs(&routine_id) {
+                                app.routine_runs_cache.insert(routine_id.clone(), runs);
+                            }
+                        }
+                    }
+                    app.rebuild_routine_list_rows();
+                }
+                _ => {}
+            }
+        }
+
+        // Space: toggle enabled/disabled
+        (KeyModifiers::NONE, KeyCode::Char(' ')) => {
+            if let Some(RoutineListRow::Routine(routine)) =
+                app.routine_list_rows.get(app.routine_selected_index).cloned()
+            {
+                let new_enabled = !routine.enabled;
+                let _ = storage.set_routine_enabled(&routine.id, new_enabled);
+
+                let scheduler = crate::core::scheduler::platform_scheduler();
+                if new_enabled {
+                    if let Some(r) = app.routines.iter().find(|r| r.id == routine.id) {
+                        let _ = scheduler.install(r);
+                    }
+                } else {
+                    let _ = scheduler.uninstall(&routine.id);
+                }
+
+                app.routines = storage.load_routines().unwrap_or_default();
+                app.rebuild_routine_list_rows();
+                storage.touch().ok();
+            }
+        }
+
+        // d: delete routine or run
+        (KeyModifiers::NONE, KeyCode::Char('d')) => {
+            match app.routine_list_rows.get(app.routine_selected_index).cloned() {
+                Some(RoutineListRow::Routine(routine)) => {
+                    app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
+                        message: format!("Delete routine '{}'?", routine.name),
+                        action: crate::app::ConfirmAction::DeleteRoutine(routine.id.clone()),
+                    });
+                }
+                Some(RoutineListRow::Run { run, .. }) => {
+                    let _ = storage.delete_routine_run(&run.id);
+                    if let Some(ref log_path) = run.log_path {
+                        let _ = std::fs::remove_file(log_path);
+                    }
+                    if let Ok(runs) = storage.load_routine_runs(&run.routine_id) {
+                        app.routine_runs_cache.insert(run.routine_id.clone(), runs);
+                    }
+                    app.rebuild_routine_list_rows();
+                    storage.touch().ok();
+                }
+                _ => {}
+            }
+        }
+
+        // e: edit routine
+        (KeyModifiers::NONE, KeyCode::Char('e')) => {
+            if let Some(RoutineListRow::Routine(routine)) =
+                app.routine_list_rows.get(app.routine_selected_index).cloned()
+            {
+                app.overlay = Overlay::NewRoutine(NewRoutineForm::from_routine(&routine));
+            }
+        }
+
+        // p: pin/unpin routine
+        (KeyModifiers::NONE, KeyCode::Char('p')) => {
+            if let Some(RoutineListRow::Routine(routine)) =
+                app.routine_list_rows.get(app.routine_selected_index).cloned()
+            {
+                let new_pinned = !routine.pinned;
+                let _ = storage.set_routine_pinned(&routine.id, new_pinned);
+                app.routines = storage.load_routines().unwrap_or_default();
+                app.rebuild_routine_list_rows();
+                storage.touch().ok();
+            }
+        }
+
+        // R: rename routine
+        (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
+            if let Some(RoutineListRow::Routine(routine)) =
+                app.routine_list_rows.get(app.routine_selected_index).cloned()
+            {
+                app.overlay = Overlay::Rename(crate::app::RenameForm {
+                    target_id: routine.id.clone(),
+                    target_type: crate::app::RenameTarget::Routine,
+                    input: routine.name.clone(),
+                });
+            }
+        }
+
+        _ => {}
+    }
+}
 
 /// Handle key input for the NewRoutine overlay form
 pub fn handle_new_routine_key(

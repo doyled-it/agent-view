@@ -23,6 +23,26 @@ pub fn handle_main_key(
         return Ok(());
     }
 
+    // When on Routines tab, delegate to routine-specific handler for most keys
+    if app.active_tab == crate::app::ActiveTab::Routines
+        && app.overlay == crate::app::Overlay::None
+    {
+        let pass_through = matches!(
+            (key.modifiers, key.code),
+            (KeyModifiers::NONE, KeyCode::Char('q'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('c'))
+                | (KeyModifiers::NONE, KeyCode::Tab)
+                | (KeyModifiers::NONE, KeyCode::Char('?'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('k'))
+                | (KeyModifiers::NONE, KeyCode::Char('n'))
+                | (KeyModifiers::NONE, KeyCode::Char('v'))
+        );
+        if !pass_through {
+            crate::input::routine::handle_routine_list_key(app, key, storage);
+            return Ok(());
+        }
+    }
+
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
             app.should_quit = true;

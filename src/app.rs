@@ -245,6 +245,7 @@ pub struct RenameForm {
 pub enum RenameTarget {
     Session,
     Group,
+    Routine,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -425,6 +426,7 @@ pub enum ConfirmAction {
     StopSession(String),
     BulkDelete,
     BulkStop,
+    DeleteRoutine(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

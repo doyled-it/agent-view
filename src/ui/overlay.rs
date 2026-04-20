@@ -190,6 +190,7 @@ pub fn render_rename(
     let title = match form.target_type {
         crate::app::RenameTarget::Session => " Rename Session ",
         crate::app::RenameTarget::Group => " Rename Group ",
+        crate::app::RenameTarget::Routine => " Rename Routine ",
     };
     let block = Block::default()
         .title(title)

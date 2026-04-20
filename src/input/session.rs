@@ -170,6 +170,15 @@ pub fn handle_confirm_key(
                         }
                         app.clear_bulk_selection();
                     }
+                    crate::app::ConfirmAction::DeleteRoutine(id) => {
+                        let scheduler = crate::core::scheduler::platform_scheduler();
+                        let _ = scheduler.uninstall(id);
+                        let _ = storage.delete_routine(id);
+                        app.routines = storage.load_routines().unwrap_or_default();
+                        app.routine_runs_cache.remove(id);
+                        app.rebuild_routine_list_rows();
+                        storage.touch().ok();
+                    }
                 }
                 // Refresh sessions
                 if let Ok(sessions) = storage.load_sessions() {
@@ -217,6 +226,12 @@ pub fn handle_rename_key(
                                     let _ = storage.save_group(&group);
                                 }
                             }
+                        }
+                        crate::app::RenameTarget::Routine => {
+                            let _ = storage.rename_routine(&form.target_id, &new_name);
+                            app.routines = storage.load_routines().unwrap_or_default();
+                            app.rebuild_routine_list_rows();
+                            storage.touch().ok();
                         }
                     }
                     if let Ok(sessions) = storage.load_sessions() {
