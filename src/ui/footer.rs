@@ -53,6 +53,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 ("Esc", "cancel"),
             ]
         }
+        Overlay::NewRoutine(_) => {
+            vec![("Tab", "next field"), ("Enter", "save"), ("Esc", "cancel")]
+        }
         Overlay::Confirm(_) => {
             vec![("y", "confirm"), ("n/Esc", "cancel")]
         }

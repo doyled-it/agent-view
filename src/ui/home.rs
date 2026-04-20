@@ -111,6 +111,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::NewSession(form) => {
             crate::ui::overlay::render_new_session(frame, area, form, &app.theme);
         }
+        Overlay::NewRoutine(form) => {
+            crate::ui::overlay::render_new_routine(frame, area, form, &app.theme);
+        }
         Overlay::Confirm(dialog) => {
             crate::ui::overlay::render_confirm(frame, area, dialog, &app.theme);
         }
@@ -196,7 +199,10 @@ fn render_header(
     let version = env!("CARGO_PKG_VERSION");
     let header = Line::from(vec![
         Span::styled("agent-view ", Style::default().fg(theme.primary).bold()),
-        Span::styled(format!("v{}", version), Style::default().fg(theme.text_muted)),
+        Span::styled(
+            format!("v{}", version),
+            Style::default().fg(theme.text_muted),
+        ),
         Span::raw("  "),
         Span::styled(
             " Sessions ",
