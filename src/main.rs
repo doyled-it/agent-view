@@ -13,6 +13,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Parser)]
 #[command(name = "agent-view", version = VERSION, about = "Terminal UI for managing AI coding agent sessions")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Use light mode theme
     #[arg(long)]
     light: bool,
@@ -22,8 +25,22 @@ struct Cli {
     attach: Option<String>,
 }
 
+#[derive(clap::Subcommand)]
+enum Commands {
+    /// Execute a scheduled routine (called by system scheduler)
+    ExecRoutine {
+        /// The routine ID to execute
+        routine_id: String,
+    },
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    // Handle subcommands that don't need the TUI
+    if let Some(Commands::ExecRoutine { routine_id }) = &cli.command {
+        return crate::core::routine::exec_routine(routine_id).map_err(|e| e.into());
+    }
 
     // Verify tmux is available
     if !crate::core::tmux::is_tmux_available() {
