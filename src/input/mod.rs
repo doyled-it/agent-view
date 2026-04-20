@@ -20,6 +20,9 @@ pub fn handle_main_key(
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
             app.should_quit = true;
         }
+        (KeyModifiers::NONE, KeyCode::Tab) => {
+            app.toggle_tab();
+        }
         (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
             app.move_selection_up();
         }

@@ -72,6 +72,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.groups = storage.load_groups().unwrap_or_default();
     app.rebuild_list_rows();
 
+    // Load routines
+    app.routines = storage.load_routines().unwrap_or_default();
+    for routine in &app.routines {
+        if let Ok(runs) = storage.load_routine_runs(&routine.id) {
+            app.routine_runs_cache.insert(routine.id.clone(), runs);
+        }
+    }
+    app.rebuild_routine_list_rows();
+
     // Detect crashed sessions (tmux died since last run)
     let crashed_ids = crate::core::session::detect_crashed_statuses(&app.sessions);
     for id in &crashed_ids {
@@ -327,6 +336,15 @@ fn run_tui(
                 app.sessions = new_sessions;
                 app.groups = storage.load_groups().unwrap_or_default();
                 app.rebuild_list_rows();
+
+                // Reload routines
+                app.routines = storage.load_routines().unwrap_or_default();
+                for routine in &app.routines {
+                    if let Ok(runs) = storage.load_routine_runs(&routine.id) {
+                        app.routine_runs_cache.insert(routine.id.clone(), runs);
+                    }
+                }
+                app.rebuild_routine_list_rows();
             }
         }
 
