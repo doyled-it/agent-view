@@ -6,6 +6,13 @@ use crate::ui::theme::Theme;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveTab {
+    Sessions,
+    Routines,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
     None,
@@ -18,6 +25,20 @@ pub enum Overlay {
     Help,
     ThemeSelect(ThemeSelectForm),
     AddNote(NoteForm),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum RoutineListRow {
+    Group {
+        group: crate::types::Group,
+        routine_count: usize,
+    },
+    Routine(Box<crate::types::Routine>),
+    Run {
+        run: Box<crate::types::RoutineRun>,
+        routine_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -336,6 +357,12 @@ pub struct App {
     pub preview_content: String,
     pub preview_last_session: Option<String>,
     pub preview_last_capture: Option<std::time::Instant>,
+    #[allow(dead_code)]
+    pub active_tab: ActiveTab,
+    pub routines: Vec<crate::types::Routine>,
+    pub routine_runs_cache: std::collections::HashMap<String, Vec<crate::types::RoutineRun>>,
+    pub routine_list_rows: Vec<RoutineListRow>,
+    pub routine_selected_index: usize,
 }
 
 impl App {
@@ -367,6 +394,11 @@ impl App {
             preview_content: String::new(),
             preview_last_session: None,
             preview_last_capture: None,
+            active_tab: ActiveTab::Sessions,
+            routines: Vec::new(),
+            routine_runs_cache: std::collections::HashMap::new(),
+            routine_list_rows: Vec::new(),
+            routine_selected_index: 0,
         }
     }
 
@@ -464,6 +496,110 @@ impl App {
             self.selected_index = 0;
         } else if self.selected_index >= self.list_rows.len() {
             self.selected_index = self.list_rows.len() - 1;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn toggle_tab(&mut self) {
+        self.active_tab = match self.active_tab {
+            ActiveTab::Sessions => ActiveTab::Routines,
+            ActiveTab::Routines => ActiveTab::Sessions,
+        };
+    }
+
+    /// Rebuild the flattened routine list from current routines and their runs
+    #[allow(dead_code)]
+    pub fn rebuild_routine_list_rows(&mut self) {
+        let mut rows: Vec<RoutineListRow> = Vec::new();
+
+        // Group routines by group_path
+        let mut groups_map: std::collections::HashMap<String, Vec<&crate::types::Routine>> =
+            std::collections::HashMap::new();
+        for routine in &self.routines {
+            groups_map
+                .entry(routine.group_path.clone())
+                .or_default()
+                .push(routine);
+        }
+
+        // Sort groups by name
+        let mut group_paths: Vec<String> = groups_map.keys().cloned().collect();
+        group_paths.sort();
+
+        for group_path in &group_paths {
+            let group_routines = &groups_map[group_path];
+            let group_name = group_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(group_path)
+                .to_string();
+
+            // Check if this group is expanded (look in self.groups first, default to expanded)
+            let expanded = self
+                .groups
+                .iter()
+                .find(|g| g.path == *group_path)
+                .map(|g| g.expanded)
+                .unwrap_or(true);
+
+            let group = crate::types::Group {
+                path: group_path.clone(),
+                name: group_name,
+                expanded,
+                order: 0,
+                default_path: String::new(),
+            };
+
+            rows.push(RoutineListRow::Group {
+                group,
+                routine_count: group_routines.len(),
+            });
+
+            if expanded {
+                for routine in group_routines {
+                    rows.push(RoutineListRow::Routine(Box::new((*routine).clone())));
+
+                    // If routine is expanded, add its runs
+                    if routine.expanded {
+                        if let Some(runs) = self.routine_runs_cache.get(&routine.id) {
+                            for run in runs {
+                                rows.push(RoutineListRow::Run {
+                                    run: Box::new(run.clone()),
+                                    routine_name: routine.name.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.routine_list_rows = rows;
+        self.clamp_routine_selection();
+    }
+
+    #[allow(dead_code)]
+    pub fn clamp_routine_selection(&mut self) {
+        if self.routine_list_rows.is_empty() {
+            self.routine_selected_index = 0;
+        } else if self.routine_selected_index >= self.routine_list_rows.len() {
+            self.routine_selected_index = self.routine_list_rows.len() - 1;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn selected_routine(&self) -> Option<&crate::types::Routine> {
+        match self.routine_list_rows.get(self.routine_selected_index) {
+            Some(RoutineListRow::Routine(r)) => Some(r),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn selected_run(&self) -> Option<&crate::types::RoutineRun> {
+        match self.routine_list_rows.get(self.routine_selected_index) {
+            Some(RoutineListRow::Run { run, .. }) => Some(run),
+            _ => None,
         }
     }
 }
@@ -829,6 +965,16 @@ mod tests {
         app.sort_mode = SortMode::StatusPriority;
         app.rebuild_list_rows();
         assert_eq!(app.list_rows.len(), count);
+    }
+
+    #[test]
+    fn test_active_tab_toggles() {
+        let mut app = App::new(false);
+        assert_eq!(app.active_tab, ActiveTab::Sessions);
+        app.toggle_tab();
+        assert_eq!(app.active_tab, ActiveTab::Routines);
+        app.toggle_tab();
+        assert_eq!(app.active_tab, ActiveTab::Sessions);
     }
 
     #[test]
