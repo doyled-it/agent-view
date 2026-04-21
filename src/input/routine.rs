@@ -19,13 +19,13 @@ pub fn handle_routine_list_key(
                 app.routine_selected_index = app.routine_list_rows.len() - 1;
             }
         }
-        (KeyModifiers::NONE, KeyCode::Down) | (KeyModifiers::NONE, KeyCode::Char('j')) => {
-            if !app.routine_list_rows.is_empty() {
-                if app.routine_selected_index < app.routine_list_rows.len() - 1 {
-                    app.routine_selected_index += 1;
-                } else {
-                    app.routine_selected_index = 0;
-                }
+        (KeyModifiers::NONE, KeyCode::Down) | (KeyModifiers::NONE, KeyCode::Char('j'))
+            if !app.routine_list_rows.is_empty() =>
+        {
+            if app.routine_selected_index < app.routine_list_rows.len() - 1 {
+                app.routine_selected_index += 1;
+            } else {
+                app.routine_selected_index = 0;
             }
         }
 
@@ -483,18 +483,15 @@ pub fn handle_new_routine_key(
             // Field-specific input
             match form.focused_field {
                 0 => handle_text_input(&mut form.name, key), // Name
-                1 => {
-                    // Default tool toggle
-                    if key.code == KeyCode::Left
-                        || key.code == KeyCode::Right
-                        || key.code == KeyCode::Char(' ')
-                    {
-                        form.default_tool = if form.default_tool == "claude" {
-                            "shell".to_string()
-                        } else {
-                            "claude".to_string()
-                        };
-                    }
+                1 if key.code == KeyCode::Left
+                    || key.code == KeyCode::Right
+                    || key.code == KeyCode::Char(' ') =>
+                {
+                    form.default_tool = if form.default_tool == "claude" {
+                        "shell".to_string()
+                    } else {
+                        "claude".to_string()
+                    };
                 }
                 2 => {
                     // Working dir with autocomplete
@@ -508,14 +505,11 @@ pub fn handle_new_routine_key(
                     // Steps
                     handle_steps_input(form, key);
                 }
-                5 => {
-                    // Notifications toggle
-                    if key.code == KeyCode::Char(' ')
-                        || key.code == KeyCode::Left
-                        || key.code == KeyCode::Right
-                    {
-                        form.notify = !form.notify;
-                    }
+                5 if key.code == KeyCode::Char(' ')
+                    || key.code == KeyCode::Left
+                    || key.code == KeyCode::Right =>
+                {
+                    form.notify = !form.notify;
                 }
                 6 => {
                     // Step timeout
@@ -559,34 +553,30 @@ fn handle_path_input(form: &mut NewRoutineForm, key: KeyEvent) {
                 crate::core::path_complete::complete_path(&form.working_dir).candidates;
             form.completion_index = None;
         }
-        KeyCode::Down => {
-            if !form.completions.is_empty() {
-                form.completion_index = Some(
-                    form.completion_index
-                        .map(|i| (i + 1) % form.completions.len())
-                        .unwrap_or(0),
-                );
-                if let Some(idx) = form.completion_index {
-                    form.working_dir = form.completions[idx].clone();
-                }
+        KeyCode::Down if !form.completions.is_empty() => {
+            form.completion_index = Some(
+                form.completion_index
+                    .map(|i| (i + 1) % form.completions.len())
+                    .unwrap_or(0),
+            );
+            if let Some(idx) = form.completion_index {
+                form.working_dir = form.completions[idx].clone();
             }
         }
-        KeyCode::Up => {
-            if !form.completions.is_empty() {
-                form.completion_index = Some(
-                    form.completion_index
-                        .map(|i| {
-                            if i == 0 {
-                                form.completions.len() - 1
-                            } else {
-                                i - 1
-                            }
-                        })
-                        .unwrap_or(0),
-                );
-                if let Some(idx) = form.completion_index {
-                    form.working_dir = form.completions[idx].clone();
-                }
+        KeyCode::Up if !form.completions.is_empty() => {
+            form.completion_index = Some(
+                form.completion_index
+                    .map(|i| {
+                        if i == 0 {
+                            form.completions.len() - 1
+                        } else {
+                            i - 1
+                        }
+                    })
+                    .unwrap_or(0),
+            );
+            if let Some(idx) = form.completion_index {
+                form.working_dir = form.completions[idx].clone();
             }
         }
         _ => {}
@@ -633,12 +623,10 @@ fn handle_schedule_input(form: &mut NewRoutineForm, key: KeyEvent) {
                 let digit = c.to_digit(10).unwrap() as u8;
                 form.minute = ((form.minute * 10 + digit) % 60).min(59);
             }
-            KeyCode::Char(' ') => {
-                if form.frequency == ScheduleFrequency::Weekly {
-                    let idx = form.month_day as usize % 7;
-                    form.weekdays[idx] = !form.weekdays[idx];
-                    form.month_day = ((form.month_day as usize + 1) % 7) as u8;
-                }
+            KeyCode::Char(' ') if form.frequency == ScheduleFrequency::Weekly => {
+                let idx = form.month_day as usize % 7;
+                form.weekdays[idx] = !form.weekdays[idx];
+                form.month_day = ((form.month_day as usize + 1) % 7) as u8;
             }
             KeyCode::Char('+') => {
                 // Increment month_day (for Monthly/Yearly)
@@ -672,25 +660,19 @@ fn handle_schedule_input(form: &mut NewRoutineForm, key: KeyEvent) {
                     _ => {}
                 }
             }
-            KeyCode::Char(']') => {
-                // Increment day for Yearly
-                if form.frequency == ScheduleFrequency::Yearly {
-                    form.month_day = if form.month_day >= 31 {
-                        1
-                    } else {
-                        form.month_day + 1
-                    };
-                }
+            KeyCode::Char(']') if form.frequency == ScheduleFrequency::Yearly => {
+                form.month_day = if form.month_day >= 31 {
+                    1
+                } else {
+                    form.month_day + 1
+                };
             }
-            KeyCode::Char('[') => {
-                // Decrement day for Yearly
-                if form.frequency == ScheduleFrequency::Yearly {
-                    form.month_day = if form.month_day <= 1 {
-                        31
-                    } else {
-                        form.month_day - 1
-                    };
-                }
+            KeyCode::Char('[') if form.frequency == ScheduleFrequency::Yearly => {
+                form.month_day = if form.month_day <= 1 {
+                    31
+                } else {
+                    form.month_day - 1
+                };
             }
             _ => {}
         },
@@ -710,10 +692,8 @@ fn handle_steps_input(form: &mut NewRoutineForm, key: KeyEvent) {
     } else {
         match key.code {
             KeyCode::Char('a') => form.editing_step = Some(String::new()),
-            KeyCode::Char('d') => {
-                if !form.steps.is_empty() {
-                    form.steps.pop();
-                }
+            KeyCode::Char('d') if !form.steps.is_empty() => {
+                form.steps.pop();
             }
             _ => {}
         }

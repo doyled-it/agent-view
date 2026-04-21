@@ -357,7 +357,7 @@ fn run_tui(
                                 app.routine_tab_warning_shown = true;
                                 app.overlay = crate::app::Overlay::None;
                             }
-                            crossterm::event::KeyCode::Esc => {
+                            crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Tab => {
                                 app.overlay = crate::app::Overlay::None;
                                 app.active_tab = crate::app::ActiveTab::Sessions;
                             }

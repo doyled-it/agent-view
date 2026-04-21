@@ -9,7 +9,9 @@ pub mod path_complete;
 pub mod routine;
 pub mod schedule;
 pub mod scheduler;
+#[cfg(target_os = "linux")]
 pub mod scheduler_linux;
+#[cfg(target_os = "macos")]
 pub mod scheduler_macos;
 pub mod session;
 pub mod status;
