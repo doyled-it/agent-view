@@ -60,7 +60,7 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
     for (i, step) in routine.steps.iter().enumerate() {
         let command = match step {
             RoutineStep::Claude { prompt } => {
-                format!("claude \"{}\"", prompt.replace('"', "\\\""))
+                format!("claude '{}'", prompt.replace('\'', "'\\''"))
             }
             RoutineStep::Shell { command } => command.clone(),
         };
@@ -71,6 +71,11 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
             final_status = RunStatus::Failed;
             break;
         }
+
+        // Wait for command to start before polling for completion.
+        // Without this, the idle prompt detector sees the shell prompt
+        // before the command has loaded and thinks the step is done.
+        std::thread::sleep(std::time::Duration::from_secs(3));
 
         // Poll for completion
         let start = std::time::Instant::now();
