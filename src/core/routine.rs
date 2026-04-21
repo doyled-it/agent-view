@@ -61,7 +61,7 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
         let command = match step {
             RoutineStep::Claude { prompt } => {
                 format!(
-                    "claude --dangerously-skip-permissions '{}'",
+                    "claude --permission-mode bypassPermissions '{}'",
                     prompt.replace('\'', "'\\''")
                 )
             }
@@ -79,6 +79,15 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
         // Without this, the idle prompt detector sees the shell prompt
         // before the command has loaded and thinks the step is done.
         std::thread::sleep(std::time::Duration::from_secs(3));
+
+        // For Claude with bypassPermissions: auto-accept the confirmation prompt.
+        // Send Down (select "Yes, I accept") then Enter.
+        if matches!(step, RoutineStep::Claude { .. }) {
+            let _ = std::process::Command::new("tmux")
+                .args(["send-keys", "-t", &tmux_name, "Down", "Enter"])
+                .output();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
 
         // Poll for completion
         let start = std::time::Instant::now();
