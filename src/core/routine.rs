@@ -81,10 +81,14 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_secs(3));
 
         // For Claude with bypassPermissions: auto-accept the confirmation prompt.
-        // Send Down (select "Yes, I accept") then Enter.
+        // Must send Down and Enter as separate send-keys calls so tmux
+        // interprets them as key names, not literal text.
         if matches!(step, RoutineStep::Claude { .. }) {
             let _ = std::process::Command::new("tmux")
-                .args(["send-keys", "-t", &tmux_name, "Down", "Enter"])
+                .args(["send-keys", "-t", &tmux_name, "Down"])
+                .output();
+            let _ = std::process::Command::new("tmux")
+                .args(["send-keys", "-t", &tmux_name, "Enter"])
                 .output();
             std::thread::sleep(std::time::Duration::from_secs(2));
         }

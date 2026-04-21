@@ -522,6 +522,7 @@ pub struct App {
     pub routine_runs_cache: std::collections::HashMap<String, Vec<crate::types::RoutineRun>>,
     pub routine_list_rows: Vec<RoutineListRow>,
     pub routine_selected_index: usize,
+    pub routine_tab_warning_shown: bool,
 }
 
 impl App {
@@ -558,6 +559,7 @@ impl App {
             routine_runs_cache: std::collections::HashMap::new(),
             routine_list_rows: Vec::new(),
             routine_selected_index: 0,
+            routine_tab_warning_shown: false,
         }
     }
 
@@ -683,7 +685,18 @@ impl App {
 
     pub fn toggle_tab(&mut self) {
         self.active_tab = match self.active_tab {
-            ActiveTab::Sessions => ActiveTab::Routines,
+            ActiveTab::Sessions => {
+                if !self.routine_tab_warning_shown {
+                    self.routine_tab_warning_shown = true;
+                    self.toast_message = Some(
+                        "Note: Claude routine steps run with permissions bypassed for unattended execution."
+                            .to_string(),
+                    );
+                    self.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                }
+                ActiveTab::Routines
+            }
             ActiveTab::Routines => ActiveTab::Sessions,
         };
     }
