@@ -16,12 +16,15 @@ pub fn render_routine_list(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let search_matches = app.routine_search_matches();
+
     let items: Vec<ListItem> = app
         .routine_list_rows
         .iter()
         .enumerate()
         .map(|(i, row)| {
             let is_selected = i == app.routine_selected_index;
+            let is_search_match = !search_matches.is_empty() && search_matches.contains(&i);
             match row {
                 RoutineListRow::Group {
                     group,
@@ -116,7 +119,16 @@ pub fn render_routine_list(frame: &mut Frame, area: Rect, app: &App) {
                             format!("{} ", expand_arrow),
                             Style::default().fg(theme.text_muted),
                         ),
-                        Span::styled(routine.name.clone(), Style::default().fg(theme.text).bold()),
+                        Span::styled(
+                            routine.name.clone(),
+                            Style::default()
+                                .fg(if is_search_match {
+                                    theme.info
+                                } else {
+                                    theme.text
+                                })
+                                .bold(),
+                        ),
                         Span::styled(
                             format!("  {}", schedule_str),
                             Style::default().fg(theme.text_muted),

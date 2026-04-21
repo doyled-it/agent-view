@@ -650,6 +650,29 @@ impl App {
             .collect()
     }
 
+    /// Get the indices of routine_list_rows entries matching the current search query.
+    /// Returns an empty Vec when no search is active or the query is empty.
+    pub fn routine_search_matches(&self) -> Vec<usize> {
+        let query = match &self.search_query {
+            Some(q) if !q.is_empty() => q.to_lowercase(),
+            _ => return Vec::new(),
+        };
+
+        self.routine_list_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| match row {
+                RoutineListRow::Routine(r) if r.name.to_lowercase().contains(&query) => Some(i),
+                RoutineListRow::Run { routine_name, .. }
+                    if routine_name.to_lowercase().contains(&query) =>
+                {
+                    Some(i)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn clamp_selection(&mut self) {
         if self.list_rows.is_empty() {
             self.selected_index = 0;

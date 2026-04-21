@@ -276,12 +276,21 @@ pub fn handle_move_key(
             }
             KeyCode::Enter => {
                 if let Some((ref path, ref name)) = form.groups.get(form.selected).cloned() {
-                    let _ = storage.move_session_to_group(&form.session_id.clone(), path);
-                    if let Ok(sessions) = storage.load_sessions() {
-                        app.sessions = sessions;
+                    match app.active_tab {
+                        crate::app::ActiveTab::Sessions => {
+                            let _ = storage.move_session_to_group(&form.session_id.clone(), path);
+                            if let Ok(sessions) = storage.load_sessions() {
+                                app.sessions = sessions;
+                            }
+                            app.groups = storage.load_groups().unwrap_or_default();
+                            app.rebuild_list_rows();
+                        }
+                        crate::app::ActiveTab::Routines => {
+                            let _ = storage.move_routine_to_group(&form.session_id.clone(), path);
+                            app.routines = storage.load_routines().unwrap_or_default();
+                            app.rebuild_routine_list_rows();
+                        }
                     }
-                    app.groups = storage.load_groups().unwrap_or_default();
-                    app.rebuild_list_rows();
                     app.toast_message = Some(format!("Moved to {}", name));
                     app.toast_expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(2));

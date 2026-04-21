@@ -452,10 +452,27 @@ fn render_routine_preview(frame: &mut Frame, area: Rect, theme: &Theme, preview_
     }
 
     let height = inner.height as usize;
-    let lines: Vec<&str> = preview_content.lines().collect();
-    let skip = lines.len().saturating_sub(height);
-    let visible: Vec<Line> = lines.into_iter().skip(skip).map(Line::raw).collect();
-    frame.render_widget(Paragraph::new(visible), inner);
+
+    match preview_content.into_text() {
+        Ok(core_text) => {
+            let line_count = core_text.lines.len();
+            let skip = line_count.saturating_sub(height);
+            let visible_lines: Vec<Line> = core_text
+                .lines
+                .into_iter()
+                .skip(skip)
+                .map(convert_core_line)
+                .collect();
+            frame.render_widget(Paragraph::new(visible_lines), inner);
+        }
+        Err(_) => {
+            // Fallback to plain text
+            let lines: Vec<&str> = preview_content.lines().collect();
+            let skip = lines.len().saturating_sub(height);
+            let visible: Vec<Line> = lines.into_iter().skip(skip).map(Line::raw).collect();
+            frame.render_widget(Paragraph::new(visible), inner);
+        }
+    }
 }
 
 fn render_routine_metadata(

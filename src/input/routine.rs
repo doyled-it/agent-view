@@ -218,6 +218,29 @@ pub fn handle_routine_list_key(
             }
         }
 
+        // m: move routine to group
+        (KeyModifiers::NONE, KeyCode::Char('m')) => {
+            if let Some(RoutineListRow::Routine(routine)) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
+            {
+                let groups: Vec<(String, String)> = app
+                    .groups
+                    .iter()
+                    .map(|g| (g.path.clone(), g.name.clone()))
+                    .collect();
+                if !groups.is_empty() {
+                    app.overlay = Overlay::Move(crate::app::MoveForm {
+                        session_id: routine.id.clone(),
+                        session_title: routine.name.clone(),
+                        groups,
+                        selected: 0,
+                    });
+                }
+            }
+        }
+
         // R: rename routine
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
             if let Some(RoutineListRow::Routine(routine)) = app
@@ -591,16 +614,66 @@ fn handle_schedule_input(form: &mut NewRoutineForm, key: KeyEvent) {
                 form.hour = if form.hour == 0 { 23 } else { form.hour - 1 };
             }
             KeyCode::Char(c) if c.is_ascii_digit() => {
-                // Adjust minute
                 let digit = c.to_digit(10).unwrap() as u8;
                 form.minute = ((form.minute * 10 + digit) % 60).min(59);
             }
             KeyCode::Char(' ') => {
-                // Toggle weekday (for weekly) — cycle through days 0-6
                 if form.frequency == ScheduleFrequency::Weekly {
                     let idx = form.month_day as usize % 7;
                     form.weekdays[idx] = !form.weekdays[idx];
                     form.month_day = ((form.month_day as usize + 1) % 7) as u8;
+                }
+            }
+            KeyCode::Char('+') => {
+                // Increment month_day (for Monthly/Yearly)
+                match form.frequency {
+                    ScheduleFrequency::Monthly => {
+                        form.month_day = if form.month_day >= 31 {
+                            1
+                        } else {
+                            form.month_day + 1
+                        };
+                    }
+                    ScheduleFrequency::Yearly => {
+                        form.month = if form.month >= 12 { 1 } else { form.month + 1 };
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Char('-') => {
+                // Decrement month_day (for Monthly/Yearly)
+                match form.frequency {
+                    ScheduleFrequency::Monthly => {
+                        form.month_day = if form.month_day <= 1 {
+                            31
+                        } else {
+                            form.month_day - 1
+                        };
+                    }
+                    ScheduleFrequency::Yearly => {
+                        form.month = if form.month <= 1 { 12 } else { form.month - 1 };
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Char(']') => {
+                // Increment day for Yearly
+                if form.frequency == ScheduleFrequency::Yearly {
+                    form.month_day = if form.month_day >= 31 {
+                        1
+                    } else {
+                        form.month_day + 1
+                    };
+                }
+            }
+            KeyCode::Char('[') => {
+                // Decrement day for Yearly
+                if form.frequency == ScheduleFrequency::Yearly {
+                    form.month_day = if form.month_day <= 1 {
+                        31
+                    } else {
+                        form.month_day - 1
+                    };
                 }
             }
             _ => {}

@@ -35,6 +35,7 @@ pub fn handle_main_key(
                 | (KeyModifiers::CONTROL, KeyCode::Char('k'))
                 | (KeyModifiers::NONE, KeyCode::Char('n'))
                 | (KeyModifiers::NONE, KeyCode::Char('v'))
+                | (KeyModifiers::NONE, KeyCode::Char('/'))
         );
         if !pass_through {
             crate::input::routine::handle_routine_list_key(app, key, storage, terminal);

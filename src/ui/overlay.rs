@@ -698,13 +698,13 @@ pub fn render_new_routine(
         }
         crate::app::ScheduleFrequency::Monthly => {
             format!(
-                " On day {} at {:02}:{:02}",
+                " On day {} at {:02}:{:02} (+/- day)",
                 form.month_day, form.hour, form.minute
             )
         }
         crate::app::ScheduleFrequency::Yearly => {
             format!(
-                " Month {} day {} at {:02}:{:02}",
+                " Month {} day {} at {:02}:{:02} (+/- month, [/] day)",
                 form.month, form.month_day, form.hour, form.minute
             )
         }
