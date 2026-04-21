@@ -456,7 +456,7 @@ pub fn handle_new_routine_key(
                     default_tool: form.default_tool.clone(),
                     schedule: cron,
                     steps: form.steps.clone(),
-                    enabled: false,
+                    enabled: true,
                     created_at: now,
                     last_run_at: None,
                     next_run_at: next,
@@ -467,6 +467,10 @@ pub fn handle_new_routine_key(
                     expanded: false,
                 };
                 let _ = storage.save_routine(&routine);
+
+                // Install system job immediately
+                let scheduler = crate::core::scheduler::platform_scheduler();
+                let _ = scheduler.install(&routine);
             }
 
             // Reload and close
