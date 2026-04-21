@@ -21,6 +21,7 @@ pub enum Overlay {
     Rename(RenameForm),
     Move(MoveForm),
     GroupManage(GroupForm),
+    RoutineWarning,
     CommandPalette(CommandPalette),
     Help,
     ThemeSelect(ThemeSelectForm),
@@ -687,13 +688,7 @@ impl App {
         self.active_tab = match self.active_tab {
             ActiveTab::Sessions => {
                 if !self.routine_tab_warning_shown {
-                    self.routine_tab_warning_shown = true;
-                    self.toast_message = Some(
-                        "Note: Claude routine steps run with permissions bypassed for unattended execution."
-                            .to_string(),
-                    );
-                    self.toast_expire =
-                        Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                    self.overlay = Overlay::RoutineWarning;
                 }
                 ActiveTab::Routines
             }

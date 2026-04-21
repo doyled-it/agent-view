@@ -114,6 +114,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Overlay::AddNote(_) => {
             vec![("Enter", "save"), ("C-j", "newline"), ("Esc", "cancel")]
         }
+        Overlay::RoutineWarning => {
+            vec![("Enter", "I understand"), ("Esc", "go back")]
+        }
     };
 
     let len = hints.len();

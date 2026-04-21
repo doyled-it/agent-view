@@ -161,6 +161,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::AddNote(form) => {
             crate::ui::overlay::render_add_note(frame, area, form, &app.theme);
         }
+        Overlay::RoutineWarning => {
+            crate::ui::overlay::render_routine_warning(frame, area, &app.theme);
+        }
         Overlay::None => {}
     }
 }

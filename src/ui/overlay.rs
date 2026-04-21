@@ -560,6 +560,66 @@ pub fn render_add_note(
     frame.render_widget(text_widget, inner);
 }
 
+/// Render the routine permissions warning dialog
+pub fn render_routine_warning(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
+    let overlay_width = 60u16.min(area.width.saturating_sub(4));
+    let overlay_height = 14u16.min(area.height.saturating_sub(4));
+
+    let x = (area.width.saturating_sub(overlay_width)) / 2;
+    let y = (area.height.saturating_sub(overlay_height)) / 2;
+    let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let block = Block::default()
+        .title(" \u{26A0} Routines \u{26A0} ")
+        .title_style(Style::default().fg(theme.warning).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.warning));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let warn_icon = "\u{26A0}";
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            format!("  {}  PERMISSIONS BYPASSED  {}", warn_icon, warn_icon),
+            Style::default().fg(theme.warning).bold(),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Routines run unattended on a schedule.",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(vec![Span::styled(
+            "  To do this, Claude steps execute with all",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(vec![Span::styled(
+            "  permission checks bypassed. Claude will",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(vec![Span::styled(
+            "  run commands, edit files, and access the",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(vec![Span::styled(
+            "  network without asking for approval.",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Enter ", Style::default().fg(theme.secondary).bold()),
+            Span::styled("I understand", Style::default().fg(theme.text)),
+            Span::styled("    Esc ", Style::default().fg(theme.secondary).bold()),
+            Span::styled("take me back", Style::default().fg(theme.text)),
+        ]),
+    ];
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
 /// Render the new routine creation form as a centered overlay
 pub fn render_new_routine(
     frame: &mut Frame,

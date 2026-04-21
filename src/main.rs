@@ -352,6 +352,9 @@ fn run_tui(
                         crate::app::Overlay::NewRoutine(_) => {
                             crate::input::routine::handle_new_routine_key(&mut app, key, &storage);
                         }
+                        crate::app::Overlay::RoutineWarning => {
+                            // Handled in handle_main_key
+                        }
                     }
                 }
                 if app.should_quit {

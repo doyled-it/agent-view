@@ -23,6 +23,22 @@ pub fn handle_main_key(
         return Ok(());
     }
 
+    // Handle routine warning dialog
+    if app.overlay == crate::app::Overlay::RoutineWarning {
+        match key.code {
+            KeyCode::Enter => {
+                app.routine_tab_warning_shown = true;
+                app.overlay = crate::app::Overlay::None;
+            }
+            KeyCode::Esc => {
+                app.overlay = crate::app::Overlay::None;
+                app.active_tab = crate::app::ActiveTab::Sessions;
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     // When on Routines tab, delegate to routine-specific handler for most keys
     if app.active_tab == crate::app::ActiveTab::Routines && app.overlay == crate::app::Overlay::None
     {
