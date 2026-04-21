@@ -23,35 +23,68 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let hints: Vec<(&str, &str)> = match &app.overlay {
-        Overlay::None => {
-            if !app.bulk_selected.is_empty() {
-                vec![
-                    ("Space", "toggle"),
-                    ("d", "delete all"),
-                    ("s", "stop all"),
-                    ("C-a", "select all"),
-                    ("Esc", "clear"),
-                ]
-            } else if app.sessions.is_empty() {
-                vec![("n", "new"), ("g", "group"), ("q", "quit")]
-            } else {
-                vec![
-                    ("j/k", "navigate"),
-                    ("Enter", "attach"),
-                    ("n", "new"),
-                    ("N", "note"),
-                    ("Space", "select"),
-                    ("?", "help"),
-                    ("q", "quit"),
-                ]
+        Overlay::None => match app.active_tab {
+            crate::app::ActiveTab::Sessions => {
+                if !app.bulk_selected.is_empty() {
+                    vec![
+                        ("Space", "toggle"),
+                        ("d", "delete all"),
+                        ("s", "stop all"),
+                        ("C-a", "select all"),
+                        ("Esc", "clear"),
+                    ]
+                } else if app.sessions.is_empty() {
+                    vec![("n", "new"), ("g", "group"), ("q", "quit")]
+                } else {
+                    vec![
+                        ("j/k", "navigate"),
+                        ("Enter", "attach"),
+                        ("n", "new"),
+                        ("N", "note"),
+                        ("Space", "select"),
+                        ("?", "help"),
+                        ("q", "quit"),
+                    ]
+                }
             }
-        }
+            crate::app::ActiveTab::Routines => {
+                let on_run = matches!(
+                    app.routine_list_rows.get(app.routine_selected_index),
+                    Some(crate::app::RoutineListRow::Run { .. })
+                );
+                if on_run {
+                    vec![
+                        ("j/k", "navigate"),
+                        ("r", "inspect"),
+                        ("P", "promote"),
+                        ("d", "delete"),
+                        ("Tab", "sessions"),
+                        ("?", "help"),
+                    ]
+                } else {
+                    vec![
+                        ("j/k", "navigate"),
+                        ("n", "new"),
+                        ("Space", "enable"),
+                        ("Enter", "expand"),
+                        ("e", "edit"),
+                        ("d", "delete"),
+                        ("p", "pin"),
+                        ("Tab", "sessions"),
+                        ("?", "help"),
+                    ]
+                }
+            }
+        },
         Overlay::NewSession(_) => {
             vec![
                 ("Tab", "next field"),
                 ("Enter", "create"),
                 ("Esc", "cancel"),
             ]
+        }
+        Overlay::NewRoutine(_) => {
+            vec![("Tab", "next field"), ("Enter", "save"), ("Esc", "cancel")]
         }
         Overlay::Confirm(_) => {
             vec![("y", "confirm"), ("n/Esc", "cancel")]
@@ -80,6 +113,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
         Overlay::AddNote(_) => {
             vec![("Enter", "save"), ("C-j", "newline"), ("Esc", "cancel")]
+        }
+        Overlay::RoutineWarning => {
+            vec![("Enter", "I understand"), ("Esc", "go back")]
         }
     };
 

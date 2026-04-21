@@ -6,18 +6,39 @@ use crate::ui::theme::Theme;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveTab {
+    Sessions,
+    Routines,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
     None,
     NewSession(NewSessionForm),
+    NewRoutine(NewRoutineForm),
     Confirm(ConfirmDialog),
     Rename(RenameForm),
     Move(MoveForm),
     GroupManage(GroupForm),
+    RoutineWarning,
     CommandPalette(CommandPalette),
     Help,
     ThemeSelect(ThemeSelectForm),
     AddNote(NoteForm),
+}
+
+#[derive(Debug, Clone)]
+pub enum RoutineListRow {
+    Group {
+        group: crate::types::Group,
+        routine_count: usize,
+    },
+    Routine(Box<crate::types::Routine>),
+    Run {
+        run: Box<crate::types::RoutineRun>,
+        routine_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +103,9 @@ pub enum CommandAction {
     SelectTheme,
     CyclePanel,
     Quit,
+    NewRoutine,
+    ToggleRoutine,
+    DeleteRoutine,
 }
 
 impl CommandPalette {
@@ -172,6 +196,21 @@ impl CommandPalette {
                 key_hint: "q".to_string(),
                 action: CommandAction::Quit,
             },
+            CommandItem {
+                label: "New Routine".to_string(),
+                key_hint: "n".to_string(),
+                action: CommandAction::NewRoutine,
+            },
+            CommandItem {
+                label: "Toggle Routine".to_string(),
+                key_hint: "Space".to_string(),
+                action: CommandAction::ToggleRoutine,
+            },
+            CommandItem {
+                label: "Delete Routine".to_string(),
+                key_hint: "d".to_string(),
+                action: CommandAction::DeleteRoutine,
+            },
         ];
         let filtered: Vec<usize> = (0..items.len()).collect();
         Self {
@@ -223,6 +262,148 @@ pub struct RenameForm {
 pub enum RenameTarget {
     Session,
     Group,
+    Routine,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScheduleFrequency {
+    Hourly,
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+    Advanced,
+}
+
+impl ScheduleFrequency {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Hourly => "Hourly",
+            Self::Daily => "Daily",
+            Self::Weekly => "Weekly",
+            Self::Monthly => "Monthly",
+            Self::Yearly => "Yearly",
+            Self::Advanced => "Advanced",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Hourly => Self::Daily,
+            Self::Daily => Self::Weekly,
+            Self::Weekly => Self::Monthly,
+            Self::Monthly => Self::Yearly,
+            Self::Yearly => Self::Advanced,
+            Self::Advanced => Self::Hourly,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::Hourly => Self::Advanced,
+            Self::Daily => Self::Hourly,
+            Self::Weekly => Self::Daily,
+            Self::Monthly => Self::Weekly,
+            Self::Yearly => Self::Monthly,
+            Self::Advanced => Self::Yearly,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewRoutineForm {
+    pub name: String,
+    pub default_tool: String,
+    pub working_dir: String,
+    pub frequency: ScheduleFrequency,
+    pub hour: u8,
+    pub minute: u8,
+    pub weekdays: [bool; 7], // Sun=0 through Sat=6
+    pub month_day: u8,
+    pub month: u8,
+    pub cron_raw: String,
+    pub steps: Vec<crate::types::RoutineStep>,
+    pub editing_step: Option<String>, // text buffer when adding a step
+    pub notify: bool,
+    pub step_timeout_secs: i32,
+    pub focused_field: usize,
+    pub completions: Vec<String>,
+    pub completion_index: Option<usize>,
+    pub edit_routine_id: Option<String>, // Some(id) when editing existing routine
+}
+
+impl NewRoutineForm {
+    pub fn new() -> Self {
+        let home = dirs::home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/tmp".to_string());
+        Self {
+            name: String::new(),
+            default_tool: "claude".to_string(),
+            working_dir: home,
+            frequency: ScheduleFrequency::Daily,
+            hour: 9,
+            minute: 0,
+            weekdays: [false, true, true, true, true, true, false], // Mon-Fri
+            month_day: 1,
+            month: 1,
+            cron_raw: String::new(),
+            steps: Vec::new(),
+            editing_step: None,
+            notify: true,
+            step_timeout_secs: 1800,
+            focused_field: 0,
+            completions: Vec::new(),
+            completion_index: None,
+            edit_routine_id: None,
+        }
+    }
+
+    pub fn from_routine(routine: &crate::types::Routine) -> Self {
+        let mut form = Self::new();
+        form.name = routine.name.clone();
+        form.default_tool = routine.default_tool.clone();
+        form.working_dir = routine.working_dir.clone();
+        form.steps = routine.steps.clone();
+        form.notify = routine.notify;
+        form.step_timeout_secs = routine.step_timeout_secs;
+        form.edit_routine_id = Some(routine.id.clone());
+        // Try to parse the cron expression back into frequency fields
+        form.cron_raw = routine.schedule.clone();
+        form.frequency = ScheduleFrequency::Advanced;
+        form
+    }
+
+    pub fn cron_expression(&self) -> String {
+        match self.frequency {
+            ScheduleFrequency::Hourly => crate::core::schedule::build_hourly(self.minute),
+            ScheduleFrequency::Daily => crate::core::schedule::build_daily(self.hour, self.minute),
+            ScheduleFrequency::Weekly => {
+                let days: Vec<crate::core::schedule::Weekday> = self
+                    .weekdays
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &selected)| selected)
+                    .map(|(i, _)| crate::core::schedule::Weekday::all()[i])
+                    .collect();
+                if days.is_empty() {
+                    crate::core::schedule::build_daily(self.hour, self.minute)
+                } else {
+                    crate::core::schedule::build_weekly(&days, self.hour, self.minute)
+                }
+            }
+            ScheduleFrequency::Monthly => {
+                crate::core::schedule::build_monthly_by_day(self.month_day, self.hour, self.minute)
+            }
+            ScheduleFrequency::Yearly => crate::core::schedule::build_yearly(
+                self.month,
+                self.month_day,
+                self.hour,
+                self.minute,
+            ),
+            ScheduleFrequency::Advanced => self.cron_raw.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -261,6 +442,7 @@ pub enum ConfirmAction {
     StopSession(String),
     BulkDelete,
     BulkStop,
+    DeleteRoutine(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -336,6 +518,12 @@ pub struct App {
     pub preview_content: String,
     pub preview_last_session: Option<String>,
     pub preview_last_capture: Option<std::time::Instant>,
+    pub active_tab: ActiveTab,
+    pub routines: Vec<crate::types::Routine>,
+    pub routine_runs_cache: std::collections::HashMap<String, Vec<crate::types::RoutineRun>>,
+    pub routine_list_rows: Vec<RoutineListRow>,
+    pub routine_selected_index: usize,
+    pub routine_tab_warning_shown: bool,
 }
 
 impl App {
@@ -367,6 +555,12 @@ impl App {
             preview_content: String::new(),
             preview_last_session: None,
             preview_last_capture: None,
+            active_tab: ActiveTab::Sessions,
+            routines: Vec::new(),
+            routine_runs_cache: std::collections::HashMap::new(),
+            routine_list_rows: Vec::new(),
+            routine_selected_index: 0,
+            routine_tab_warning_shown: false,
         }
     }
 
@@ -459,11 +653,140 @@ impl App {
             .collect()
     }
 
+    /// Get the indices of routine_list_rows entries matching the current search query.
+    /// Returns an empty Vec when no search is active or the query is empty.
+    pub fn routine_search_matches(&self) -> Vec<usize> {
+        let query = match &self.search_query {
+            Some(q) if !q.is_empty() => q.to_lowercase(),
+            _ => return Vec::new(),
+        };
+
+        self.routine_list_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| match row {
+                RoutineListRow::Routine(r) if r.name.to_lowercase().contains(&query) => Some(i),
+                RoutineListRow::Run { routine_name, .. }
+                    if routine_name.to_lowercase().contains(&query) =>
+                {
+                    Some(i)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn clamp_selection(&mut self) {
         if self.list_rows.is_empty() {
             self.selected_index = 0;
         } else if self.selected_index >= self.list_rows.len() {
             self.selected_index = self.list_rows.len() - 1;
+        }
+    }
+
+    pub fn toggle_tab(&mut self) {
+        self.active_tab = match self.active_tab {
+            ActiveTab::Sessions => {
+                if !self.routine_tab_warning_shown {
+                    self.overlay = Overlay::RoutineWarning;
+                }
+                ActiveTab::Routines
+            }
+            ActiveTab::Routines => ActiveTab::Sessions,
+        };
+    }
+
+    /// Rebuild the flattened routine list from current routines and their runs
+    pub fn rebuild_routine_list_rows(&mut self) {
+        let mut rows: Vec<RoutineListRow> = Vec::new();
+
+        // Group routines by group_path
+        let mut groups_map: std::collections::HashMap<String, Vec<&crate::types::Routine>> =
+            std::collections::HashMap::new();
+        for routine in &self.routines {
+            groups_map
+                .entry(routine.group_path.clone())
+                .or_default()
+                .push(routine);
+        }
+
+        // Sort groups by name
+        let mut group_paths: Vec<String> = groups_map.keys().cloned().collect();
+        group_paths.sort();
+
+        for group_path in &group_paths {
+            let group_routines = &groups_map[group_path];
+            let group_name = group_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(group_path)
+                .to_string();
+
+            // Check if this group is expanded (look in self.groups first, default to expanded)
+            let expanded = self
+                .groups
+                .iter()
+                .find(|g| g.path == *group_path)
+                .map(|g| g.expanded)
+                .unwrap_or(true);
+
+            let group = crate::types::Group {
+                path: group_path.clone(),
+                name: group_name,
+                expanded,
+                order: 0,
+                default_path: String::new(),
+            };
+
+            rows.push(RoutineListRow::Group {
+                group,
+                routine_count: group_routines.len(),
+            });
+
+            if expanded {
+                for routine in group_routines {
+                    rows.push(RoutineListRow::Routine(Box::new((*routine).clone())));
+
+                    // If routine is expanded, add its runs
+                    if routine.expanded {
+                        if let Some(runs) = self.routine_runs_cache.get(&routine.id) {
+                            for run in runs {
+                                rows.push(RoutineListRow::Run {
+                                    run: Box::new(run.clone()),
+                                    routine_name: routine.name.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.routine_list_rows = rows;
+        self.clamp_routine_selection();
+    }
+
+    pub fn clamp_routine_selection(&mut self) {
+        if self.routine_list_rows.is_empty() {
+            self.routine_selected_index = 0;
+        } else if self.routine_selected_index >= self.routine_list_rows.len() {
+            self.routine_selected_index = self.routine_list_rows.len() - 1;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn selected_routine(&self) -> Option<&crate::types::Routine> {
+        match self.routine_list_rows.get(self.routine_selected_index) {
+            Some(RoutineListRow::Routine(r)) => Some(r),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn selected_run(&self) -> Option<&crate::types::RoutineRun> {
+        match self.routine_list_rows.get(self.routine_selected_index) {
+            Some(RoutineListRow::Run { run, .. }) => Some(run),
+            _ => None,
         }
     }
 }
@@ -829,6 +1152,16 @@ mod tests {
         app.sort_mode = SortMode::StatusPriority;
         app.rebuild_list_rows();
         assert_eq!(app.list_rows.len(), count);
+    }
+
+    #[test]
+    fn test_active_tab_toggles() {
+        let mut app = App::new(false);
+        assert_eq!(app.active_tab, ActiveTab::Sessions);
+        app.toggle_tab();
+        assert_eq!(app.active_tab, ActiveTab::Routines);
+        app.toggle_tab();
+        assert_eq!(app.active_tab, ActiveTab::Sessions);
     }
 
     #[test]

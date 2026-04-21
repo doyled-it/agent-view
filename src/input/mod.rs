@@ -1,5 +1,6 @@
 pub mod export;
 pub mod overlay;
+pub mod routine;
 pub mod session;
 
 pub fn handle_main_key(
@@ -16,9 +17,38 @@ pub fn handle_main_key(
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen},
     };
 
+    // Handle routine overlay input before the main key dispatch
+    if let crate::app::Overlay::NewRoutine(_) = &app.overlay {
+        crate::input::routine::handle_new_routine_key(app, key, storage);
+        return Ok(());
+    }
+
+    // When on Routines tab, delegate to routine-specific handler for most keys
+    if app.active_tab == crate::app::ActiveTab::Routines && app.overlay == crate::app::Overlay::None
+    {
+        let pass_through = matches!(
+            (key.modifiers, key.code),
+            (KeyModifiers::NONE, KeyCode::Char('q'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('c'))
+                | (KeyModifiers::NONE, KeyCode::Tab)
+                | (KeyModifiers::NONE, KeyCode::Char('?'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('k'))
+                | (KeyModifiers::NONE, KeyCode::Char('n'))
+                | (KeyModifiers::NONE, KeyCode::Char('v'))
+                | (KeyModifiers::NONE, KeyCode::Char('/'))
+        );
+        if !pass_through {
+            crate::input::routine::handle_routine_list_key(app, key, storage, terminal);
+            return Ok(());
+        }
+    }
+
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
             app.should_quit = true;
+        }
+        (KeyModifiers::NONE, KeyCode::Tab) => {
+            app.toggle_tab();
         }
         (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
             app.move_selection_up();
@@ -26,9 +56,14 @@ pub fn handle_main_key(
         (KeyModifiers::NONE, KeyCode::Down) | (KeyModifiers::NONE, KeyCode::Char('j')) => {
             app.move_selection_down();
         }
-        (KeyModifiers::NONE, KeyCode::Char('n')) => {
-            app.overlay = crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
-        }
+        (KeyModifiers::NONE, KeyCode::Char('n')) => match app.active_tab {
+            crate::app::ActiveTab::Sessions => {
+                app.overlay = crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
+            }
+            crate::app::ActiveTab::Routines => {
+                app.overlay = crate::app::Overlay::NewRoutine(crate::app::NewRoutineForm::new());
+            }
+        },
         (KeyModifiers::SHIFT, KeyCode::Char('N')) => {
             if let Some(session) = app.selected_session() {
                 app.overlay = crate::app::Overlay::AddNote(crate::app::NoteForm {

@@ -139,6 +139,10 @@ pub fn spawn(
                 let _ = bg_storage.touch();
             }
 
+            // Detect live routine runs for UI status
+            // No heavy processing needed — exec-routine manages its own lifecycle
+            // The main loop reloads routines on storage mtime change
+
             // Log capture every 10 ticks (5s at 500ms interval)
             log_tick += 1;
             if log_tick >= 10 {

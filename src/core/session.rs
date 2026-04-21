@@ -115,7 +115,12 @@ impl StatusProcessor {
         if raw_status != previous_status {
             if matches!(
                 raw_status,
-                SessionStatus::Waiting | SessionStatus::Paused | SessionStatus::Error
+                SessionStatus::Waiting
+                    | SessionStatus::Paused
+                    | SessionStatus::Error
+                    | SessionStatus::Idle
+                    | SessionStatus::Draft
+                    | SessionStatus::Crashed
             ) {
                 self.pending_status.remove(session_id);
                 return raw_status;
@@ -532,11 +537,19 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_status_debounces_non_waiting() {
+    fn test_resolve_status_debounces_running() {
         let mut mgr = StatusProcessor::new();
-        // First call: starts debounce timer, returns previous
+        // Running is debounced — first call starts timer, returns previous
+        let result = mgr.resolve_status("s1", SessionStatus::Running, SessionStatus::Idle);
+        assert_eq!(result, SessionStatus::Idle); // still debouncing
+    }
+
+    #[test]
+    fn test_resolve_status_idle_is_immediate() {
+        let mut mgr = StatusProcessor::new();
+        // Idle bypasses debounce (task completion should show immediately)
         let result = mgr.resolve_status("s1", SessionStatus::Idle, SessionStatus::Running);
-        assert_eq!(result, SessionStatus::Running); // still debouncing
+        assert_eq!(result, SessionStatus::Idle); // immediate
     }
 
     #[test]
@@ -549,12 +562,12 @@ mod tests {
     #[test]
     fn test_resolve_status_same_status_clears_pending() {
         let mut mgr = StatusProcessor::new();
-        // Start a pending transition
-        mgr.resolve_status("s1", SessionStatus::Idle, SessionStatus::Running);
+        // Start a pending transition (Running is debounced)
+        mgr.resolve_status("s1", SessionStatus::Running, SessionStatus::Idle);
         assert!(mgr.pending_status.contains_key("s1"));
 
         // Same as current — clears pending
-        mgr.resolve_status("s1", SessionStatus::Running, SessionStatus::Running);
+        mgr.resolve_status("s1", SessionStatus::Idle, SessionStatus::Idle);
         assert!(!mgr.pending_status.contains_key("s1"));
     }
 

@@ -54,6 +54,13 @@ jobs:
 
           sed -i "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" Cargo.toml
 
+          # Update Cargo.lock to match the new version
+          if command -v cargo &> /dev/null; then
+            cargo generate-lockfile
+          else
+            sed -i "0,/version = \"${CURRENT_VERSION}\"/s//version = \"${NEW_VERSION}\"/" Cargo.lock
+          fi
+
           PR_TITLE="${{ github.event.pull_request.title }}"
           PR_NUMBER="${{ github.event.pull_request.number }}"
           PR_AUTHOR="${{ github.event.pull_request.user.login }}"
@@ -72,7 +79,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml CHANGELOG.md
+          git add Cargo.toml Cargo.lock CHANGELOG.md
           git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
           git tag "v${NEW_VERSION}"
           git push origin HEAD "v${NEW_VERSION}"

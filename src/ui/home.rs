@@ -4,6 +4,13 @@ use crate::app::{App, Overlay};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
+const LOGO: [&str; 4] = [
+    r"  __    ___  ____  __ _  ____    _  _  __  ____  _  _ ",
+    r" / _\  / __)(  __)(  ( \(_  _)  / )( \(  )(  __)/ )( \",
+    r"/    \( (_ \ ) _) /    /  )(    \ \/ / )(  ) _) \ /\ /",
+    r"\_/\_/ \___/(____)\_)__) (__)    \__/ (__)(____)(_/\_)",
+];
+
 /// Main render function for the home screen
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -41,7 +48,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(6), // ASCII header + tab bar
             Constraint::Min(0),
             Constraint::Length(feed_height),
             Constraint::Length(footer_sep),
@@ -49,8 +56,13 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(list_area);
 
-    render_header(frame, chunks[0], &app.theme);
-    render_session_list(frame, chunks[1], app);
+    render_header(frame, chunks[0], &app.theme, app.active_tab);
+    match app.active_tab {
+        crate::app::ActiveTab::Sessions => render_session_list(frame, chunks[1], app),
+        crate::app::ActiveTab::Routines => {
+            crate::ui::routines::render_routine_list(frame, chunks[1], app)
+        }
+    }
     if show_feed {
         render_activity_feed(frame, chunks[2], app);
         // Separator between activity feed and footer
@@ -80,17 +92,47 @@ pub fn render(frame: &mut Frame, app: &App) {
         crate::ui::footer::render(frame, chunks[4], app);
     }
 
-    // Render detail panel for selected session when wide enough
+    // Render detail panel when wide enough
     if let Some(detail_rect) = detail_area {
-        if let Some(session) = app.selected_session() {
-            crate::ui::detail::render_detail_panel(
-                frame,
-                detail_rect,
-                session,
-                &app.theme,
-                app.detail_mode,
-                &app.preview_content,
-            );
+        match app.active_tab {
+            crate::app::ActiveTab::Sessions => {
+                if let Some(session) = app.selected_session() {
+                    crate::ui::detail::render_detail_panel(
+                        frame,
+                        detail_rect,
+                        session,
+                        &app.theme,
+                        app.detail_mode,
+                        &app.preview_content,
+                    );
+                }
+            }
+            crate::app::ActiveTab::Routines => {
+                match app.routine_list_rows.get(app.routine_selected_index) {
+                    Some(crate::app::RoutineListRow::Routine(routine)) => {
+                        crate::ui::detail::render_routine_detail(
+                            frame,
+                            detail_rect,
+                            routine,
+                            &app.theme,
+                            app.detail_mode,
+                            &app.preview_content,
+                        );
+                    }
+                    Some(crate::app::RoutineListRow::Run { run, routine_name }) => {
+                        crate::ui::detail::render_run_detail(
+                            frame,
+                            detail_rect,
+                            run,
+                            routine_name,
+                            &app.theme,
+                            app.detail_mode,
+                            &app.preview_content,
+                        );
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -98,6 +140,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     match &app.overlay {
         Overlay::NewSession(form) => {
             crate::ui::overlay::render_new_session(frame, area, form, &app.theme);
+        }
+        Overlay::NewRoutine(form) => {
+            crate::ui::overlay::render_new_routine(frame, area, form, &app.theme);
         }
         Overlay::Confirm(dialog) => {
             crate::ui::overlay::render_confirm(frame, area, dialog, &app.theme);
@@ -115,13 +160,16 @@ pub fn render(frame: &mut Frame, app: &App) {
             crate::ui::overlay::render_command_palette(frame, area, palette, &app.theme);
         }
         Overlay::Help => {
-            crate::ui::overlay::render_help(frame, area, &app.theme);
+            crate::ui::overlay::render_help(frame, area, app);
         }
         Overlay::ThemeSelect(form) => {
             crate::ui::overlay::render_theme_select(frame, area, form, &app.theme);
         }
         Overlay::AddNote(form) => {
             crate::ui::overlay::render_add_note(frame, area, form, &app.theme);
+        }
+        Overlay::RoutineWarning => {
+            crate::ui::overlay::render_routine_warning(frame, area, &app.theme);
         }
         Overlay::None => {}
     }
@@ -175,16 +223,59 @@ fn format_activity_age(timestamp: i64) -> String {
     }
 }
 
-fn render_header(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
+fn render_header(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &crate::ui::theme::Theme,
+    active_tab: crate::app::ActiveTab,
+) {
     let version = env!("CARGO_PKG_VERSION");
-    let header = Line::from(vec![
-        Span::styled("agent-view ", Style::default().fg(theme.primary).bold()),
+
+    let logo_lines: &[&str] = &LOGO;
+
+    let primary_style = Style::default().fg(theme.primary).bold();
+    let muted_style = Style::default().fg(theme.text_muted);
+
+    let mut lines: Vec<Line> = logo_lines
+        .iter()
+        .map(|line| Line::from(Span::styled(*line, primary_style)))
+        .collect();
+    lines.push(Line::from(""));
+
+    // Tab bar line beneath the logo
+    let tab_line = Line::from(vec![
+        Span::styled("  ", muted_style),
         Span::styled(
-            format!("v{}", version),
+            " Sessions ",
+            if active_tab == crate::app::ActiveTab::Sessions {
+                Style::default()
+                    .fg(theme.selected_item_text)
+                    .bg(theme.primary)
+                    .bold()
+            } else {
+                muted_style
+            },
+        ),
+        Span::styled(" ", muted_style),
+        Span::styled(
+            " Routines ",
+            if active_tab == crate::app::ActiveTab::Routines {
+                Style::default()
+                    .fg(theme.selected_item_text)
+                    .bg(theme.primary)
+                    .bold()
+            } else {
+                muted_style
+            },
+        ),
+        Span::styled(
+            format!("  v{}", version),
             Style::default().fg(theme.text_muted),
         ),
     ]);
-    frame.render_widget(Paragraph::new(header), area);
+    lines.push(tab_line);
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {

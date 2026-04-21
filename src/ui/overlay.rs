@@ -190,6 +190,7 @@ pub fn render_rename(
     let title = match form.target_type {
         crate::app::RenameTarget::Session => " Rename Session ",
         crate::app::RenameTarget::Group => " Rename Group ",
+        crate::app::RenameTarget::Routine => " Rename Routine ",
     };
     let block = Block::default()
         .title(title)
@@ -375,7 +376,8 @@ pub fn render_command_palette(
 }
 
 /// Render the keybinding help overlay
-pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
+pub fn render_help(frame: &mut Frame, area: Rect, app: &crate::app::App) {
+    let theme = &app.theme;
     let width = area.width.min(72);
     let height = area.height.min(24);
     let x = (area.width.saturating_sub(width)) / 2;
@@ -421,6 +423,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Them
         binding("PgUp/Dn", "Page scroll", key_style, desc_style),
         binding("1-9", "Jump to group", key_style, desc_style),
         binding("/", "Search", key_style, desc_style),
+        binding("Tab", "Switch tab", key_style, desc_style),
         Line::from(""),
         section_header("View", section_style),
         binding("v", "Cycle panel", key_style, desc_style),
@@ -433,25 +436,47 @@ pub fn render_help(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Them
         binding("J / K", "Move group", key_style, desc_style),
     ];
 
-    let right_lines: Vec<Line> = vec![
-        section_header("Sessions", section_style),
-        binding("n", "New session", key_style, desc_style),
-        binding("s", "Stop session", key_style, desc_style),
-        binding("r", "Restart", key_style, desc_style),
-        binding("d", "Delete", key_style, desc_style),
-        binding("R", "Rename", key_style, desc_style),
-        binding("m", "Move to group", key_style, desc_style),
-        Line::from(""),
-        section_header("Actions", section_style),
-        binding("Space", "Select session", key_style, desc_style),
-        binding("Ctrl+A", "Select all", key_style, desc_style),
-        binding("e", "Export log", key_style, desc_style),
-        binding("!", "Notifications", key_style, desc_style),
-        binding("i", "Follow-up flag", key_style, desc_style),
-        binding("p", "Pin/unpin", key_style, desc_style),
-        binding("S", "Cycle sort", key_style, desc_style),
-        binding("Ctrl+K", "Command palette", key_style, desc_style),
-    ];
+    let right_lines: Vec<Line> = if app.active_tab == crate::app::ActiveTab::Routines {
+        vec![
+            section_header("Routines", section_style),
+            binding("n", "New routine", key_style, desc_style),
+            binding("e", "Edit routine", key_style, desc_style),
+            binding("Space", "Enable/disable", key_style, desc_style),
+            binding("Enter", "Expand runs", key_style, desc_style),
+            binding("d", "Delete", key_style, desc_style),
+            binding("p", "Pin/unpin", key_style, desc_style),
+            binding("R", "Rename", key_style, desc_style),
+            Line::from(""),
+            section_header("Runs", section_style),
+            binding("r", "Inspect/resume", key_style, desc_style),
+            binding("P", "Promote to session", key_style, desc_style),
+            binding("d", "Delete run", key_style, desc_style),
+            Line::from(""),
+            section_header("General", section_style),
+            binding("Tab", "Switch tab", key_style, desc_style),
+            binding("Ctrl+K", "Command palette", key_style, desc_style),
+        ]
+    } else {
+        vec![
+            section_header("Sessions", section_style),
+            binding("n", "New session", key_style, desc_style),
+            binding("s", "Stop session", key_style, desc_style),
+            binding("r", "Restart", key_style, desc_style),
+            binding("d", "Delete", key_style, desc_style),
+            binding("R", "Rename", key_style, desc_style),
+            binding("m", "Move to group", key_style, desc_style),
+            Line::from(""),
+            section_header("Actions", section_style),
+            binding("Space", "Select session", key_style, desc_style),
+            binding("Ctrl+A", "Select all", key_style, desc_style),
+            binding("e", "Export log", key_style, desc_style),
+            binding("!", "Notifications", key_style, desc_style),
+            binding("i", "Follow-up flag", key_style, desc_style),
+            binding("p", "Pin/unpin", key_style, desc_style),
+            binding("S", "Cycle sort", key_style, desc_style),
+            binding("Ctrl+K", "Command palette", key_style, desc_style),
+        ]
+    };
 
     frame.render_widget(Paragraph::new(left_lines), cols[0]);
     frame.render_widget(Paragraph::new(right_lines), cols[1]);
@@ -533,6 +558,309 @@ pub fn render_add_note(
         .style(Style::default().fg(theme.text))
         .wrap(Wrap { trim: false });
     frame.render_widget(text_widget, inner);
+}
+
+/// Render the routine permissions warning dialog
+pub fn render_routine_warning(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
+    let overlay_width = 50u16.min(area.width.saturating_sub(4));
+    let overlay_height = 12u16.min(area.height.saturating_sub(4));
+
+    let x = (area.width.saturating_sub(overlay_width)) / 2;
+    let y = (area.height.saturating_sub(overlay_height)) / 2;
+    let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let block = Block::default()
+        .title(" \u{26A0} Routines \u{26A0} ")
+        .title_style(Style::default().fg(theme.warning).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.warning));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let warn = "\u{26A0}";
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            format!("  {}  PERMISSIONS BYPASSED  {}", warn, warn),
+            Style::default().fg(theme.warning).bold(),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Routines run unattended. Claude steps",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(vec![Span::styled(
+            "  execute with all permission checks",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(vec![Span::styled(
+            "  bypassed \u{2014} commands, file edits, and",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(vec![Span::styled(
+            "  network access run without approval.",
+            Style::default().fg(theme.text),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Enter ", Style::default().fg(theme.secondary).bold()),
+            Span::styled("I understand", Style::default().fg(theme.text)),
+            Span::styled("   Esc ", Style::default().fg(theme.secondary).bold()),
+            Span::styled("go back", Style::default().fg(theme.text)),
+        ]),
+    ];
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Render the new routine creation form as a centered overlay
+pub fn render_new_routine(
+    frame: &mut Frame,
+    area: Rect,
+    form: &crate::app::NewRoutineForm,
+    theme: &crate::ui::theme::Theme,
+) {
+    let overlay_width = 65u16.min(area.width.saturating_sub(4));
+    let overlay_height = 22u16.min(area.height.saturating_sub(4));
+
+    let x = (area.width.saturating_sub(overlay_width)) / 2;
+    let y = (area.height.saturating_sub(overlay_height)) / 2;
+    let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let title = if form.edit_routine_id.is_some() {
+        " Edit Routine "
+    } else {
+        " New Routine "
+    };
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(theme.primary).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Name label
+            Constraint::Length(1), // Name input
+            Constraint::Length(1), // Tool label + toggle
+            Constraint::Length(1), // Working dir label
+            Constraint::Length(1), // Working dir input
+            Constraint::Length(1), // Schedule label
+            Constraint::Length(1), // Frequency selector
+            Constraint::Length(1), // Time/params
+            Constraint::Length(1), // Next run preview
+            Constraint::Length(1), // Steps label
+            Constraint::Min(2),    // Steps list
+            Constraint::Length(1), // Notifications + timeout
+            Constraint::Length(1), // Submit hint
+        ])
+        .split(inner);
+
+    let field_label_style = |field: usize| {
+        if form.focused_field == field {
+            Style::default().fg(theme.primary)
+        } else {
+            Style::default().fg(theme.text_muted)
+        }
+    };
+
+    // Field 0: Name
+    frame.render_widget(
+        Paragraph::new(" Name:").style(field_label_style(0)),
+        chunks[0],
+    );
+    let name_display = format!(
+        " {}{}",
+        form.name,
+        if form.focused_field == 0 {
+            "\u{2588}"
+        } else {
+            ""
+        }
+    );
+    frame.render_widget(
+        Paragraph::new(name_display).style(Style::default().fg(theme.text)),
+        chunks[1],
+    );
+
+    // Field 1: Tool
+    let tool_display = format!(" Tool: [{}]  (Space to toggle)", form.default_tool);
+    frame.render_widget(
+        Paragraph::new(tool_display).style(field_label_style(1)),
+        chunks[2],
+    );
+
+    // Field 2: Working dir
+    frame.render_widget(
+        Paragraph::new(" Working Directory:").style(field_label_style(2)),
+        chunks[3],
+    );
+    let dir_display = format!(
+        " {}{}",
+        form.working_dir,
+        if form.focused_field == 2 {
+            "\u{2588}"
+        } else {
+            ""
+        }
+    );
+    frame.render_widget(
+        Paragraph::new(dir_display).style(Style::default().fg(theme.text)),
+        chunks[4],
+    );
+
+    // Field 3: Schedule
+    frame.render_widget(
+        Paragraph::new(" Schedule:").style(field_label_style(3)),
+        chunks[5],
+    );
+    let freq_display = format!(" <{}> (Left/Right to change)", form.frequency.label());
+    frame.render_widget(
+        Paragraph::new(freq_display).style(Style::default().fg(theme.text)),
+        chunks[6],
+    );
+
+    // Time params based on frequency
+    let time_display = match form.frequency {
+        crate::app::ScheduleFrequency::Hourly => {
+            format!(" At minute :{:02} (Up/Down)", form.minute)
+        }
+        crate::app::ScheduleFrequency::Daily => {
+            format!(" At {:02}:{:02} (Up/Down = hour)", form.hour, form.minute)
+        }
+        crate::app::ScheduleFrequency::Weekly => {
+            let days: Vec<&str> = form
+                .weekdays
+                .iter()
+                .enumerate()
+                .filter(|(_, &sel)| sel)
+                .map(|(i, _)| crate::core::schedule::Weekday::all()[i].label())
+                .collect();
+            format!(
+                " {} at {:02}:{:02} (Space=toggle day)",
+                days.join(","),
+                form.hour,
+                form.minute
+            )
+        }
+        crate::app::ScheduleFrequency::Monthly => {
+            format!(
+                " On day {} at {:02}:{:02} (+/- day)",
+                form.month_day, form.hour, form.minute
+            )
+        }
+        crate::app::ScheduleFrequency::Yearly => {
+            format!(
+                " Month {} day {} at {:02}:{:02} (+/- month, [/] day)",
+                form.month, form.month_day, form.hour, form.minute
+            )
+        }
+        crate::app::ScheduleFrequency::Advanced => {
+            format!(
+                " Cron: {}{}",
+                form.cron_raw,
+                if form.focused_field == 3 {
+                    "\u{2588}"
+                } else {
+                    ""
+                }
+            )
+        }
+    };
+    frame.render_widget(
+        Paragraph::new(time_display).style(Style::default().fg(theme.text_muted)),
+        chunks[7],
+    );
+
+    // Next run preview
+    let cron = form.cron_expression();
+    let next_preview = crate::core::schedule::next_run(&cron)
+        .map(|ms| {
+            use chrono::{Local, TimeZone};
+            Local
+                .timestamp_millis_opt(ms)
+                .single()
+                .map(|dt| format!(" Next run: {}", dt.format("%a %b %d at %H:%M")))
+                .unwrap_or_else(|| " Next run: ???".to_string())
+        })
+        .unwrap_or_else(|| " Next run: (invalid schedule)".to_string());
+    frame.render_widget(
+        Paragraph::new(next_preview).style(Style::default().fg(theme.info)),
+        chunks[8],
+    );
+
+    // Field 4: Steps
+    frame.render_widget(
+        Paragraph::new(format!(" Steps ({}):  a:add  d:delete", form.steps.len()))
+            .style(field_label_style(4)),
+        chunks[9],
+    );
+    let step_lines: Vec<Line> = form
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, step)| {
+            let (type_str, content) = match step {
+                crate::types::RoutineStep::Claude { prompt } => ("claude", prompt.as_str()),
+                crate::types::RoutineStep::Shell { command } => ("shell", command.as_str()),
+            };
+            let truncated = if content.len() > 40 {
+                &content[..40]
+            } else {
+                content
+            };
+            Line::from(format!("  {}. [{}] {}", i + 1, type_str, truncated))
+        })
+        .collect();
+    let mut all_lines = step_lines;
+    if let Some(ref text) = form.editing_step {
+        all_lines.push(Line::from(format!("  > {}\u{2588}", text)));
+    }
+    frame.render_widget(
+        Paragraph::new(all_lines)
+            .style(Style::default().fg(theme.text))
+            .wrap(Wrap { trim: false }),
+        chunks[10],
+    );
+
+    // Fields 5+6: Notifications and timeout (highlighted independently)
+    let notify_str = if form.notify { "ON" } else { "OFF" };
+    let timeout_min = form.step_timeout_secs / 60;
+    let notify_style = if form.focused_field == 5 {
+        Style::default().fg(theme.primary)
+    } else {
+        Style::default().fg(theme.text_muted)
+    };
+    let timeout_style = if form.focused_field == 6 {
+        Style::default().fg(theme.primary)
+    } else {
+        Style::default().fg(theme.text_muted)
+    };
+    let bottom_line = Line::from(vec![
+        Span::styled(format!(" Notify: [{}]", notify_str), notify_style),
+        Span::styled("    ", Style::default().fg(theme.text_muted)),
+        Span::styled(
+            format!("Timeout: {}min (Left/Right)", timeout_min),
+            timeout_style,
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(bottom_line), chunks[11]);
+
+    // Submit hint
+    frame.render_widget(
+        Paragraph::new(" Enter: save  Esc: cancel  Tab: next field")
+            .style(Style::default().fg(theme.text_muted)),
+        chunks[12],
+    );
 }
 
 /// Render the group creation overlay

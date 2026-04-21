@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, Result as SqlResult};
 use std::fs;
 use std::path::PathBuf;
 
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 pub struct Storage {
     conn: Connection,
@@ -148,6 +148,50 @@ impl Storage {
                 "ALTER TABLE sessions ADD COLUMN notes TEXT NOT NULL DEFAULT '[]'",
                 [],
             );
+        }
+
+        // v6 -> v7: Add routines and routine_runs tables
+        if version < 7 {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS routines (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    group_path TEXT NOT NULL DEFAULT 'my-routines',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    working_dir TEXT NOT NULL,
+                    default_tool TEXT NOT NULL DEFAULT 'claude',
+                    schedule TEXT NOT NULL,
+                    steps TEXT NOT NULL DEFAULT '[]',
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    last_run_at INTEGER,
+                    next_run_at INTEGER,
+                    run_count INTEGER NOT NULL DEFAULT 0,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    notify INTEGER NOT NULL DEFAULT 1,
+                    step_timeout_secs INTEGER NOT NULL DEFAULT 1800
+                )",
+            )?;
+
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS routine_runs (
+                    id TEXT PRIMARY KEY,
+                    routine_id TEXT NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+                    started_at INTEGER NOT NULL,
+                    finished_at INTEGER,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    steps_completed INTEGER NOT NULL DEFAULT 0,
+                    steps_total INTEGER NOT NULL,
+                    log_path TEXT,
+                    tmux_session TEXT,
+                    tool_data TEXT NOT NULL DEFAULT '{}',
+                    promoted_session_id TEXT
+                )",
+            )?;
+
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_routine_runs_routine_id ON routine_runs(routine_id)",
+            )?;
         }
 
         // Set schema version
@@ -580,6 +624,305 @@ impl Storage {
         Ok(())
     }
 
+    // --- Routine methods ---
+
+    /// Save a routine (insert or update).
+    /// Uses ON CONFLICT UPDATE instead of INSERT OR REPLACE to avoid
+    /// triggering FK CASCADE deletes on routine_runs.
+    pub fn save_routine(&self, routine: &crate::types::Routine) -> SqlResult<()> {
+        let steps_json = serde_json::to_string(&routine.steps).unwrap_or_else(|_| "[]".to_string());
+        self.conn.execute(
+            "INSERT INTO routines (
+                id, name, group_path, sort_order, working_dir, default_tool,
+                schedule, steps, enabled, created_at, last_run_at, next_run_at,
+                run_count, pinned, notify, step_timeout_secs
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, group_path=excluded.group_path,
+                sort_order=excluded.sort_order, working_dir=excluded.working_dir,
+                default_tool=excluded.default_tool, schedule=excluded.schedule,
+                steps=excluded.steps, enabled=excluded.enabled,
+                created_at=excluded.created_at, last_run_at=excluded.last_run_at,
+                next_run_at=excluded.next_run_at, run_count=excluded.run_count,
+                pinned=excluded.pinned, notify=excluded.notify,
+                step_timeout_secs=excluded.step_timeout_secs",
+            params![
+                routine.id,
+                routine.name,
+                routine.group_path,
+                routine.sort_order,
+                routine.working_dir,
+                routine.default_tool,
+                routine.schedule,
+                steps_json,
+                routine.enabled as i32,
+                routine.created_at,
+                routine.last_run_at,
+                routine.next_run_at,
+                routine.run_count,
+                routine.pinned as i32,
+                routine.notify as i32,
+                routine.step_timeout_secs,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_routines(&self) -> SqlResult<Vec<crate::types::Routine>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, group_path, sort_order, working_dir, default_tool,
+                    schedule, steps, enabled, created_at, last_run_at, next_run_at,
+                    run_count, pinned, notify, step_timeout_secs
+             FROM routines ORDER BY sort_order",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let steps_json: String = row.get(7)?;
+            Ok(crate::types::Routine {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                group_path: row.get(2)?,
+                sort_order: row.get(3)?,
+                working_dir: row.get(4)?,
+                default_tool: row.get(5)?,
+                schedule: row.get(6)?,
+                steps: serde_json::from_str(&steps_json).unwrap_or_default(),
+                enabled: row.get::<_, i32>(8)? == 1,
+                created_at: row.get(9)?,
+                last_run_at: row.get(10)?,
+                next_run_at: row.get(11)?,
+                run_count: row.get(12)?,
+                pinned: row.get::<_, i32>(13)? == 1,
+                notify: row.get::<_, i32>(14)? == 1,
+                step_timeout_secs: row.get(15)?,
+                expanded: false,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn get_routine(&self, id: &str) -> SqlResult<Option<crate::types::Routine>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, group_path, sort_order, working_dir, default_tool,
+                    schedule, steps, enabled, created_at, last_run_at, next_run_at,
+                    run_count, pinned, notify, step_timeout_secs
+             FROM routines WHERE id = ?1",
+        )?;
+        let result = stmt.query_row(params![id], |row| {
+            let steps_json: String = row.get(7)?;
+            Ok(crate::types::Routine {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                group_path: row.get(2)?,
+                sort_order: row.get(3)?,
+                working_dir: row.get(4)?,
+                default_tool: row.get(5)?,
+                schedule: row.get(6)?,
+                steps: serde_json::from_str(&steps_json).unwrap_or_default(),
+                enabled: row.get::<_, i32>(8)? == 1,
+                created_at: row.get(9)?,
+                last_run_at: row.get(10)?,
+                next_run_at: row.get(11)?,
+                run_count: row.get(12)?,
+                pinned: row.get::<_, i32>(13)? == 1,
+                notify: row.get::<_, i32>(14)? == 1,
+                step_timeout_secs: row.get(15)?,
+                expanded: false,
+            })
+        });
+        match result {
+            Ok(routine) => Ok(Some(routine)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn delete_routine(&self, id: &str) -> SqlResult<()> {
+        self.conn
+            .execute("DELETE FROM routines WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn set_routine_enabled(&self, id: &str, enabled: bool) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routines SET enabled = ?1 WHERE id = ?2",
+            params![enabled as i32, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_routine_pinned(&self, id: &str, pinned: bool) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routines SET pinned = ?1 WHERE id = ?2",
+            params![pinned as i32, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn rename_routine(&self, id: &str, new_name: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routines SET name = ?1 WHERE id = ?2",
+            params![new_name, id],
+        )?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn move_routine_to_group(&self, id: &str, group_path: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routines SET group_path = ?1 WHERE id = ?2",
+            params![group_path, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_routine_execution(
+        &self,
+        id: &str,
+        last_run_at: i64,
+        next_run_at: Option<i64>,
+    ) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routines SET last_run_at = ?1, next_run_at = ?2, run_count = run_count + 1 WHERE id = ?3",
+            params![last_run_at, next_run_at, id],
+        )?;
+        Ok(())
+    }
+
+    // --- Routine run methods ---
+
+    pub fn save_routine_run(&self, run: &crate::types::RoutineRun) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO routine_runs (
+                id, routine_id, started_at, finished_at, status,
+                steps_completed, steps_total, log_path, tmux_session,
+                tool_data, promoted_session_id
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                run.id,
+                run.routine_id,
+                run.started_at,
+                run.finished_at,
+                run.status.as_str(),
+                run.steps_completed,
+                run.steps_total,
+                run.log_path,
+                run.tmux_session,
+                run.tool_data,
+                run.promoted_session_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_routine_runs(&self, routine_id: &str) -> SqlResult<Vec<crate::types::RoutineRun>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, routine_id, started_at, finished_at, status,
+                    steps_completed, steps_total, log_path, tmux_session,
+                    tool_data, promoted_session_id
+             FROM routine_runs WHERE routine_id = ?1 ORDER BY started_at DESC",
+        )?;
+        let rows = stmt.query_map(params![routine_id], |row| {
+            let status_str: String = row.get(4)?;
+            Ok(crate::types::RoutineRun {
+                id: row.get(0)?,
+                routine_id: row.get(1)?,
+                started_at: row.get(2)?,
+                finished_at: row.get(3)?,
+                status: crate::types::RunStatus::from_str(&status_str),
+                steps_completed: row.get(5)?,
+                steps_total: row.get(6)?,
+                log_path: row.get(7)?,
+                tmux_session: row.get(8)?,
+                tool_data: row.get(9)?,
+                promoted_session_id: row.get(10)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn update_routine_run_status(
+        &self,
+        run_id: &str,
+        status: crate::types::RunStatus,
+        finished_at: Option<i64>,
+    ) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routine_runs SET status = ?1, finished_at = ?2 WHERE id = ?3",
+            params![status.as_str(), finished_at, run_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn increment_run_steps_completed(&self, run_id: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routine_runs SET steps_completed = steps_completed + 1 WHERE id = ?1",
+            params![run_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn has_active_run(&self, routine_id: &str) -> SqlResult<bool> {
+        let count: i32 = self.conn.query_row(
+            "SELECT COUNT(*) FROM routine_runs WHERE routine_id = ?1 AND finished_at IS NULL",
+            params![routine_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    #[allow(dead_code)]
+    pub fn get_latest_run(&self, routine_id: &str) -> SqlResult<Option<crate::types::RoutineRun>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, routine_id, started_at, finished_at, status,
+                    steps_completed, steps_total, log_path, tmux_session,
+                    tool_data, promoted_session_id
+             FROM routine_runs WHERE routine_id = ?1 ORDER BY started_at DESC LIMIT 1",
+        )?;
+        let result = stmt.query_row(params![routine_id], |row| {
+            let status_str: String = row.get(4)?;
+            Ok(crate::types::RoutineRun {
+                id: row.get(0)?,
+                routine_id: row.get(1)?,
+                started_at: row.get(2)?,
+                finished_at: row.get(3)?,
+                status: crate::types::RunStatus::from_str(&status_str),
+                steps_completed: row.get(5)?,
+                steps_total: row.get(6)?,
+                log_path: row.get(7)?,
+                tmux_session: row.get(8)?,
+                tool_data: row.get(9)?,
+                promoted_session_id: row.get(10)?,
+            })
+        });
+        match result {
+            Ok(run) => Ok(Some(run)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn delete_routine_run(&self, run_id: &str) -> SqlResult<()> {
+        self.conn
+            .execute("DELETE FROM routine_runs WHERE id = ?1", params![run_id])?;
+        Ok(())
+    }
+
+    pub fn set_run_promoted(&self, run_id: &str, session_id: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routine_runs SET promoted_session_id = ?1 WHERE id = ?2",
+            params![session_id, run_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_run_tool_data(&self, run_id: &str, tool_data: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE routine_runs SET tool_data = ?1 WHERE id = ?2",
+            params![tool_data, run_id],
+        )?;
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn close(self) -> SqlResult<()> {
         self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
@@ -661,7 +1004,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("6".to_string()));
+        assert_eq!(version, Some("7".to_string()));
     }
 
     #[test]
@@ -669,7 +1012,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("6".to_string()));
+        assert_eq!(version, Some("7".to_string()));
     }
 
     #[test]
@@ -1026,5 +1369,304 @@ mod tests {
         storage.move_session_to_group("s1", "work").unwrap();
         let loaded = storage.get_session("s1").unwrap().unwrap();
         assert_eq!(loaded.group_path, "work");
+    }
+
+    #[test]
+    fn test_v7_routines_table_exists() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO routines (id, name, working_dir, schedule, steps, created_at)
+                 VALUES ('r1', 'Test', '/tmp', '0 9 * * *', '[]', 0)",
+                [],
+            )
+            .unwrap();
+
+        let name: String = storage
+            .conn()
+            .query_row("SELECT name FROM routines WHERE id = 'r1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(name, "Test");
+    }
+
+    #[test]
+    fn test_v7_routine_runs_table_exists() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO routines (id, name, working_dir, schedule, steps, created_at)
+                 VALUES ('r1', 'Test', '/tmp', '0 9 * * *', '[]', 0)",
+                [],
+            )
+            .unwrap();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO routine_runs (id, routine_id, started_at, status, steps_total)
+                 VALUES ('run1', 'r1', 0, 'running', 2)",
+                [],
+            )
+            .unwrap();
+
+        let status: String = storage
+            .conn()
+            .query_row(
+                "SELECT status FROM routine_runs WHERE id = 'run1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "running");
+    }
+
+    #[test]
+    fn test_v7_schema_version() {
+        let (storage, _dir) = test_storage();
+        let version = storage.get_meta("schema_version").unwrap();
+        assert_eq!(version, Some("7".to_string()));
+    }
+
+    fn make_test_routine(id: &str) -> crate::types::Routine {
+        crate::types::Routine {
+            id: id.to_string(),
+            name: format!("Routine {}", id),
+            group_path: "my-routines".to_string(),
+            sort_order: 0,
+            working_dir: "/tmp/test".to_string(),
+            default_tool: "claude".to_string(),
+            schedule: "0 9 * * *".to_string(),
+            steps: vec![crate::types::RoutineStep::Claude {
+                prompt: "Do something".to_string(),
+            }],
+            enabled: false,
+            created_at: 1700000000000,
+            last_run_at: None,
+            next_run_at: None,
+            run_count: 0,
+            pinned: false,
+            notify: true,
+            step_timeout_secs: 1800,
+            expanded: false,
+        }
+    }
+
+    #[test]
+    fn test_save_and_load_routine() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        let loaded = storage.load_routines().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "r1");
+        assert_eq!(loaded[0].name, "Routine r1");
+        assert_eq!(loaded[0].schedule, "0 9 * * *");
+        assert_eq!(loaded[0].steps.len(), 1);
+    }
+
+    #[test]
+    fn test_get_routine_by_id() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        let found = storage.get_routine("r1").unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().name, "Routine r1");
+
+        let missing = storage.get_routine("nonexistent").unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn test_delete_routine() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+        storage.delete_routine("r1").unwrap();
+
+        let loaded = storage.load_routines().unwrap();
+        assert_eq!(loaded.len(), 0);
+    }
+
+    #[test]
+    fn test_delete_routine_cascades_runs() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        let run = crate::types::RoutineRun {
+            id: "run1".to_string(),
+            routine_id: "r1".to_string(),
+            started_at: 1700000000000,
+            finished_at: Some(1700000001000),
+            status: crate::types::RunStatus::Completed,
+            steps_completed: 1,
+            steps_total: 1,
+            log_path: None,
+            tmux_session: None,
+            tool_data: "{}".to_string(),
+            promoted_session_id: None,
+        };
+        storage.save_routine_run(&run).unwrap();
+
+        storage.delete_routine("r1").unwrap();
+        let runs = storage.load_routine_runs("r1").unwrap();
+        assert_eq!(runs.len(), 0);
+    }
+
+    #[test]
+    fn test_save_and_load_routine_run() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        let run = crate::types::RoutineRun {
+            id: "run1".to_string(),
+            routine_id: "r1".to_string(),
+            started_at: 1700000000000,
+            finished_at: Some(1700000001000),
+            status: crate::types::RunStatus::Completed,
+            steps_completed: 1,
+            steps_total: 1,
+            log_path: Some("/tmp/log".to_string()),
+            tmux_session: Some("agentorch_routine_test".to_string()),
+            tool_data: "{}".to_string(),
+            promoted_session_id: None,
+        };
+        storage.save_routine_run(&run).unwrap();
+
+        let runs = storage.load_routine_runs("r1").unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, "run1");
+        assert_eq!(runs[0].status, crate::types::RunStatus::Completed);
+        assert_eq!(runs[0].log_path, Some("/tmp/log".to_string()));
+    }
+
+    #[test]
+    fn test_update_routine_run_status() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        let run = crate::types::RoutineRun {
+            id: "run1".to_string(),
+            routine_id: "r1".to_string(),
+            started_at: 1700000000000,
+            finished_at: None,
+            status: crate::types::RunStatus::Running,
+            steps_completed: 0,
+            steps_total: 2,
+            log_path: None,
+            tmux_session: None,
+            tool_data: "{}".to_string(),
+            promoted_session_id: None,
+        };
+        storage.save_routine_run(&run).unwrap();
+
+        storage
+            .update_routine_run_status("run1", crate::types::RunStatus::Failed, Some(1700000002000))
+            .unwrap();
+
+        let runs = storage.load_routine_runs("r1").unwrap();
+        assert_eq!(runs[0].status, crate::types::RunStatus::Failed);
+        assert_eq!(runs[0].finished_at, Some(1700000002000));
+    }
+
+    #[test]
+    fn test_routine_set_enabled() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        storage.set_routine_enabled("r1", true).unwrap();
+        let loaded = storage.get_routine("r1").unwrap().unwrap();
+        assert!(loaded.enabled);
+
+        storage.set_routine_enabled("r1", false).unwrap();
+        let loaded = storage.get_routine("r1").unwrap().unwrap();
+        assert!(!loaded.enabled);
+    }
+
+    #[test]
+    fn test_routine_set_pinned() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        storage.set_routine_pinned("r1", true).unwrap();
+        let loaded = storage.get_routine("r1").unwrap().unwrap();
+        assert!(loaded.pinned);
+    }
+
+    #[test]
+    fn test_has_active_run() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        assert!(!storage.has_active_run("r1").unwrap());
+
+        let run = crate::types::RoutineRun {
+            id: "run1".to_string(),
+            routine_id: "r1".to_string(),
+            started_at: 1700000000000,
+            finished_at: None,
+            status: crate::types::RunStatus::Running,
+            steps_completed: 0,
+            steps_total: 1,
+            log_path: None,
+            tmux_session: None,
+            tool_data: "{}".to_string(),
+            promoted_session_id: None,
+        };
+        storage.save_routine_run(&run).unwrap();
+
+        assert!(storage.has_active_run("r1").unwrap());
+    }
+
+    #[test]
+    fn test_get_latest_run() {
+        let (storage, _dir) = test_storage();
+        let routine = make_test_routine("r1");
+        storage.save_routine(&routine).unwrap();
+
+        assert!(storage.get_latest_run("r1").unwrap().is_none());
+
+        let run1 = crate::types::RoutineRun {
+            id: "run1".to_string(),
+            routine_id: "r1".to_string(),
+            started_at: 1700000000000,
+            finished_at: Some(1700000001000),
+            status: crate::types::RunStatus::Completed,
+            steps_completed: 1,
+            steps_total: 1,
+            log_path: None,
+            tmux_session: None,
+            tool_data: "{}".to_string(),
+            promoted_session_id: None,
+        };
+        let run2 = crate::types::RoutineRun {
+            id: "run2".to_string(),
+            routine_id: "r1".to_string(),
+            started_at: 1700000002000,
+            finished_at: Some(1700000003000),
+            status: crate::types::RunStatus::Failed,
+            steps_completed: 0,
+            steps_total: 1,
+            log_path: None,
+            tmux_session: None,
+            tool_data: "{}".to_string(),
+            promoted_session_id: None,
+        };
+        storage.save_routine_run(&run1).unwrap();
+        storage.save_routine_run(&run2).unwrap();
+
+        let latest = storage.get_latest_run("r1").unwrap().unwrap();
+        assert_eq!(latest.id, "run2");
     }
 }
