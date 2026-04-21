@@ -676,7 +676,7 @@ pub fn render_new_routine(
     // Time params based on frequency
     let time_display = match form.frequency {
         crate::app::ScheduleFrequency::Hourly => {
-            format!(" At minute :{:02}", form.minute)
+            format!(" At minute :{:02} (Up/Down)", form.minute)
         }
         crate::app::ScheduleFrequency::Daily => {
             format!(" At {:02}:{:02} (Up/Down = hour)", form.hour, form.minute)
@@ -770,7 +770,9 @@ pub fn render_new_routine(
         all_lines.push(Line::from(format!("  > {}\u{2588}", text)));
     }
     frame.render_widget(
-        Paragraph::new(all_lines).style(Style::default().fg(theme.text)),
+        Paragraph::new(all_lines)
+            .style(Style::default().fg(theme.text))
+            .wrap(Wrap { trim: false }),
         chunks[10],
     );
 

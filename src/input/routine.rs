@@ -400,27 +400,23 @@ pub fn handle_new_routine_key(
             form.completions.clear();
             form.completion_index = None;
         }
-        // Enter: submit form or add step
+        // Enter: confirm step edit if active, otherwise submit form
         (KeyModifiers::NONE, KeyCode::Enter) => {
-            // If we're editing a step, add it
-            if form.focused_field == 4 {
-                if let Some(ref text) = form.editing_step.clone() {
-                    if !text.is_empty() {
-                        let step = if form.default_tool == "claude" {
-                            crate::types::RoutineStep::Claude {
-                                prompt: text.clone(),
-                            }
-                        } else {
-                            crate::types::RoutineStep::Shell {
-                                command: text.clone(),
-                            }
-                        };
-                        form.steps.push(step);
-                        form.editing_step = None;
-                    }
-                } else {
-                    form.editing_step = Some(String::new());
+            // If actively editing a step, confirm it
+            if let Some(ref text) = form.editing_step.clone() {
+                if !text.is_empty() {
+                    let step = if form.default_tool == "claude" {
+                        crate::types::RoutineStep::Claude {
+                            prompt: text.clone(),
+                        }
+                    } else {
+                        crate::types::RoutineStep::Shell {
+                            command: text.clone(),
+                        }
+                    };
+                    form.steps.push(step);
                 }
+                form.editing_step = None;
                 return;
             }
 
@@ -608,10 +604,26 @@ fn handle_schedule_input(form: &mut NewRoutineForm, key: KeyEvent) {
             KeyCode::Left => form.frequency = form.frequency.prev(),
             KeyCode::Right => form.frequency = form.frequency.next(),
             KeyCode::Up => {
-                form.hour = if form.hour == 23 { 0 } else { form.hour + 1 };
+                if form.frequency == ScheduleFrequency::Hourly {
+                    form.minute = if form.minute >= 59 {
+                        0
+                    } else {
+                        form.minute + 1
+                    };
+                } else {
+                    form.hour = if form.hour == 23 { 0 } else { form.hour + 1 };
+                }
             }
             KeyCode::Down => {
-                form.hour = if form.hour == 0 { 23 } else { form.hour - 1 };
+                if form.frequency == ScheduleFrequency::Hourly {
+                    form.minute = if form.minute == 0 {
+                        59
+                    } else {
+                        form.minute - 1
+                    };
+                } else {
+                    form.hour = if form.hour == 0 { 23 } else { form.hour - 1 };
+                }
             }
             KeyCode::Char(c) if c.is_ascii_digit() => {
                 let digit = c.to_digit(10).unwrap() as u8;
