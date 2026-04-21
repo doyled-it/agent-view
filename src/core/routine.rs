@@ -60,7 +60,10 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
     for (i, step) in routine.steps.iter().enumerate() {
         let command = match step {
             RoutineStep::Claude { prompt } => {
-                format!("claude '{}'", prompt.replace('\'', "'\\''"))
+                format!(
+                    "claude --dangerously-skip-permissions '{}'",
+                    prompt.replace('\'', "'\\''")
+                )
             }
             RoutineStep::Shell { command } => command.clone(),
         };
