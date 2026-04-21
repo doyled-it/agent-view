@@ -4,7 +4,6 @@
 use croner::Cron;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Weekday {
     Sunday,
     Monday,
@@ -28,7 +27,6 @@ impl Weekday {
         }
     }
 
-    #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
             Self::Sunday => "Sun",
@@ -41,7 +39,6 @@ impl Weekday {
         }
     }
 
-    #[allow(dead_code)]
     pub fn all() -> &'static [Weekday] {
         &[
             Self::Sunday,
@@ -55,7 +52,6 @@ impl Weekday {
     }
 }
 
-#[allow(dead_code)]
 pub fn build_hourly(minute: u8) -> String {
     format!("{} * * * *", minute)
 }
@@ -65,23 +61,19 @@ pub fn build_every_n_hours(n: u8, _start_hour: u8, start_minute: u8) -> String {
     format!("{} */{} * * *", start_minute, n)
 }
 
-#[allow(dead_code)]
 pub fn build_daily(hour: u8, minute: u8) -> String {
     format!("{} {} * * *", minute, hour)
 }
 
-#[allow(dead_code)]
 pub fn build_weekly(days: &[Weekday], hour: u8, minute: u8) -> String {
     let day_nums: Vec<String> = days.iter().map(|d| d.cron_number().to_string()).collect();
     format!("{} {} * * {}", minute, hour, day_nums.join(","))
 }
 
-#[allow(dead_code)]
 pub fn build_monthly_by_day(day: u8, hour: u8, minute: u8) -> String {
     format!("{} {} {} * *", minute, hour, day)
 }
 
-#[allow(dead_code)]
 pub fn build_yearly(month: u8, day: u8, hour: u8, minute: u8) -> String {
     format!("{} {} {} {} *", minute, hour, day, month)
 }
@@ -94,16 +86,12 @@ pub fn validate_cron(expr: &str) -> Result<(), String> {
         .map_err(|e| format!("Invalid cron expression: {}", e))
 }
 
-#[allow(dead_code)]
 pub fn next_run(expr: &str) -> Option<i64> {
     let cron = Cron::new(expr).parse().ok()?;
-    let next = cron
-        .find_next_occurrence(&chrono::Utc::now(), false)
-        .ok()?;
+    let next = cron.find_next_occurrence(&chrono::Utc::now(), false).ok()?;
     Some(next.timestamp_millis())
 }
 
-#[allow(dead_code)]
 pub fn human_readable(expr: &str) -> String {
     let parts: Vec<&str> = expr.split_whitespace().collect();
     if parts.len() != 5 {
@@ -113,8 +101,7 @@ pub fn human_readable(expr: &str) -> String {
         return expr.to_string();
     }
 
-    let (minute, hour, dom, month, dow) =
-        (parts[0], parts[1], parts[2], parts[3], parts[4]);
+    let (minute, hour, dom, month, dow) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
 
     // Every N hours
     if hour.starts_with("*/") && dom == "*" && month == "*" && dow == "*" {
@@ -204,7 +191,11 @@ mod tests {
 
     #[test]
     fn test_weekly_schedule_multiple_days() {
-        let cron = build_weekly(&[Weekday::Monday, Weekday::Wednesday, Weekday::Friday], 9, 30);
+        let cron = build_weekly(
+            &[Weekday::Monday, Weekday::Wednesday, Weekday::Friday],
+            9,
+            30,
+        );
         assert_eq!(cron, "30 9 * * 1,3,5");
     }
 

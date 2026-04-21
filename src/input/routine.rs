@@ -269,9 +269,7 @@ pub fn handle_routine_list_key(
                             .as_ref()
                             .map(|sid| format!("claude --resume {}", sid))
                     } else {
-                        run.log_path
-                            .as_ref()
-                            .map(|p| format!("less {}", p))
+                        run.log_path.as_ref().map(|p| format!("less {}", p))
                     };
 
                     if let Err(e) = crate::core::tmux::create_session(
@@ -282,9 +280,8 @@ pub fn handle_routine_list_key(
                     ) {
                         app.toast_message =
                             Some(format!("Failed to create inspect session: {}", e));
-                        app.toast_expire = Some(
-                            std::time::Instant::now() + std::time::Duration::from_secs(3),
-                        );
+                        app.toast_expire =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         return;
                     }
 
@@ -299,10 +296,7 @@ pub fn handle_routine_list_key(
                     use crossterm::execute;
                     use crossterm::terminal::enable_raw_mode;
                     let _ = enable_raw_mode();
-                    let _ = execute!(
-                        std::io::stdout(),
-                        crossterm::terminal::EnterAlternateScreen
-                    );
+                    let _ = execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen);
                     let _ = terminal.clear();
 
                     match promote_result {
@@ -322,17 +316,15 @@ pub fn handle_routine_list_key(
                             app.sessions = storage.load_sessions().unwrap_or_default();
                             app.rebuild_list_rows();
                             if let Ok(runs) = storage.load_routine_runs(&run.routine_id) {
-                                app.routine_runs_cache
-                                    .insert(run.routine_id.clone(), runs);
+                                app.routine_runs_cache.insert(run.routine_id.clone(), runs);
                             }
                             app.rebuild_routine_list_rows();
                             storage.touch().ok();
 
                             app.toast_message =
                                 Some(format!("Promoted to session: {}", session_title));
-                            app.toast_expire = Some(
-                                std::time::Instant::now() + std::time::Duration::from_secs(3),
-                            );
+                            app.toast_expire =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         }
                         Ok(false) => {
                             // Normal detach — kill the ephemeral tmux session
@@ -341,9 +333,8 @@ pub fn handle_routine_list_key(
                         Err(e) => {
                             let _ = crate::core::tmux::kill_session(&tmux_name);
                             app.toast_message = Some(format!("Inspect failed: {}", e));
-                            app.toast_expire = Some(
-                                std::time::Instant::now() + std::time::Duration::from_secs(3),
-                            );
+                            app.toast_expire =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         }
                     }
                 }
@@ -423,27 +414,18 @@ pub fn handle_new_routine_key(
             let next = crate::core::schedule::next_run(&cron);
 
             if let Some(ref edit_id) = form.edit_routine_id.clone() {
-                // Editing existing routine
-                let routine = crate::types::Routine {
-                    id: edit_id.clone(),
-                    name: form.name.clone(),
-                    group_path: "my-routines".to_string(),
-                    sort_order: 0,
-                    working_dir: form.working_dir.clone(),
-                    default_tool: form.default_tool.clone(),
-                    schedule: cron,
-                    steps: form.steps.clone(),
-                    enabled: false,
-                    created_at: now,
-                    last_run_at: None,
-                    next_run_at: next,
-                    run_count: 0,
-                    pinned: false,
-                    notify: form.notify,
-                    step_timeout_secs: form.step_timeout_secs,
-                    expanded: false,
-                };
-                let _ = storage.save_routine(&routine);
+                // Editing existing routine — preserve fields not in the form
+                if let Ok(Some(mut existing)) = storage.get_routine(edit_id) {
+                    existing.name = form.name.clone();
+                    existing.working_dir = form.working_dir.clone();
+                    existing.default_tool = form.default_tool.clone();
+                    existing.schedule = cron;
+                    existing.steps = form.steps.clone();
+                    existing.notify = form.notify;
+                    existing.step_timeout_secs = form.step_timeout_secs;
+                    existing.next_run_at = next;
+                    let _ = storage.save_routine(&existing);
+                }
             } else {
                 // New routine
                 let routine = crate::types::Routine {

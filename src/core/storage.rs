@@ -626,7 +626,6 @@ impl Storage {
 
     // --- Routine methods ---
 
-    #[allow(dead_code)]
     pub fn save_routine(&self, routine: &crate::types::Routine) -> SqlResult<()> {
         let steps_json = serde_json::to_string(&routine.steps).unwrap_or_else(|_| "[]".to_string());
         self.conn.execute(
@@ -636,17 +635,27 @@ impl Storage {
                 run_count, pinned, notify, step_timeout_secs
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
-                routine.id, routine.name, routine.group_path, routine.sort_order,
-                routine.working_dir, routine.default_tool, routine.schedule, steps_json,
-                routine.enabled as i32, routine.created_at, routine.last_run_at,
-                routine.next_run_at, routine.run_count, routine.pinned as i32,
-                routine.notify as i32, routine.step_timeout_secs,
+                routine.id,
+                routine.name,
+                routine.group_path,
+                routine.sort_order,
+                routine.working_dir,
+                routine.default_tool,
+                routine.schedule,
+                steps_json,
+                routine.enabled as i32,
+                routine.created_at,
+                routine.last_run_at,
+                routine.next_run_at,
+                routine.run_count,
+                routine.pinned as i32,
+                routine.notify as i32,
+                routine.step_timeout_secs,
             ],
         )?;
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn load_routines(&self) -> SqlResult<Vec<crate::types::Routine>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, group_path, sort_order, working_dir, default_tool,
@@ -679,7 +688,6 @@ impl Storage {
         rows.collect()
     }
 
-    #[allow(dead_code)]
     pub fn get_routine(&self, id: &str) -> SqlResult<Option<crate::types::Routine>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, group_path, sort_order, working_dir, default_tool,
@@ -716,13 +724,12 @@ impl Storage {
         }
     }
 
-    #[allow(dead_code)]
     pub fn delete_routine(&self, id: &str) -> SqlResult<()> {
-        self.conn.execute("DELETE FROM routines WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM routines WHERE id = ?1", params![id])?;
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn set_routine_enabled(&self, id: &str, enabled: bool) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE routines SET enabled = ?1 WHERE id = ?2",
@@ -731,7 +738,6 @@ impl Storage {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn set_routine_pinned(&self, id: &str, pinned: bool) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE routines SET pinned = ?1 WHERE id = ?2",
@@ -740,7 +746,6 @@ impl Storage {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn rename_routine(&self, id: &str, new_name: &str) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE routines SET name = ?1 WHERE id = ?2",
@@ -758,7 +763,6 @@ impl Storage {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn record_routine_execution(
         &self,
         id: &str,
@@ -774,7 +778,6 @@ impl Storage {
 
     // --- Routine run methods ---
 
-    #[allow(dead_code)]
     pub fn save_routine_run(&self, run: &crate::types::RoutineRun) -> SqlResult<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO routine_runs (
@@ -783,15 +786,22 @@ impl Storage {
                 tool_data, promoted_session_id
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
-                run.id, run.routine_id, run.started_at, run.finished_at,
-                run.status.as_str(), run.steps_completed, run.steps_total,
-                run.log_path, run.tmux_session, run.tool_data, run.promoted_session_id,
+                run.id,
+                run.routine_id,
+                run.started_at,
+                run.finished_at,
+                run.status.as_str(),
+                run.steps_completed,
+                run.steps_total,
+                run.log_path,
+                run.tmux_session,
+                run.tool_data,
+                run.promoted_session_id,
             ],
         )?;
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn load_routine_runs(&self, routine_id: &str) -> SqlResult<Vec<crate::types::RoutineRun>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, routine_id, started_at, finished_at, status,
@@ -818,7 +828,6 @@ impl Storage {
         rows.collect()
     }
 
-    #[allow(dead_code)]
     pub fn update_routine_run_status(
         &self,
         run_id: &str,
@@ -832,7 +841,6 @@ impl Storage {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn increment_run_steps_completed(&self, run_id: &str) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE routine_runs SET steps_completed = steps_completed + 1 WHERE id = ?1",
@@ -841,7 +849,6 @@ impl Storage {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn has_active_run(&self, routine_id: &str) -> SqlResult<bool> {
         let count: i32 = self.conn.query_row(
             "SELECT COUNT(*) FROM routine_runs WHERE routine_id = ?1 AND finished_at IS NULL",
@@ -852,10 +859,7 @@ impl Storage {
     }
 
     #[allow(dead_code)]
-    pub fn get_latest_run(
-        &self,
-        routine_id: &str,
-    ) -> SqlResult<Option<crate::types::RoutineRun>> {
+    pub fn get_latest_run(&self, routine_id: &str) -> SqlResult<Option<crate::types::RoutineRun>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, routine_id, started_at, finished_at, status,
                     steps_completed, steps_total, log_path, tmux_session,
@@ -885,13 +889,12 @@ impl Storage {
         }
     }
 
-    #[allow(dead_code)]
     pub fn delete_routine_run(&self, run_id: &str) -> SqlResult<()> {
-        self.conn.execute("DELETE FROM routine_runs WHERE id = ?1", params![run_id])?;
+        self.conn
+            .execute("DELETE FROM routine_runs WHERE id = ?1", params![run_id])?;
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn set_run_promoted(&self, run_id: &str, session_id: &str) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE routine_runs SET promoted_session_id = ?1 WHERE id = ?2",
@@ -900,7 +903,6 @@ impl Storage {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn update_run_tool_data(&self, run_id: &str, tool_data: &str) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE routine_runs SET tool_data = ?1 WHERE id = ?2",
@@ -1371,11 +1373,9 @@ mod tests {
 
         let name: String = storage
             .conn()
-            .query_row(
-                "SELECT name FROM routines WHERE id = 'r1'",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT name FROM routines WHERE id = 'r1'", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(name, "Test");
     }

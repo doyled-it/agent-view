@@ -146,7 +146,6 @@ pub struct NoteEntry {
     pub text: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum RoutineStep {
@@ -154,7 +153,6 @@ pub enum RoutineStep {
     Shell { command: String },
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunStatus {
@@ -166,7 +164,6 @@ pub enum RunStatus {
 }
 
 impl RunStatus {
-    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Running => "running",
@@ -177,7 +174,6 @@ impl RunStatus {
         }
     }
 
-    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "running" => Self::Running,
@@ -189,7 +185,6 @@ impl RunStatus {
         }
     }
 
-    #[allow(dead_code)]
     pub fn icon(&self) -> &'static str {
         match self {
             Self::Running => "●",
@@ -207,7 +202,6 @@ impl std::fmt::Display for RunStatus {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Routine {
     pub id: String,
@@ -229,7 +223,6 @@ pub struct Routine {
     pub expanded: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RoutineRun {
     pub id: String,
@@ -671,8 +664,12 @@ mod tests {
     #[test]
     fn test_routine_step_serialize_roundtrip() {
         let steps = vec![
-            RoutineStep::Claude { prompt: "Generate briefing".to_string() },
-            RoutineStep::Shell { command: "git pull".to_string() },
+            RoutineStep::Claude {
+                prompt: "Generate briefing".to_string(),
+            },
+            RoutineStep::Shell {
+                command: "git pull".to_string(),
+            },
         ];
         let json = serde_json::to_string(&steps).unwrap();
         let parsed: Vec<RoutineStep> = serde_json::from_str(&json).unwrap();

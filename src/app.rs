@@ -6,7 +6,6 @@ use crate::ui::theme::Theme;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
     Sessions,
@@ -28,7 +27,6 @@ pub enum Overlay {
     AddNote(NoteForm),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum RoutineListRow {
     Group {
@@ -360,7 +358,6 @@ impl NewRoutineForm {
         }
     }
 
-    #[allow(dead_code)]
     pub fn from_routine(routine: &crate::types::Routine) -> Self {
         let mut form = Self::new();
         form.name = routine.name.clone();
@@ -520,7 +517,6 @@ pub struct App {
     pub preview_content: String,
     pub preview_last_session: Option<String>,
     pub preview_last_capture: Option<std::time::Instant>,
-    #[allow(dead_code)]
     pub active_tab: ActiveTab,
     pub routines: Vec<crate::types::Routine>,
     pub routine_runs_cache: std::collections::HashMap<String, Vec<crate::types::RoutineRun>>,
@@ -662,7 +658,6 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
     pub fn toggle_tab(&mut self) {
         self.active_tab = match self.active_tab {
             ActiveTab::Sessions => ActiveTab::Routines,
@@ -671,7 +666,6 @@ impl App {
     }
 
     /// Rebuild the flattened routine list from current routines and their runs
-    #[allow(dead_code)]
     pub fn rebuild_routine_list_rows(&mut self) {
         let mut rows: Vec<RoutineListRow> = Vec::new();
 
@@ -741,7 +735,6 @@ impl App {
         self.clamp_routine_selection();
     }
 
-    #[allow(dead_code)]
     pub fn clamp_routine_selection(&mut self) {
         if self.routine_list_rows.is_empty() {
             self.routine_selected_index = 0;

@@ -5,7 +5,6 @@ use crate::types::{RoutineRun, RoutineStep, RunStatus};
 
 /// Execute a routine by ID. Called by the `exec-routine` CLI subcommand.
 /// This is a blocking function that runs all steps sequentially.
-#[allow(dead_code)]
 pub fn exec_routine(routine_id: &str) -> Result<(), String> {
     let storage = Storage::open_default().map_err(|e| format!("Failed to open storage: {}", e))?;
     storage
@@ -67,7 +66,7 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
         };
 
         // Send command to tmux
-        if let Err(e) = crate::core::tmux::send_keys(&tmux_name, &format!("{}\n", command)) {
+        if let Err(e) = crate::core::tmux::send_keys(&tmux_name, &command) {
             eprintln!("Failed to send keys for step {}: {}", i + 1, e);
             final_status = RunStatus::Failed;
             break;

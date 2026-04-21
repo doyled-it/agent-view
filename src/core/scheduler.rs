@@ -3,7 +3,6 @@
 #[allow(unused_imports)]
 use crate::types::Routine;
 
-#[allow(dead_code)]
 pub trait Scheduler {
     fn install(&self, routine: &Routine) -> Result<(), String>;
     fn uninstall(&self, routine_id: &str) -> Result<(), String>;
@@ -12,7 +11,6 @@ pub trait Scheduler {
 }
 
 /// Get the platform-appropriate scheduler
-#[allow(dead_code)]
 pub fn platform_scheduler() -> Box<dyn Scheduler> {
     #[cfg(target_os = "macos")]
     {

@@ -418,7 +418,8 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> Result<b
         .output();
 
     // Set up bindings and status bar
-    let status_right = "#[fg=#89b4fa]Ctrl+P#[fg=#6c7086] promote  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach";
+    let status_right =
+        "#[fg=#89b4fa]Ctrl+P#[fg=#6c7086] promote  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach";
 
     let _ = Command::new("tmux")
         .args([
@@ -481,15 +482,7 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> Result<b
 
     // Unbind keys
     let _ = Command::new("tmux")
-        .args([
-            "unbind-key",
-            "-n",
-            "C-q",
-            ";",
-            "unbind-key",
-            "-n",
-            "C-p",
-        ])
+        .args(["unbind-key", "-n", "C-q", ";", "unbind-key", "-n", "C-p"])
         .output();
 
     // Clear screen for TUI return

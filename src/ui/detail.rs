@@ -446,8 +446,7 @@ fn render_routine_preview(frame: &mut Frame, area: Rect, theme: &Theme, preview_
     frame.render_widget(block, area);
 
     if preview_content.is_empty() {
-        let msg =
-            Paragraph::new("No log available").style(Style::default().fg(theme.text_muted));
+        let msg = Paragraph::new("No log available").style(Style::default().fg(theme.text_muted));
         frame.render_widget(msg, inner);
         return;
     }
@@ -526,7 +525,10 @@ fn render_routine_metadata(
         ]),
         Line::from(vec![
             Span::styled(" Run count: ", Style::default().fg(theme.text_muted)),
-            Span::styled(routine.run_count.to_string(), Style::default().fg(theme.text)),
+            Span::styled(
+                routine.run_count.to_string(),
+                Style::default().fg(theme.text),
+            ),
         ]),
         Line::from(Span::styled(
             " Steps:",

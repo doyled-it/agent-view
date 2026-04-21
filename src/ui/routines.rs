@@ -87,10 +87,7 @@ pub fn render_routine_list(frame: &mut Frame, area: Rect, app: &App) {
                     };
                     let run_count_str = format!("{}x", routine.run_count);
 
-                    let next_str = routine
-                        .next_run_at
-                        .map(format_next_run)
-                        .unwrap_or_default();
+                    let next_str = routine.next_run_at.map(format_next_run).unwrap_or_default();
 
                     let row_width = area.width as usize;
                     let left_content = format!(
@@ -101,9 +98,7 @@ pub fn render_routine_list(frame: &mut Frame, area: Rect, app: &App) {
                     let pad = if left_content.chars().count() + right_content.chars().count()
                         < row_width
                     {
-                        row_width
-                            - left_content.chars().count()
-                            - right_content.chars().count()
+                        row_width - left_content.chars().count() - right_content.chars().count()
                     } else {
                         1
                     };
@@ -121,20 +116,14 @@ pub fn render_routine_list(frame: &mut Frame, area: Rect, app: &App) {
                             format!("{} ", expand_arrow),
                             Style::default().fg(theme.text_muted),
                         ),
-                        Span::styled(
-                            routine.name.clone(),
-                            Style::default().fg(theme.text).bold(),
-                        ),
+                        Span::styled(routine.name.clone(), Style::default().fg(theme.text).bold()),
                         Span::styled(
                             format!("  {}", schedule_str),
                             Style::default().fg(theme.text_muted),
                         ),
                         Span::raw(" ".repeat(pad)),
                         Span::styled(run_count_str, Style::default().fg(theme.text_muted)),
-                        Span::styled(
-                            format!("  {}", next_str),
-                            Style::default().fg(theme.info),
-                        ),
+                        Span::styled(format!("  {}", next_str), Style::default().fg(theme.info)),
                         Span::raw(" "),
                     ]);
 
