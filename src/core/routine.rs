@@ -140,7 +140,24 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
                         break;
                     }
 
-                    if parsed.has_idle_prompt || parsed.has_exited {
+                    // For shell steps: detect idle prompt by looking for
+                    // a shell prompt character at the end of output, since
+                    // parse_tool_status only checks idle prompts for Claude.
+                    let shell_idle = if matches!(step, RoutineStep::Shell { .. }) {
+                        let cleaned = crate::core::tmux::strip_ansi(&output);
+                        let last_line = cleaned
+                            .lines()
+                            .rev()
+                            .find(|l| !l.trim().is_empty())
+                            .unwrap_or("");
+                        last_line.contains('\u{276f}') // ❯
+                            || last_line.contains("$ ")
+                            || last_line.contains("% ")
+                    } else {
+                        false
+                    };
+
+                    if parsed.has_idle_prompt || parsed.has_exited || shell_idle {
                         break; // Step completed
                     }
                 }

@@ -104,6 +104,9 @@ impl MacosScheduler {
             )
         };
 
+        // Capture current PATH so LaunchAgent can find tmux, claude, etc.
+        let path_env = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -111,6 +114,11 @@ impl MacosScheduler {
 <dict>
   <key>Label</key>
   <string>com.agent-view.routine.{id}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{path}</string>
+  </dict>
   <key>ProgramArguments</key>
   <array>
     <string>{binary}</string>
@@ -126,6 +134,7 @@ impl MacosScheduler {
 </plist>"#,
             id = routine.id,
             binary = self.binary_path,
+            path = path_env,
             calendar = calendar_xml,
             log_dir = log_dir.to_string_lossy(),
         )
