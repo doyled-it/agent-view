@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.0] - 2026-04-21
+
+### Changed
+
+- feat: add scheduled routines system (#10) (@doyled-it)
+
 ## [1.1.2] - 2026-04-16
 
 ### Changed
