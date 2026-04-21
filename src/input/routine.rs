@@ -8,6 +8,7 @@ pub fn handle_routine_list_key(
     app: &mut App,
     key: KeyEvent,
     storage: &crate::core::storage::Storage,
+    terminal: &mut ratatui::Terminal<ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
 ) {
     match (key.modifiers, key.code) {
         // Navigation
@@ -229,6 +230,123 @@ pub fn handle_routine_list_key(
                     target_type: crate::app::RenameTarget::Routine,
                     input: routine.name.clone(),
                 });
+            }
+        }
+
+        // r: resume/inspect a run
+        (KeyModifiers::NONE, KeyCode::Char('r')) => {
+            if let Some(RoutineListRow::Run { run, .. }) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
+            {
+                if let Some(routine) = app
+                    .routines
+                    .iter()
+                    .find(|r| r.id == run.routine_id)
+                    .cloned()
+                {
+                    let tmux_name = crate::core::tmux::generate_session_name(&format!(
+                        "inspect_{}",
+                        routine.name
+                    ));
+
+                    let tool_data: serde_json::Value = serde_json::from_str(&run.tool_data)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                    let claude_session_id = tool_data
+                        .get("claude_session_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let last_step_is_claude = routine
+                        .steps
+                        .last()
+                        .map(|s| matches!(s, crate::types::RoutineStep::Claude { .. }))
+                        .unwrap_or(false);
+
+                    let command = if last_step_is_claude {
+                        claude_session_id
+                            .as_ref()
+                            .map(|sid| format!("claude --resume {}", sid))
+                    } else {
+                        run.log_path
+                            .as_ref()
+                            .map(|p| format!("less {}", p))
+                    };
+
+                    if let Err(e) = crate::core::tmux::create_session(
+                        &tmux_name,
+                        command.as_deref(),
+                        Some(&routine.working_dir),
+                        None,
+                    ) {
+                        app.toast_message =
+                            Some(format!("Failed to create inspect session: {}", e));
+                        app.toast_expire = Some(
+                            std::time::Instant::now() + std::time::Duration::from_secs(3),
+                        );
+                        return;
+                    }
+
+                    // Leave TUI
+                    use crossterm::terminal::disable_raw_mode;
+                    let _ = disable_raw_mode();
+
+                    let promote_result =
+                        crate::core::tmux::attach_inspect_session_sync(&tmux_name, &run.id);
+
+                    // Re-enter TUI
+                    use crossterm::execute;
+                    use crossterm::terminal::enable_raw_mode;
+                    let _ = enable_raw_mode();
+                    let _ = execute!(
+                        std::io::stdout(),
+                        crossterm::terminal::EnterAlternateScreen
+                    );
+                    let _ = terminal.clear();
+
+                    match promote_result {
+                        Ok(true) => {
+                            // User pressed Ctrl+P — promote the run
+                            let session =
+                                crate::core::routine::build_promoted_session(&run, &routine);
+                            let session_title = session.title.clone();
+                            let session_id = session.id.clone();
+
+                            // Keep the inspect session alive as the promoted session's tmux session
+                            let mut promoted_session = session;
+                            promoted_session.tmux_session = tmux_name;
+                            let _ = storage.save_session(&promoted_session);
+                            let _ = storage.set_run_promoted(&run.id, &session_id);
+
+                            app.sessions = storage.load_sessions().unwrap_or_default();
+                            app.rebuild_list_rows();
+                            if let Ok(runs) = storage.load_routine_runs(&run.routine_id) {
+                                app.routine_runs_cache
+                                    .insert(run.routine_id.clone(), runs);
+                            }
+                            app.rebuild_routine_list_rows();
+                            storage.touch().ok();
+
+                            app.toast_message =
+                                Some(format!("Promoted to session: {}", session_title));
+                            app.toast_expire = Some(
+                                std::time::Instant::now() + std::time::Duration::from_secs(3),
+                            );
+                        }
+                        Ok(false) => {
+                            // Normal detach — kill the ephemeral tmux session
+                            let _ = crate::core::tmux::kill_session(&tmux_name);
+                        }
+                        Err(e) => {
+                            let _ = crate::core::tmux::kill_session(&tmux_name);
+                            app.toast_message = Some(format!("Inspect failed: {}", e));
+                            app.toast_expire = Some(
+                                std::time::Instant::now() + std::time::Duration::from_secs(3),
+                            );
+                        }
+                    }
+                }
             }
         }
 

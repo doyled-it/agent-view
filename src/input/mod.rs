@@ -24,8 +24,7 @@ pub fn handle_main_key(
     }
 
     // When on Routines tab, delegate to routine-specific handler for most keys
-    if app.active_tab == crate::app::ActiveTab::Routines
-        && app.overlay == crate::app::Overlay::None
+    if app.active_tab == crate::app::ActiveTab::Routines && app.overlay == crate::app::Overlay::None
     {
         let pass_through = matches!(
             (key.modifiers, key.code),
@@ -38,7 +37,7 @@ pub fn handle_main_key(
                 | (KeyModifiers::NONE, KeyCode::Char('v'))
         );
         if !pass_through {
-            crate::input::routine::handle_routine_list_key(app, key, storage);
+            crate::input::routine::handle_routine_list_key(app, key, storage, terminal);
             return Ok(());
         }
     }
