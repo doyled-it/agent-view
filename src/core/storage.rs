@@ -626,14 +626,26 @@ impl Storage {
 
     // --- Routine methods ---
 
+    /// Save a routine (insert or update).
+    /// Uses ON CONFLICT UPDATE instead of INSERT OR REPLACE to avoid
+    /// triggering FK CASCADE deletes on routine_runs.
     pub fn save_routine(&self, routine: &crate::types::Routine) -> SqlResult<()> {
         let steps_json = serde_json::to_string(&routine.steps).unwrap_or_else(|_| "[]".to_string());
         self.conn.execute(
-            "INSERT OR REPLACE INTO routines (
+            "INSERT INTO routines (
                 id, name, group_path, sort_order, working_dir, default_tool,
                 schedule, steps, enabled, created_at, last_run_at, next_run_at,
                 run_count, pinned, notify, step_timeout_secs
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, group_path=excluded.group_path,
+                sort_order=excluded.sort_order, working_dir=excluded.working_dir,
+                default_tool=excluded.default_tool, schedule=excluded.schedule,
+                steps=excluded.steps, enabled=excluded.enabled,
+                created_at=excluded.created_at, last_run_at=excluded.last_run_at,
+                next_run_at=excluded.next_run_at, run_count=excluded.run_count,
+                pinned=excluded.pinned, notify=excluded.notify,
+                step_timeout_secs=excluded.step_timeout_secs",
             params![
                 routine.id,
                 routine.name,
