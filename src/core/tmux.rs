@@ -417,9 +417,8 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> Result<b
         .args(["send-keys", "-t", session_name, "-X", "cancel"])
         .output();
 
-    // Set up bindings and status bar
-    let status_right =
-        "#[fg=#89b4fa]Ctrl+P#[fg=#6c7086] promote  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach";
+    // Set up bindings and status bar — mirrors attach_session_sync but adds Ctrl+P promote
+    let status_right = "#[fg=#89b4fa]Ctrl+P#[fg=#6c7086] promote  #[fg=#89b4fa]Ctrl+K#[fg=#6c7086] back  #[fg=#89b4fa]Ctrl+T#[fg=#6c7086] terminal  #[fg=#89b4fa]Ctrl+Q#[fg=#6c7086] detach  #[fg=#89b4fa]Ctrl+C#[fg=#6c7086] cancel";
 
     let _ = Command::new("tmux")
         .args([
@@ -430,9 +429,22 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> Result<b
             ";",
             "bind-key",
             "-n",
+            "C-k",
+            "detach-client",
+            ";",
+            "bind-key",
+            "-n",
             "C-p",
             "run-shell",
             &format!("touch {} && tmux detach-client", promote_signal),
+            ";",
+            "bind-key",
+            "-n",
+            "C-t",
+            "split-window",
+            "-v",
+            "-c",
+            "#{pane_current_path}",
             ";",
             "set-option",
             "-t",
@@ -462,7 +474,7 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> Result<b
             "-t",
             session_name,
             "status-right-length",
-            "80",
+            "120",
             ";",
             "set-option",
             "-t",
@@ -482,7 +494,23 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> Result<b
 
     // Unbind keys
     let _ = Command::new("tmux")
-        .args(["unbind-key", "-n", "C-q", ";", "unbind-key", "-n", "C-p"])
+        .args([
+            "unbind-key",
+            "-n",
+            "C-q",
+            ";",
+            "unbind-key",
+            "-n",
+            "C-k",
+            ";",
+            "unbind-key",
+            "-n",
+            "C-p",
+            ";",
+            "unbind-key",
+            "-n",
+            "C-t",
+        ])
         .output();
 
     // Clear screen for TUI return
