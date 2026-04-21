@@ -29,6 +29,7 @@ When working with AI coding agents, you often need multiple agents running on di
 ## Features
 
 - **Multi-Agent Dashboard** -- View all sessions at a glance with real-time status indicators and 24-hour activity timelines
+- **Scheduled Routines** -- Create recurring tasks (Claude prompts or shell commands) that run on a cron schedule via macOS LaunchAgent, whether or not the TUI is open
 - **Smart Notifications** -- Get notified when an agent finishes or needs input
 - **Session Management** -- Create, stop, restart, rename, and delete sessions with keyboard shortcuts
 - **Git Worktree Integration** -- Create isolated git worktrees for each session
@@ -57,6 +58,31 @@ Agent View monitors sessions and shows real-time status:
 | Idle | Ready for commands |
 | Stopped | Session was stopped |
 | Error | Something went wrong |
+
+### Scheduled Routines
+
+Routines let you schedule recurring tasks that run automatically via system-level jobs (macOS LaunchAgent). Press `Tab` to switch to the Routines tab.
+
+**Creating a routine:**
+1. Press `n` to open the creation form
+2. Set a name, working directory, and schedule (hourly/daily/weekly/monthly/yearly or raw cron)
+3. Add one or more steps -- each step is either a Claude prompt or a shell command
+4. Press `Enter` to save -- the routine is immediately enabled and scheduled
+
+**How it works:**
+- System jobs call `agent-view exec-routine <id>` on schedule, even when the TUI is closed
+- Each step runs sequentially in a tmux session -- Claude steps use `--permission-mode bypassPermissions` for unattended execution
+- Run history is tracked with archived logs viewable in the preview pane
+- Inspect past runs with `r` (attaches to an ephemeral tmux session) or promote them to full sessions with `P`
+- On startup, agent-view reconciles scheduler state: re-registers missing jobs, detects stale binary paths, and marks crashed runs
+
+**Schedule builder frequencies:**
+- **Hourly** -- at minute :MM (Up/Down to adjust)
+- **Daily** -- at HH:MM
+- **Weekly** -- specific days at HH:MM (Space to toggle days)
+- **Monthly** -- on day N at HH:MM (+/- to adjust day)
+- **Yearly** -- month and day at HH:MM (+/- month, [/] day)
+- **Advanced** -- raw cron expression
 
 ## Installation
 
@@ -141,6 +167,22 @@ av
 | `Ctrl+A` | Select all visible |
 | `a` | Toggle activity feed |
 | `t` | Theme selector |
+
+**Routines Tab** (press `Tab` to switch):
+
+| Key | Action |
+|-----|--------|
+| `n` | New routine |
+| `e` | Edit routine |
+| `Space` | Enable/disable routine (installs/removes system job) |
+| `Enter` | Expand routine to show run history |
+| `d` | Delete routine or run |
+| `p` | Pin/unpin routine |
+| `R` | Rename routine |
+| `m` | Move to group |
+| `/` | Search routines |
+| `r` | Inspect/resume a run |
+| `P` | Promote run to full session |
 
 **Inside an attached session:**
 
