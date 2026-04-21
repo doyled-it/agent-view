@@ -386,14 +386,14 @@ pub fn handle_new_routine_key(
         }
         // Tab: next field
         (KeyModifiers::NONE, KeyCode::Tab) => {
-            form.focused_field = (form.focused_field + 1) % 8;
+            form.focused_field = (form.focused_field + 1) % 7;
             form.completions.clear();
             form.completion_index = None;
         }
         // Shift+Tab: previous field
         (KeyModifiers::SHIFT, KeyCode::BackTab) => {
             form.focused_field = if form.focused_field == 0 {
-                7
+                6
             } else {
                 form.focused_field - 1
             };

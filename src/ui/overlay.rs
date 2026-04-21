@@ -776,17 +776,28 @@ pub fn render_new_routine(
         chunks[10],
     );
 
-    // Fields 5+6: Notifications and timeout
+    // Fields 5+6: Notifications and timeout (highlighted independently)
     let notify_str = if form.notify { "ON" } else { "OFF" };
     let timeout_min = form.step_timeout_secs / 60;
-    let bottom_line = format!(
-        " Notify: [{}]    Timeout: {}min (Left/Right)",
-        notify_str, timeout_min
-    );
-    frame.render_widget(
-        Paragraph::new(bottom_line).style(Style::default().fg(theme.text_muted)),
-        chunks[11],
-    );
+    let notify_style = if form.focused_field == 5 {
+        Style::default().fg(theme.primary)
+    } else {
+        Style::default().fg(theme.text_muted)
+    };
+    let timeout_style = if form.focused_field == 6 {
+        Style::default().fg(theme.primary)
+    } else {
+        Style::default().fg(theme.text_muted)
+    };
+    let bottom_line = Line::from(vec![
+        Span::styled(format!(" Notify: [{}]", notify_str), notify_style),
+        Span::styled("    ", Style::default().fg(theme.text_muted)),
+        Span::styled(
+            format!("Timeout: {}min (Left/Right)", timeout_min),
+            timeout_style,
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(bottom_line), chunks[11]);
 
     // Submit hint
     frame.render_widget(
