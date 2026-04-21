@@ -256,6 +256,44 @@ pub fn execute_command_action(
             app.toast_message = Some(format!("Panel: {}", app.detail_mode.label()));
             app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         }
+        CommandAction::NewRoutine => {
+            app.active_tab = crate::app::ActiveTab::Routines;
+            app.overlay = Overlay::NewRoutine(crate::app::NewRoutineForm::new());
+        }
+        CommandAction::ToggleRoutine => {
+            app.active_tab = crate::app::ActiveTab::Routines;
+            if let Some(crate::app::RoutineListRow::Routine(routine)) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
+            {
+                let new_enabled = !routine.enabled;
+                let _ = storage.set_routine_enabled(&routine.id, new_enabled);
+                let scheduler = crate::core::scheduler::platform_scheduler();
+                if new_enabled {
+                    if let Some(r) = app.routines.iter().find(|r| r.id == routine.id) {
+                        let _ = scheduler.install(r);
+                    }
+                } else {
+                    let _ = scheduler.uninstall(&routine.id);
+                }
+                app.routines = storage.load_routines().unwrap_or_default();
+                app.rebuild_routine_list_rows();
+            }
+        }
+        CommandAction::DeleteRoutine => {
+            app.active_tab = crate::app::ActiveTab::Routines;
+            if let Some(crate::app::RoutineListRow::Routine(routine)) = app
+                .routine_list_rows
+                .get(app.routine_selected_index)
+                .cloned()
+            {
+                app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
+                    message: format!("Delete routine '{}'?", routine.name),
+                    action: crate::app::ConfirmAction::DeleteRoutine(routine.id.clone()),
+                });
+            }
+        }
     }
     Ok(())
 }

@@ -104,6 +104,9 @@ pub enum CommandAction {
     SelectTheme,
     CyclePanel,
     Quit,
+    NewRoutine,
+    ToggleRoutine,
+    DeleteRoutine,
 }
 
 impl CommandPalette {
@@ -193,6 +196,21 @@ impl CommandPalette {
                 label: "Quit".to_string(),
                 key_hint: "q".to_string(),
                 action: CommandAction::Quit,
+            },
+            CommandItem {
+                label: "New Routine".to_string(),
+                key_hint: "n".to_string(),
+                action: CommandAction::NewRoutine,
+            },
+            CommandItem {
+                label: "Toggle Routine".to_string(),
+                key_hint: "Space".to_string(),
+                action: CommandAction::ToggleRoutine,
+            },
+            CommandItem {
+                label: "Delete Routine".to_string(),
+                key_hint: "d".to_string(),
+                action: CommandAction::DeleteRoutine,
             },
         ];
         let filtered: Vec<usize> = (0..items.len()).collect();
