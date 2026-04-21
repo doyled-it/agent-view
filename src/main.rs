@@ -81,6 +81,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     app.rebuild_routine_list_rows();
 
+    // Reconcile scheduler state
+    {
+        let scheduler = crate::core::scheduler::platform_scheduler();
+        let mut stale_count = 0;
+        for routine in &app.routines {
+            if routine.enabled && !scheduler.is_installed(&routine.id) {
+                // Re-install missing job
+                let _ = scheduler.install(routine);
+            } else if routine.enabled && scheduler.has_stale_binary_path(&routine.id) {
+                // Binary moved since job was installed — re-register with current path
+                let _ = scheduler.uninstall(&routine.id);
+                let _ = scheduler.install(routine);
+                stale_count += 1;
+            }
+            if !routine.enabled && scheduler.is_installed(&routine.id) {
+                // Remove orphaned job
+                let _ = scheduler.uninstall(&routine.id);
+            }
+        }
+        if stale_count > 0 {
+            app.toast_message = Some(format!(
+                "Re-registered {} routine(s) with updated binary path",
+                stale_count
+            ));
+            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+        }
+
+        // Mark crashed runs (finished_at IS NULL but tmux session gone)
+        for routine in &app.routines {
+            if let Ok(runs) = storage.load_routine_runs(&routine.id) {
+                for run in &runs {
+                    if run.finished_at.is_none() {
+                        let tmux_alive = run
+                            .tmux_session
+                            .as_ref()
+                            .map(|t| crate::core::tmux::session_exists(t))
+                            .unwrap_or(false);
+                        if !tmux_alive {
+                            let _ = storage.update_routine_run_status(
+                                &run.id,
+                                crate::types::RunStatus::Crashed,
+                                Some(chrono::Utc::now().timestamp_millis()),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Detect crashed sessions (tmux died since last run)
     let crashed_ids = crate::core::session::detect_crashed_statuses(&app.sessions);
     for id in &crashed_ids {
@@ -422,62 +472,57 @@ fn run_tui(
                         .unwrap_or(true);
 
                     if should_capture {
-                        let content =
-                            match app.routine_list_rows.get(app.routine_selected_index) {
-                                Some(crate::app::RoutineListRow::Routine(routine)) => {
-                                    app.routine_runs_cache
-                                        .get(&routine.id)
-                                        .and_then(|runs| runs.first())
-                                        .and_then(|run| {
-                                            if run.finished_at.is_none() {
-                                                if let Some(ref tmux_name) = run.tmux_session {
-                                                    if crate::core::tmux::session_exists(tmux_name)
-                                                    {
-                                                        return crate::core::tmux::capture_pane(
-                                                            tmux_name,
-                                                            Some(-50),
-                                                            true,
-                                                        )
-                                                        .ok();
-                                                    }
-                                                }
-                                            }
-                                            run.log_path
-                                                .as_ref()
-                                                .and_then(|p| std::fs::read_to_string(p).ok())
-                                        })
-                                        .unwrap_or_default()
-                                }
-                                Some(crate::app::RoutineListRow::Run { run, .. }) => {
+                        let content = match app.routine_list_rows.get(app.routine_selected_index) {
+                            Some(crate::app::RoutineListRow::Routine(routine)) => app
+                                .routine_runs_cache
+                                .get(&routine.id)
+                                .and_then(|runs| runs.first())
+                                .and_then(|run| {
                                     if run.finished_at.is_none() {
                                         if let Some(ref tmux_name) = run.tmux_session {
                                             if crate::core::tmux::session_exists(tmux_name) {
-                                                crate::core::tmux::capture_pane(
+                                                return crate::core::tmux::capture_pane(
                                                     tmux_name,
                                                     Some(-50),
                                                     true,
                                                 )
-                                                .unwrap_or_default()
-                                            } else {
-                                                run.log_path
-                                                    .as_ref()
-                                                    .and_then(|p| {
-                                                        std::fs::read_to_string(p).ok()
-                                                    })
-                                                    .unwrap_or_default()
+                                                .ok();
                                             }
+                                        }
+                                    }
+                                    run.log_path
+                                        .as_ref()
+                                        .and_then(|p| std::fs::read_to_string(p).ok())
+                                })
+                                .unwrap_or_default(),
+                            Some(crate::app::RoutineListRow::Run { run, .. }) => {
+                                if run.finished_at.is_none() {
+                                    if let Some(ref tmux_name) = run.tmux_session {
+                                        if crate::core::tmux::session_exists(tmux_name) {
+                                            crate::core::tmux::capture_pane(
+                                                tmux_name,
+                                                Some(-50),
+                                                true,
+                                            )
+                                            .unwrap_or_default()
                                         } else {
-                                            String::new()
+                                            run.log_path
+                                                .as_ref()
+                                                .and_then(|p| std::fs::read_to_string(p).ok())
+                                                .unwrap_or_default()
                                         }
                                     } else {
-                                        run.log_path
-                                            .as_ref()
-                                            .and_then(|p| std::fs::read_to_string(p).ok())
-                                            .unwrap_or_default()
+                                        String::new()
                                     }
+                                } else {
+                                    run.log_path
+                                        .as_ref()
+                                        .and_then(|p| std::fs::read_to_string(p).ok())
+                                        .unwrap_or_default()
                                 }
-                                _ => String::new(),
-                            };
+                            }
+                            _ => String::new(),
+                        };
                         app.preview_content = content;
                         app.preview_last_capture = Some(std::time::Instant::now());
                     }
