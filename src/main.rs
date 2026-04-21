@@ -352,9 +352,17 @@ fn run_tui(
                         crate::app::Overlay::NewRoutine(_) => {
                             crate::input::routine::handle_new_routine_key(&mut app, key, &storage);
                         }
-                        crate::app::Overlay::RoutineWarning => {
-                            // Handled in handle_main_key
-                        }
+                        crate::app::Overlay::RoutineWarning => match key.code {
+                            crossterm::event::KeyCode::Enter => {
+                                app.routine_tab_warning_shown = true;
+                                app.overlay = crate::app::Overlay::None;
+                            }
+                            crossterm::event::KeyCode::Esc => {
+                                app.overlay = crate::app::Overlay::None;
+                                app.active_tab = crate::app::ActiveTab::Sessions;
+                            }
+                            _ => {}
+                        },
                     }
                 }
                 if app.should_quit {

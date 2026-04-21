@@ -562,8 +562,8 @@ pub fn render_add_note(
 
 /// Render the routine permissions warning dialog
 pub fn render_routine_warning(frame: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
-    let overlay_width = 60u16.min(area.width.saturating_sub(4));
-    let overlay_height = 14u16.min(area.height.saturating_sub(4));
+    let overlay_width = 50u16.min(area.width.saturating_sub(4));
+    let overlay_height = 12u16.min(area.height.saturating_sub(4));
 
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;
@@ -580,40 +580,36 @@ pub fn render_routine_warning(frame: &mut Frame, area: Rect, theme: &crate::ui::
     let inner = block.inner(overlay_area);
     frame.render_widget(block, overlay_area);
 
-    let warn_icon = "\u{26A0}";
+    let warn = "\u{26A0}";
     let lines = vec![
         Line::from(""),
         Line::from(vec![Span::styled(
-            format!("  {}  PERMISSIONS BYPASSED  {}", warn_icon, warn_icon),
+            format!("  {}  PERMISSIONS BYPASSED  {}", warn, warn),
             Style::default().fg(theme.warning).bold(),
         )]),
         Line::from(""),
         Line::from(vec![Span::styled(
-            "  Routines run unattended on a schedule.",
+            "  Routines run unattended. Claude steps",
             Style::default().fg(theme.text),
         )]),
         Line::from(vec![Span::styled(
-            "  To do this, Claude steps execute with all",
+            "  execute with all permission checks",
             Style::default().fg(theme.text),
         )]),
         Line::from(vec![Span::styled(
-            "  permission checks bypassed. Claude will",
+            "  bypassed \u{2014} commands, file edits, and",
             Style::default().fg(theme.text),
         )]),
         Line::from(vec![Span::styled(
-            "  run commands, edit files, and access the",
-            Style::default().fg(theme.text),
-        )]),
-        Line::from(vec![Span::styled(
-            "  network without asking for approval.",
+            "  network access run without approval.",
             Style::default().fg(theme.text),
         )]),
         Line::from(""),
         Line::from(vec![
             Span::styled("  Enter ", Style::default().fg(theme.secondary).bold()),
             Span::styled("I understand", Style::default().fg(theme.text)),
-            Span::styled("    Esc ", Style::default().fg(theme.secondary).bold()),
-            Span::styled("take me back", Style::default().fg(theme.text)),
+            Span::styled("   Esc ", Style::default().fg(theme.secondary).bold()),
+            Span::styled("go back", Style::default().fg(theme.text)),
         ]),
     ];
 
