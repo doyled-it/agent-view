@@ -4,6 +4,13 @@ use crate::app::{App, Overlay};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
+const LOGO: [&str; 4] = [
+    r"  __    ___  ____  __ _  ____    _  _  __  ____  _  _ ",
+    r" / _\  / __)(  __)(  ( \(_  _)  / )( \(  )(  __)/ )( \",
+    r"/    \( (_ \ ) _) /    /  )(    \ \/ / )(  ) _) \ /\ /",
+    r"\_/\_/ \___/(____)\_)__) (__)    \__/ (__)(____)(_/\_)",
+];
+
 /// Main render function for the home screen
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -41,7 +48,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(6), // ASCII header + tab bar
             Constraint::Min(0),
             Constraint::Length(feed_height),
             Constraint::Length(footer_sep),
@@ -223,32 +230,52 @@ fn render_header(
     active_tab: crate::app::ActiveTab,
 ) {
     let version = env!("CARGO_PKG_VERSION");
-    let header = Line::from(vec![
-        Span::styled("agent-view ", Style::default().fg(theme.primary).bold()),
-        Span::styled(
-            format!("v{}", version),
-            Style::default().fg(theme.text_muted),
-        ),
-        Span::raw("  "),
+
+    let logo_lines: &[&str] = &LOGO;
+
+    let primary_style = Style::default().fg(theme.primary).bold();
+    let muted_style = Style::default().fg(theme.text_muted);
+
+    let mut lines: Vec<Line> = logo_lines
+        .iter()
+        .map(|line| Line::from(Span::styled(*line, primary_style)))
+        .collect();
+    lines.push(Line::from(""));
+
+    // Tab bar line beneath the logo
+    let tab_line = Line::from(vec![
+        Span::styled("  ", muted_style),
         Span::styled(
             " Sessions ",
             if active_tab == crate::app::ActiveTab::Sessions {
-                Style::default().fg(theme.primary).bold().underlined()
+                Style::default()
+                    .fg(theme.selected_item_text)
+                    .bg(theme.primary)
+                    .bold()
             } else {
-                Style::default().fg(theme.text_muted)
+                muted_style
             },
         ),
-        Span::raw(" "),
+        Span::styled(" ", muted_style),
         Span::styled(
             " Routines ",
             if active_tab == crate::app::ActiveTab::Routines {
-                Style::default().fg(theme.primary).bold().underlined()
+                Style::default()
+                    .fg(theme.selected_item_text)
+                    .bg(theme.primary)
+                    .bold()
             } else {
-                Style::default().fg(theme.text_muted)
+                muted_style
             },
         ),
+        Span::styled(
+            format!("  v{}", version),
+            Style::default().fg(theme.text_muted),
+        ),
     ]);
-    frame.render_widget(Paragraph::new(header), area);
+    lines.push(tab_line);
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
