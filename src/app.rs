@@ -96,6 +96,7 @@ pub enum CommandAction {
     ToggleFollowUp,
     ExportLog,
     CreateGroup,
+    DeleteGroup,
     Search,
     CycleSort,
     PinSession,
@@ -160,6 +161,11 @@ impl CommandPalette {
                 label: "Create Group".to_string(),
                 key_hint: "g".to_string(),
                 action: CommandAction::CreateGroup,
+            },
+            CommandItem {
+                label: "Delete Group".to_string(),
+                key_hint: "G".to_string(),
+                action: CommandAction::DeleteGroup,
             },
             CommandItem {
                 label: "Search Sessions".to_string(),
@@ -442,6 +448,7 @@ pub enum ConfirmAction {
     StopSession(String),
     BulkDelete,
     BulkStop,
+    DeleteGroup(String),
     DeleteRoutine(String),
 }
 
