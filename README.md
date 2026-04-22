@@ -42,6 +42,7 @@ When working with AI coding agents, you often need multiple agents running on di
 - **Sort Modes** -- Cycle through status, activity, name, and creation time sorting (Shift+S)
 - **Search** -- Fuzzy search across session names (press `/`)
 - **Command Palette** -- Quick access to all actions (Ctrl+K)
+- **Account Usage Tracking** -- Live display of Claude account-level rate limits (session, weekly, per-model) with colored progress bars
 - **Token Tracking** -- Monitor token usage for Claude sessions
 - **Session Uptime** -- Tracks time since last tmux session start, not just creation date
 - **Persistent State** -- Sessions survive terminal restarts via tmux; data stored in SQLite
@@ -58,6 +59,12 @@ Agent View monitors sessions and shows real-time status:
 | Idle | Ready for commands |
 | Stopped | Session was stopped |
 | Error | Something went wrong |
+
+### Account Usage Tracking
+
+A usage pane at the bottom of the screen shows your Claude account rate limits with colored progress bars (green < 50%, yellow 50-79%, red >= 80%). Displays session, weekly, and per-model buckets with reset times.
+
+This works by running a hidden tmux session that periodically queries Claude's `/usage` command. The hidden session is automatically created on startup and cleaned up on exit -- it does not appear in the session list.
 
 ### Scheduled Routines
 
