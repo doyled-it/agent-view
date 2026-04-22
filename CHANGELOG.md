@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.0] - 2026-04-22
+
+### Changed
+
+- feat(groups): add group deletion and fix activity feed names (#11) (@doyled-it)
+
 ## [1.3.0] - 2026-04-22
 
 ### Changed
