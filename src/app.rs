@@ -524,6 +524,8 @@ pub struct App {
     pub routine_list_rows: Vec<RoutineListRow>,
     pub routine_selected_index: usize,
     pub routine_tab_warning_shown: bool,
+    pub usage_data: Option<crate::types::UsageData>,
+    pub usage_shared: Option<crate::core::usage::SharedUsageData>,
 }
 
 impl App {
@@ -561,6 +563,8 @@ impl App {
             routine_list_rows: Vec::new(),
             routine_selected_index: 0,
             routine_tab_warning_shown: false,
+            usage_data: None,
+            usage_shared: None,
         }
     }
 

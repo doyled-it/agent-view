@@ -207,6 +207,10 @@ fn run_tui(
     let bg_sound = config.notifications.sound;
     let _bg_handle = crate::poller::spawn(Arc::clone(&attach_state), bg_sound);
 
+    // Spawn usage monitor
+    let (usage_shared, _usage_thread) = crate::core::usage::spawn_monitor();
+    app.usage_shared = Some(usage_shared);
+
     // Handle --attach: immediately attach to the session
     if let Some(session_id) = app.attach_session.take() {
         if let Some(session) = app.sessions.iter().find(|s| s.id == session_id) {
@@ -384,6 +388,13 @@ fn run_tui(
 
                 // Diff statuses for activity feed
                 for new_s in &new_sessions {
+                    // Skip meta monitoring sessions
+                    if new_s
+                        .tmux_session
+                        .starts_with(crate::core::usage::META_SESSION_PREFIX)
+                    {
+                        continue;
+                    }
                     if let Some(old_s) = app.sessions.iter().find(|s| s.id == new_s.id) {
                         if old_s.status != new_s.status {
                             let group_name = new_s
@@ -439,6 +450,13 @@ fn run_tui(
             app.detail_mode = crate::app::DetailPanelMode::from_str(&new_config.detail_panel_mode);
             app.toast_message = Some("Config reloaded".to_string());
             app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
+        }
+
+        // Update usage data from monitor thread
+        if let Some(ref shared) = app.usage_shared {
+            if let Ok(guard) = shared.lock() {
+                app.usage_data = guard.clone();
+            }
         }
 
         // Refresh preview content for the selected item (throttled)
@@ -555,6 +573,9 @@ fn run_tui(
             // No input arrived in 16ms — just loop back to render
         }
     }
+
+    // Kill usage monitor session
+    crate::core::usage::kill_monitor();
 
     // Cleanup
     disable_raw_mode()?;
