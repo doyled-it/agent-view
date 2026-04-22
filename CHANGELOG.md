@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.0] - 2026-04-22
+
+### Changed
+
+- feat(usage): display account-level token usage in header (#12) (@doyled-it)
+
 ## [1.2.0] - 2026-04-21
 
 ### Changed
