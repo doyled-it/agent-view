@@ -34,7 +34,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             (area, None)
         };
 
-    // Layout: header (1), body (fill), activity feed (dynamic), footer (1)
+    // Layout: header, body, activity feed, usage pane, footer
     let show_feed = app.show_activity_feed && !app.activity_feed.is_empty();
     let feed_height = if show_feed {
         // 1 for border + 1 per event, capped at 8 lines total
@@ -43,20 +43,21 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         0
     };
+    let has_usage = app.usage_data.is_some();
+    let usage_height = if has_usage { 4u16 } else { 0 }; // 1 border + 3 rows
 
-    let footer_sep = if show_feed { 1u16 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // ASCII header + tab bar
-            Constraint::Min(0),
-            Constraint::Length(feed_height),
-            Constraint::Length(footer_sep),
-            Constraint::Length(1),
+            Constraint::Length(6),            // ASCII header + tab bar
+            Constraint::Min(0),               // session/routine list
+            Constraint::Length(feed_height),  // activity feed
+            Constraint::Length(usage_height), // usage pane
+            Constraint::Length(1),            // footer
         ])
         .split(list_area);
 
-    render_header(frame, chunks[0], &app.theme, app.active_tab);
+    render_header(frame, chunks[0], app);
     match app.active_tab {
         crate::app::ActiveTab::Sessions => render_session_list(frame, chunks[1], app),
         crate::app::ActiveTab::Routines => {
@@ -65,11 +66,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     if show_feed {
         render_activity_feed(frame, chunks[2], app);
-        // Separator between activity feed and footer
-        let sep = Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(app.theme.border));
-        frame.render_widget(sep, chunks[3]);
+    }
+    if has_usage {
+        render_usage_pane(frame, chunks[3], app);
     }
     if let Some(ref query) = app.search_query {
         let matches = app.search_matches();
@@ -223,26 +222,30 @@ fn format_activity_age(timestamp: i64) -> String {
     }
 }
 
-fn render_header(
-    frame: &mut Frame,
-    area: Rect,
-    theme: &crate::ui::theme::Theme,
-    active_tab: crate::app::ActiveTab,
-) {
+fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     let version = env!("CARGO_PKG_VERSION");
 
     let logo_lines: &[&str] = &LOGO;
 
+    let theme = &app.theme;
+    let active_tab = app.active_tab;
     let primary_style = Style::default().fg(theme.primary).bold();
     let muted_style = Style::default().fg(theme.text_muted);
 
+    let area_width = area.width as usize;
     let mut lines: Vec<Line> = logo_lines
         .iter()
-        .map(|line| Line::from(Span::styled(*line, primary_style)))
+        .map(|line| {
+            let pad = area_width.saturating_sub(line.len()) / 2;
+            Line::from(Span::styled(
+                format!("{:>width$}{}", "", line, width = pad),
+                primary_style,
+            ))
+        })
         .collect();
     lines.push(Line::from(""));
 
-    // Tab bar line beneath the logo
+    // Tab bar line
     let tab_line = Line::from(vec![
         Span::styled("  ", muted_style),
         Span::styled(
@@ -566,6 +569,111 @@ fn truncate_path(path: &str, max_len: usize) -> String {
     }
 }
 
+fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+
+    let block = Block::default()
+        .title(" Usage ")
+        .title_style(Style::default().fg(theme.text_muted))
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let usage = match app.usage_data {
+        Some(ref u) => u,
+        None => return,
+    };
+
+    let buckets: Vec<(&str, Option<&crate::types::UsageBucket>)> = vec![
+        ("Session", usage.session.as_ref()),
+        ("Week", usage.week_all.as_ref()),
+        ("Sonnet", usage.week_sonnet.as_ref()),
+    ];
+
+    // Pre-compute reset strings to find the longest one for bar width calc
+    let resets_strs: Vec<String> = buckets
+        .iter()
+        .map(|(_, b)| {
+            b.map(|b| format!("  resets {}", abbreviate_resets(&b.resets)))
+                .unwrap_or_default()
+        })
+        .collect();
+    let max_resets_len = resets_strs.iter().map(|s| s.len()).max().unwrap_or(0);
+
+    // label(9) + bar + pct(5) + resets(max_resets_len)
+    let fixed_width = 9 + 5 + max_resets_len;
+    let bar_width = (inner.width as usize).saturating_sub(fixed_width);
+
+    let lines: Vec<Line> = buckets
+        .into_iter()
+        .zip(resets_strs)
+        .filter_map(|((label, bucket), resets_str)| {
+            let b = bucket?;
+            let color = usage_percent_color(theme, b.percent);
+            let filled = (bar_width as u32 * b.percent as u32 / 100) as usize;
+            let empty = bar_width.saturating_sub(filled);
+            let bar_filled = "\u{2588}".repeat(filled);
+            let bar_empty = "\u{2591}".repeat(empty);
+            // Pad resets to max_resets_len so bars align
+            let padded_resets = format!("{:<width$}", resets_str, width = max_resets_len);
+
+            Some(Line::from(vec![
+                Span::styled(
+                    format!(" {:<8}", label),
+                    Style::default().fg(theme.text_muted),
+                ),
+                Span::styled(bar_filled, Style::default().fg(color)),
+                Span::styled(
+                    bar_empty,
+                    Style::default()
+                        .fg(theme.text_muted)
+                        .add_modifier(Modifier::DIM),
+                ),
+                Span::styled(format!(" {:>3}%", b.percent), Style::default().fg(color)),
+                Span::styled(padded_resets, Style::default().fg(theme.text_muted)),
+            ]))
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn abbreviate_resets(resets: &str) -> String {
+    // "12pm (America/Los_Angeles)" -> "12pm PT"
+    // "Apr 23 at 6pm (America/New_York)" -> "Apr 23 at 6pm ET"
+    if let Some(idx) = resets.find('(') {
+        let time_part = resets[..idx].trim_end();
+        let tz_part = resets[idx..].trim_matches(|c| c == '(' || c == ')');
+        let abbr = match tz_part {
+            "America/Los_Angeles" => "PT",
+            "America/Denver" => "MT",
+            "America/Chicago" => "CT",
+            "America/New_York" => "ET",
+            "Europe/London" => "GMT",
+            "Europe/Paris" | "Europe/Berlin" => "CET",
+            "Asia/Tokyo" => "JST",
+            "Asia/Shanghai" | "Asia/Hong_Kong" => "CST",
+            "UTC" => "UTC",
+            other => other.rsplit('/').next().unwrap_or(other),
+        };
+        format!("{} {}", time_part, abbr)
+    } else {
+        resets.to_string()
+    }
+}
+
+fn usage_percent_color(theme: &crate::ui::theme::Theme, percent: u8) -> Color {
+    if percent >= 80 {
+        theme.error
+    } else if percent >= 50 {
+        theme.warning
+    } else {
+        theme.success
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,6 +785,42 @@ mod tests {
         assert_eq!(spark.chars().count(), 4);
         // First 2 buckets idle (▁), last 2 running (▆)
         assert_eq!(spark, "\u{2581}\u{2581}\u{2586}\u{2586}");
+    }
+
+    #[test]
+    fn test_usage_color_thresholds() {
+        let theme = crate::ui::theme::Theme::dark();
+        // < 50% = success (green)
+        assert_eq!(usage_percent_color(&theme, 0), theme.success);
+        assert_eq!(usage_percent_color(&theme, 49), theme.success);
+        // 50-79% = warning (yellow)
+        assert_eq!(usage_percent_color(&theme, 50), theme.warning);
+        assert_eq!(usage_percent_color(&theme, 79), theme.warning);
+        // >= 80% = error (red)
+        assert_eq!(usage_percent_color(&theme, 80), theme.error);
+        assert_eq!(usage_percent_color(&theme, 100), theme.error);
+    }
+
+    #[test]
+    fn test_abbreviate_resets_known_timezones() {
+        assert_eq!(abbreviate_resets("12pm (America/Los_Angeles)"), "12pm PT");
+        assert_eq!(abbreviate_resets("5pm (America/New_York)"), "5pm ET");
+        assert_eq!(abbreviate_resets("3pm (America/Chicago)"), "3pm CT");
+        assert_eq!(
+            abbreviate_resets("Apr 23 at 6pm (America/Los_Angeles)"),
+            "Apr 23 at 6pm PT"
+        );
+    }
+
+    #[test]
+    fn test_abbreviate_resets_unknown_timezone() {
+        // Falls back to city name
+        assert_eq!(abbreviate_resets("12pm (Asia/Kolkata)"), "12pm Kolkata");
+    }
+
+    #[test]
+    fn test_abbreviate_resets_no_parens() {
+        assert_eq!(abbreviate_resets("12pm PT"), "12pm PT");
     }
 
     #[test]
