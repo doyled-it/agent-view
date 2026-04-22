@@ -1,0 +1,59 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! The more concrete you can be about the problem you're trying to solve, the more likely the feature is to land.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: What are you trying to do? What's frustrating or missing today?
+      placeholder: When I have 20+ sessions, I can't quickly tell which ones are ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How do you imagine this working? Keyboard shortcuts, UI changes, config options, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Other approaches you thought about, and why they fall short.
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Where does this feature fit?
+      options:
+        - Dashboard / session list
+        - Session management (create, stop, attach, etc.)
+        - Routines / scheduling
+        - Notifications
+        - Theming
+        - Usage / token tracking
+        - Configuration
+        - Installation / packaging
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: mockup
+    attributes:
+      label: Mockups / Examples
+      description: Screenshots, ASCII sketches, links to similar features elsewhere -- anything that helps visualize.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I have searched [existing issues](../issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
