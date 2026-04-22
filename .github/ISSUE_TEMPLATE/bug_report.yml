@@ -1,0 +1,103 @@
+name: Bug Report
+description: Report a problem with Agent View
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill in the sections below so we can reproduce and fix the issue quickly.
+
+        For security-sensitive issues, please use the [private security advisory flow](../../security/advisories/new) instead of a public issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A clear, concise description of what's wrong.
+      placeholder: When I press X, the session list shows Y instead of Z.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Numbered steps that reliably trigger the bug.
+      placeholder: |
+        1. Run `agent-view`
+        2. Press `n` to create a new session
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include any error output or screenshots.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Agent View Version
+      description: Output of `agent-view --version` (or the commit hash if built from source).
+      placeholder: "v1.4.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (arm64)
+        - Linux (x64)
+        - WSL (x64)
+        - Other (describe in Environment)
+    validations:
+      required: true
+  - type: input
+    id: tmux-version
+    attributes:
+      label: tmux Version
+      description: Output of `tmux -V`.
+      placeholder: "tmux 3.5a"
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: AI Tool(s) in Use
+      description: Which coding agent(s) were the affected sessions running?
+      placeholder: "claude 1.0.x, gemini, custom command, ..."
+  - type: textarea
+    id: environment
+    attributes:
+      label: Additional Environment Info
+      description: Terminal emulator, shell, theme, config overrides -- anything that might matter.
+      placeholder: |
+        - Terminal: iTerm2 3.5
+        - Shell: zsh 5.9
+        - Theme: tokyo-night
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Output
+      description: Paste any relevant log output. Check `~/.agent-view/` for log files.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I have searched [existing issues](../issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I am running the latest released version (or have confirmed the bug on it).
+          required: true
