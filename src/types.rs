@@ -366,6 +366,21 @@ impl ActivityEvent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageBucket {
+    pub label: String,
+    pub percent: u8,
+    pub resets: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UsageData {
+    pub session: Option<UsageBucket>,
+    pub week_all: Option<UsageBucket>,
+    pub week_sonnet: Option<UsageBucket>,
+    pub last_updated: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,5 +716,26 @@ mod tests {
     #[test]
     fn test_run_status_unknown_defaults_to_failed() {
         assert_eq!(RunStatus::from_str("unknown"), RunStatus::Failed);
+    }
+
+    #[test]
+    fn test_usage_bucket_fields() {
+        let bucket = UsageBucket {
+            label: "Current session".to_string(),
+            percent: 34,
+            resets: "12pm (America/Los_Angeles)".to_string(),
+        };
+        assert_eq!(bucket.percent, 34);
+        assert_eq!(bucket.label, "Current session");
+        assert_eq!(bucket.resets, "12pm (America/Los_Angeles)");
+    }
+
+    #[test]
+    fn test_usage_data_default_is_none_buckets() {
+        let data = UsageData::default();
+        assert!(data.session.is_none());
+        assert!(data.week_all.is_none());
+        assert!(data.week_sonnet.is_none());
+        assert_eq!(data.last_updated, 0);
     }
 }

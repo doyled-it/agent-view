@@ -34,6 +34,7 @@ IMPORTANT: CI runs `rust:latest` which may be newer than the local toolchain. Al
 - Session status is detected by parsing tmux pane output in `src/core/status.rs`
 - All storage goes through `src/core/storage.rs` (SQLite via rusqlite with bundled feature)
 - Themes are defined in `src/ui/theme.rs` — all colors come from the `Theme` struct, never hardcoded
+- Usage tracking runs a hidden `__agentview_meta_usage` tmux session managed by `src/core/usage.rs` — parser, monitor thread, and shared state via `Arc<Mutex<>>`. Sessions prefixed with `__agentview_meta_` are filtered from the UI and poller.
 
 ## Testing
 

@@ -211,6 +211,20 @@ pub fn send_keys(name: &str, keys: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Send raw key names to a tmux session without appending Enter.
+/// Use for special keys like "Right", "Left", "Escape", etc.
+pub fn send_keys_raw(name: &str, keys: &str) -> Result<(), String> {
+    let status = Command::new("tmux")
+        .args(["send-keys", "-t", name, keys])
+        .status()
+        .map_err(|e| format!("Failed to send keys: {}", e))?;
+
+    if !status.success() {
+        return Err(format!("tmux send-keys failed with status {}", status));
+    }
+    Ok(())
+}
+
 /// Capture pane content from a tmux session
 /// Capture pane content from a tmux session.
 /// If `escape` is true, ANSI escape sequences are preserved (-e flag).
@@ -546,6 +560,14 @@ pub fn strip_ansi(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_send_keys_raw_builds_correct_command() {
+        // Just test that the function exists and has the right signature
+        // (actual tmux interaction tested manually)
+        let result = send_keys_raw("nonexistent_session_xyz", "Right");
+        assert!(result.is_err()); // session doesn't exist
+    }
 
     #[test]
     fn test_generate_session_name_format() {

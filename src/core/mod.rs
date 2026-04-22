@@ -18,3 +18,4 @@ pub mod status;
 pub mod storage;
 pub mod tmux;
 pub mod tokens;
+pub mod usage;

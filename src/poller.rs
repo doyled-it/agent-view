@@ -49,6 +49,14 @@ pub fn spawn(
                     continue;
                 }
 
+                // Skip meta monitoring sessions
+                if session
+                    .tmux_session
+                    .starts_with(crate::core::usage::META_SESSION_PREFIX)
+                {
+                    continue;
+                }
+
                 // Detect raw status
                 let raw_status = if !cache.session_exists(&session.tmux_session) {
                     if session.status != crate::types::SessionStatus::Stopped
@@ -150,6 +158,9 @@ pub fn spawn(
                 for session in &sessions {
                     if !session.tmux_session.is_empty()
                         && session.status != crate::types::SessionStatus::Stopped
+                        && !session
+                            .tmux_session
+                            .starts_with(crate::core::usage::META_SESSION_PREFIX)
                     {
                         logger.capture_and_log(&session.tmux_session, &session.id);
                     }
@@ -161,6 +172,9 @@ pub fn spawn(
                     if session.tool == crate::types::Tool::Claude
                         && !session.tmux_session.is_empty()
                         && session.status != crate::types::SessionStatus::Stopped
+                        && !session
+                            .tmux_session
+                            .starts_with(crate::core::usage::META_SESSION_PREFIX)
                     {
                         if let Ok(output) =
                             crate::core::tmux::capture_pane(&session.tmux_session, Some(-50), false)
