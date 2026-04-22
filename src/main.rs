@@ -397,10 +397,11 @@ fn run_tui(
                     }
                     if let Some(old_s) = app.sessions.iter().find(|s| s.id == new_s.id) {
                         if old_s.status != new_s.status {
-                            let group_name = new_s
-                                .group_path
-                                .rsplit('/')
-                                .next()
+                            let group_name = app
+                                .groups
+                                .iter()
+                                .find(|g| g.path == new_s.group_path)
+                                .map(|g| g.name.as_str())
                                 .unwrap_or(&new_s.group_path);
                             let display_title = format!("[{}] {}", group_name, new_s.title);
                             app.push_activity(crate::types::ActivityEvent {

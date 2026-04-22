@@ -108,6 +108,17 @@ pub fn execute_command_action(
                 name: String::new(),
             });
         }
+        CommandAction::DeleteGroup => {
+            if let Some(group) = app.selected_group() {
+                if group.path != "my-sessions" {
+                    let msg = format!("Delete group \"{}\"?", group.name);
+                    app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
+                        message: msg,
+                        action: crate::app::ConfirmAction::DeleteGroup(group.path.clone()),
+                    });
+                }
+            }
+        }
         CommandAction::Quit => {
             app.should_quit = true;
         }

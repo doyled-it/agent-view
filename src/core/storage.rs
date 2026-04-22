@@ -567,7 +567,6 @@ impl Storage {
     }
 
     /// Delete a group by path
-    #[allow(dead_code)]
     pub fn delete_group(&self, path: &str) -> SqlResult<()> {
         self.conn
             .execute("DELETE FROM groups WHERE path = ?1", params![path])?;

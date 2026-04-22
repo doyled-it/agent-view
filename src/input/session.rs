@@ -170,6 +170,16 @@ pub fn handle_confirm_key(
                         }
                         app.clear_bulk_selection();
                     }
+                    crate::app::ConfirmAction::DeleteGroup(path) => {
+                        // Move sessions in this group to the default group
+                        for s in &app.sessions {
+                            if s.group_path == *path {
+                                let _ = storage.move_session_to_group(&s.id, "my-sessions");
+                            }
+                        }
+                        let _ = storage.delete_group(path);
+                        storage.touch().ok();
+                    }
                     crate::app::ConfirmAction::DeleteRoutine(id) => {
                         let scheduler = crate::core::scheduler::platform_scheduler();
                         let _ = scheduler.uninstall(id);
