@@ -1036,7 +1036,7 @@ mod tests {
         // First row should be the group header
         app.selected_index = 0;
         // It's the group header when cursor is on it
-        if matches!(app.list_rows.get(0), Some(ListRow::Group { .. })) {
+        if matches!(app.list_rows.first(), Some(ListRow::Group { .. })) {
             assert!(app.selected_group().is_some());
         } else {
             // No group row visible — skip assertion
@@ -1049,7 +1049,7 @@ mod tests {
         let mut app = app_with_sessions(sessions);
         // Select group header row (index 0)
         app.selected_index = 0;
-        if matches!(app.list_rows.get(0), Some(ListRow::Group { .. })) {
+        if matches!(app.list_rows.first(), Some(ListRow::Group { .. })) {
             assert!(app.selected_session().is_none());
         }
     }
