@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.2] - 2026-04-23
+
+### Changed
+
+- fix(usage): parse new Claude Code /usage format (#15) (@doyled-it)
+
 ## [1.4.1] - 2026-04-23
 
 ### Changed
