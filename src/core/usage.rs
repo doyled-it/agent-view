@@ -129,36 +129,64 @@ fn parse_bucket(lines: &[&str], label: &str) -> Option<UsageBucket> {
     // Find the line containing this label
     let label_idx = lines.iter().position(|l| l.trim().starts_with(label))?;
 
-    // Scan the next few lines for "X% used" and "Resets ..."
+    // Scan forward for "Resets ..." and a "X% used" value. Formats seen:
+    //   Old: bar line "████ 33% used" followed by "Resets ..."
+    //   New: "Resets ... N% used" on one line, or "Resets ..." alone (percent omitted for near-zero)
+    // Stop when we hit the next bucket header so values don't bleed across buckets.
     let mut percent: Option<u8> = None;
     let mut resets: Option<String> = None;
 
     for line in lines.iter().skip(label_idx + 1).take(4) {
         let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("Current ") {
+            break;
+        }
+        if let Some(rest) = trimmed.strip_prefix("Resets ") {
+            let (resets_part, inline_pct) = split_trailing_percent(rest);
+            if resets.is_none() {
+                resets = Some(resets_part.trim_end().to_string());
+            }
+            if percent.is_none() {
+                percent = inline_pct;
+            }
+            continue;
+        }
+        // Legacy bar line: "████ 33% used"
         if percent.is_none() {
             if let Some(cap) = trimmed.strip_suffix("% used") {
-                // The percentage is at the end: "████ 33% used"
-                // Extract just the number from the end
                 if let Some(num_str) = cap.split_whitespace().last() {
                     percent = num_str.parse().ok();
                 }
             }
         }
-        if resets.is_none() {
-            if let Some(rest) = trimmed.strip_prefix("Resets ") {
-                resets = Some(rest.to_string());
-            }
-        }
-        if percent.is_some() && resets.is_some() {
-            break;
-        }
     }
 
     Some(UsageBucket {
         label: label.to_string(),
-        percent: percent?,
+        percent: percent.unwrap_or(0),
         resets: resets?,
     })
+}
+
+/// Split a string like "Apr 26 at 10am (America/Los_Angeles)        1% used"
+/// into ("Apr 26 at 10am (America/Los_Angeles)", Some(1)). Returns the full
+/// input and None if no trailing "N% used" is present.
+fn split_trailing_percent(s: &str) -> (&str, Option<u8>) {
+    let Some(pct_idx) = s.rfind("% used") else {
+        return (s, None);
+    };
+    let before = s[..pct_idx].trim_end();
+    let Some(num_start) = before.rfind(|c: char| c.is_whitespace()) else {
+        return (s, None);
+    };
+    let num_str = before[num_start..].trim();
+    match num_str.parse::<u8>() {
+        Ok(p) => (before[..num_start].trim_end(), Some(p)),
+        Err(_) => (s, None),
+    }
 }
 
 #[cfg(test)]
@@ -224,6 +252,63 @@ mod tests {
         assert!(data.session.is_none());
         assert!(data.week_all.is_none());
         assert!(data.week_sonnet.is_none());
+    }
+
+    // The /usage command format introduced in Claude Code 2.1.x: no bar line,
+    // and percent (when present) is appended to the "Resets ..." line.
+    const NEW_FORMAT_OUTPUT: &str = r#"
+   Status   Config   Usage   Stats
+
+  Current session
+  Resets 3pm (America/Los_Angeles)
+
+  Current week (all models)
+  Resets Apr 26 at 10am (America/Los_Angeles)
+
+  Current week (Sonnet only)
+  Resets Apr 26 at 10am (America/Los_Angeles)        1% used
+
+  Esc to cancel
+"#;
+
+    #[test]
+    fn test_parse_new_format_session_no_percent() {
+        let data = parse_usage_output(NEW_FORMAT_OUTPUT);
+        let session = data.session.expect("session bucket should be present");
+        assert_eq!(session.percent, 0);
+        assert_eq!(session.resets, "3pm (America/Los_Angeles)");
+    }
+
+    #[test]
+    fn test_parse_new_format_week_no_bleed() {
+        // Week (all) has no trailing percent; it must not pick up the "1% used"
+        // from the Sonnet line below.
+        let data = parse_usage_output(NEW_FORMAT_OUTPUT);
+        let week = data.week_all.expect("week_all bucket should be present");
+        assert_eq!(week.percent, 0);
+        assert_eq!(week.resets, "Apr 26 at 10am (America/Los_Angeles)");
+    }
+
+    #[test]
+    fn test_parse_new_format_sonnet_inline_percent() {
+        let data = parse_usage_output(NEW_FORMAT_OUTPUT);
+        let sonnet = data
+            .week_sonnet
+            .expect("week_sonnet bucket should be present");
+        assert_eq!(sonnet.percent, 1);
+        // Resets string must not contain the trailing "1% used"
+        assert_eq!(sonnet.resets, "Apr 26 at 10am (America/Los_Angeles)");
+    }
+
+    #[test]
+    fn test_split_trailing_percent() {
+        let (r, p) = split_trailing_percent("Apr 26 at 10am (America/Los_Angeles)        1% used");
+        assert_eq!(r, "Apr 26 at 10am (America/Los_Angeles)");
+        assert_eq!(p, Some(1));
+
+        let (r, p) = split_trailing_percent("3pm (America/Los_Angeles)");
+        assert_eq!(r, "3pm (America/Los_Angeles)");
+        assert_eq!(p, None);
     }
 
     #[test]
