@@ -1,6 +1,6 @@
 [package]
 name = "agent-view"
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 description = "Terminal UI for managing AI coding agent sessions"
 

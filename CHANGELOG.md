@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.1] - 2026-04-23
+
+### Changed
+
+- fix(ui): align activity feed columns (#14) (@doyled-it)
+
 ## [1.4.0] - 2026-04-22
 
 ### Changed
