@@ -185,19 +185,35 @@ fn render_activity_feed(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let lines: Vec<Line> = app
+    let events: Vec<_> = app
         .activity_feed
         .iter()
         .take(inner.height as usize)
-        .map(|event| {
+        .map(|event| (format_activity_age(event.timestamp), event))
+        .collect();
+
+    let age_width = events
+        .iter()
+        .map(|(age, _)| age.chars().count())
+        .max()
+        .unwrap_or(0);
+    let title_width = events
+        .iter()
+        .map(|(_, event)| event.session_title.chars().count())
+        .max()
+        .unwrap_or(0);
+
+    let lines: Vec<Line> = events
+        .iter()
+        .map(|(age, event)| {
             let status_color = crate::ui::theme::status_color(theme, event.new_status);
             Line::from(vec![
                 Span::styled(
-                    format_activity_age(event.timestamp),
+                    format!(" {age:>age_width$}  "),
                     Style::default().fg(theme.text_muted),
                 ),
                 Span::styled(
-                    format!(" {} ", event.session_title),
+                    format!("{:<title_width$} ", event.session_title),
                     Style::default().fg(theme.text),
                 ),
                 Span::styled("-> ", Style::default().fg(theme.text_muted)),
@@ -214,11 +230,11 @@ fn format_activity_age(timestamp: i64) -> String {
     let now = chrono::Utc::now().timestamp_millis();
     let ago_ms = now - timestamp;
     if ago_ms < 60_000 {
-        " <1m ".to_string()
+        "<1m".to_string()
     } else if ago_ms < 3_600_000 {
-        format!(" {}m  ", ago_ms / 60_000)
+        format!("{}m", ago_ms / 60_000)
     } else {
-        format!(" {}h  ", ago_ms / 3_600_000)
+        format!("{}h", ago_ms / 3_600_000)
     }
 }
 
