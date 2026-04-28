@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.3] - 2026-04-28
+
+### Changed
+
+- fix(groups): keep cursor on group title when reordering (#16) (@doyled-it)
+
 ## [1.4.2] - 2026-04-23
 
 ### Changed
