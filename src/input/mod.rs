@@ -321,7 +321,11 @@ pub fn handle_main_key(
                         let _ = storage.swap_group_order(&path, &prev_path);
                         app.groups = storage.load_groups().unwrap_or_default();
                         app.rebuild_list_rows();
-                        app.move_selection_up();
+                        if let Some(idx) = app.list_rows.iter().position(|r| {
+                            matches!(r, crate::core::groups::ListRow::Group { group, .. } if group.path == path)
+                        }) {
+                            app.selected_index = idx;
+                        }
                         let _ = storage.touch();
                     }
                 }
@@ -337,7 +341,11 @@ pub fn handle_main_key(
                         let _ = storage.swap_group_order(&path, &next_path);
                         app.groups = storage.load_groups().unwrap_or_default();
                         app.rebuild_list_rows();
-                        app.move_selection_down();
+                        if let Some(idx) = app.list_rows.iter().position(|r| {
+                            matches!(r, crate::core::groups::ListRow::Group { group, .. } if group.path == path)
+                        }) {
+                            app.selected_index = idx;
+                        }
                         let _ = storage.touch();
                     }
                 }
