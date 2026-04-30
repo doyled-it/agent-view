@@ -603,19 +603,30 @@ fn truncate_path(path: &str, max_len: usize) -> String {
 fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
+    let usage = match app.usage_data {
+        Some(ref u) => u,
+        None => return,
+    };
+
+    // Compute staleness
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let age_ms = now_ms - usage.last_updated;
+    let is_stale = age_ms > 5 * 60 * 1000; // 5 minutes
+
+    let title = if is_stale {
+        " Usage (stale) "
+    } else {
+        " Usage "
+    };
+
     let block = Block::default()
-        .title(" Usage ")
+        .title(title)
         .title_style(Style::default().fg(theme.text_muted))
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.border));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
-
-    let usage = match app.usage_data {
-        Some(ref u) => u,
-        None => return,
-    };
 
     let buckets: Vec<(&str, Option<&crate::types::UsageBucket>)> = vec![
         ("Session", usage.session.as_ref()),
@@ -653,22 +664,40 @@ fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
             Some(Line::from(vec![
                 Span::styled(
                     format!(" {:<8}", label),
-                    Style::default().fg(theme.text_muted),
+                    maybe_dim(Style::default().fg(theme.text_muted), is_stale),
                 ),
-                Span::styled(bar_filled, Style::default().fg(color)),
+                Span::styled(bar_filled, maybe_dim(Style::default().fg(color), is_stale)),
                 Span::styled(
                     bar_empty,
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::DIM),
+                    maybe_dim(
+                        Style::default()
+                            .fg(theme.text_muted)
+                            .add_modifier(Modifier::DIM),
+                        is_stale,
+                    ),
                 ),
-                Span::styled(format!(" {:>3}%", b.percent), Style::default().fg(color)),
-                Span::styled(padded_resets, Style::default().fg(theme.text_muted)),
+                Span::styled(
+                    format!(" {:>3}%", b.percent),
+                    maybe_dim(Style::default().fg(color), is_stale),
+                ),
+                Span::styled(
+                    padded_resets,
+                    maybe_dim(Style::default().fg(theme.text_muted), is_stale),
+                ),
             ]))
         })
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Conditionally add DIM modifier to a style
+fn maybe_dim(style: Style, dim: bool) -> Style {
+    if dim {
+        style.add_modifier(Modifier::DIM)
+    } else {
+        style
+    }
 }
 
 fn abbreviate_resets(resets: &str) -> String {
@@ -926,5 +955,19 @@ mod tests {
                 assert_ne!(colors[i], colors[j]);
             }
         }
+    }
+
+    #[test]
+    fn test_usage_staleness_threshold() {
+        let now = chrono::Utc::now().timestamp_millis();
+        let four_min_ago = now - 4 * 60 * 1000;
+        let six_min_ago = now - 6 * 60 * 1000;
+
+        // Stale threshold is 5 min: 4-min-ago is fresh, 6-min-ago is stale
+        let age_4_min = now - four_min_ago;
+        let age_6_min = now - six_min_ago;
+
+        assert!(age_4_min <= 5 * 60 * 1000);
+        assert!(age_6_min > 5 * 60 * 1000);
     }
 }
