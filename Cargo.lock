@@ -12,6 +12,7 @@ dependencies = [
  "croner",
  "crossterm",
  "dirs",
+ "iana-time-zone",
  "lazy_static",
  "libc",
  "notify",
