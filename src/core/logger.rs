@@ -17,6 +17,22 @@ pub fn session_log_path(session_id: &str) -> PathBuf {
     log_dir().join(format!("{}.log", session_id))
 }
 
+/// Path for the app's diagnostic log — used for background-thread messages
+/// that must not be written to stderr (which can bleed into attached tmux panes).
+pub fn diagnostic_log_path() -> PathBuf {
+    log_dir().join("agent-view.log")
+}
+
+/// Append a timestamped diagnostic message to the app log. Errors are swallowed
+/// because diagnostic logging must never disrupt the caller.
+pub fn log_diagnostic(message: &str) {
+    let path = diagnostic_log_path();
+    let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+    let line = format!("{timestamp} {message}\n");
+    let _ = append_to_log(&path, &line);
+    let _ = rotate_if_needed(&path, MAX_LOG_SIZE);
+}
+
 pub fn append_to_log(path: &Path, content: &str) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
