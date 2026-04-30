@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.0] - 2026-04-30
+
+### Changed
+
+- feat: add Anthropic status block and harden usage poller (#17) (@doyled-it)
+
 ## [1.4.3] - 2026-04-28
 
 ### Changed
