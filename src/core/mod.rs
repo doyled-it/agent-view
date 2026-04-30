@@ -15,6 +15,7 @@ pub mod scheduler_linux;
 pub mod scheduler_macos;
 pub mod session;
 pub mod status;
+pub mod status_page;
 pub mod storage;
 pub mod tmux;
 pub mod tokens;
