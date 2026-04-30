@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.1] - 2026-04-30
+
+### Changed
+
+- feat(status): add monitoring session state (#18) (@doyled-it)
+
 ## [1.5.0] - 2026-04-30
 
 ### Changed
