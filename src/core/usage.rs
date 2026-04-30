@@ -2,11 +2,11 @@
 
 use crate::types::{UsageBucket, UsageData};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const META_SESSION_NAME: &str = "__agentview_meta_usage";
 pub const META_SESSION_PREFIX: &str = "__agentview_meta_";
-const POLL_INTERVAL: Duration = Duration::from_secs(120); // 2 minutes
+const POLL_INTERVAL: Duration = Duration::from_secs(30);
 const INIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -26,6 +26,22 @@ pub fn spawn_monitor() -> (SharedUsageData, std::thread::JoinHandle<()>) {
     (shared, handle)
 }
 
+/// Wait for the /usage view to render the quota bars. Returns the final captured
+/// output once "Current session" appears, or the last capture after timeout.
+fn wait_for_usage_render(session_name: &str) -> Option<String> {
+    let mut last_capture: Option<String> = None;
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(250));
+        if let Ok(output) = crate::core::tmux::capture_pane(session_name, Some(-30), false) {
+            if output.contains("Current session") {
+                return Some(output);
+            }
+            last_capture = Some(output);
+        }
+    }
+    last_capture
+}
+
 fn monitor_loop(shared: SharedUsageData) {
     // Create the hidden tmux session running claude
     if crate::core::tmux::session_exists(META_SESSION_NAME) {
@@ -39,7 +55,7 @@ fn monitor_loop(shared: SharedUsageData) {
     }
 
     // Wait for Claude to reach idle prompt
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let mut trust_accepted = false;
     loop {
         std::thread::sleep(INIT_POLL_INTERVAL);
@@ -69,10 +85,19 @@ fn monitor_loop(shared: SharedUsageData) {
         let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
         return;
     }
-    std::thread::sleep(Duration::from_secs(3));
+
+    // Wait for the quota bars to render before initial capture
+    let initial_capture = wait_for_usage_render(META_SESSION_NAME);
 
     // Initial capture
-    capture_and_update(META_SESSION_NAME, &shared);
+    if let Some(output) = initial_capture {
+        let data = parse_usage_output(&output);
+        if data.session.is_some() || data.week_all.is_some() || data.week_sonnet.is_some() {
+            if let Ok(mut guard) = shared.lock() {
+                *guard = Some(data);
+            }
+        }
+    }
 
     // Poll loop — close and reopen /usage to refresh data
     loop {
@@ -90,18 +115,14 @@ fn monitor_loop(shared: SharedUsageData) {
         std::thread::sleep(Duration::from_secs(1));
         // Re-send /usage to get fresh data
         let _ = crate::core::tmux::send_keys(META_SESSION_NAME, "/usage");
-        std::thread::sleep(Duration::from_secs(3));
 
-        capture_and_update(META_SESSION_NAME, &shared);
-    }
-}
-
-fn capture_and_update(session_name: &str, shared: &SharedUsageData) {
-    if let Ok(output) = crate::core::tmux::capture_pane(session_name, Some(-30), false) {
-        let data = parse_usage_output(&output);
-        if data.session.is_some() || data.week_all.is_some() || data.week_sonnet.is_some() {
-            if let Ok(mut guard) = shared.lock() {
-                *guard = Some(data);
+        // Wait for the quota bars to render
+        if let Some(output) = wait_for_usage_render(META_SESSION_NAME) {
+            let data = parse_usage_output(&output);
+            if data.session.is_some() || data.week_all.is_some() || data.week_sonnet.is_some() {
+                if let Ok(mut guard) = shared.lock() {
+                    *guard = Some(data);
+                }
             }
         }
     }
