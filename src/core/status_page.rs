@@ -61,6 +61,41 @@ pub fn parse_response(json: &serde_json::Value) -> Option<StatusPageData> {
     })
 }
 
+/// Spawn the status-page monitor background thread.
+#[allow(dead_code)]
+pub fn spawn_monitor() -> (SharedStatusData, std::thread::JoinHandle<()>) {
+    let shared: SharedStatusData = Arc::new(Mutex::new(None));
+    let shared_clone = Arc::clone(&shared);
+
+    let handle = std::thread::spawn(move || {
+        monitor_loop(shared_clone);
+    });
+
+    (shared, handle)
+}
+
+#[allow(dead_code)]
+fn monitor_loop(shared: SharedStatusData) {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(REQUEST_TIMEOUT)
+        .timeout_read(REQUEST_TIMEOUT)
+        .build();
+
+    loop {
+        if let Ok(resp) = agent.get(SUMMARY_URL).call() {
+            if let Ok(json) = resp.into_json::<serde_json::Value>() {
+                if let Some(data) = parse_response(&json) {
+                    if let Ok(mut guard) = shared.lock() {
+                        *guard = Some(data);
+                    }
+                }
+            }
+        }
+        // Transient failures: keep last-known data; no state mutation.
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
