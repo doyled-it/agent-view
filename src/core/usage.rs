@@ -226,16 +226,16 @@ fn monitor_loop(shared: SharedUsageData) {
                         }
                     }
                     Err(reason) => {
-                        eprintln!(
-                            "[agent-view] usage monitor: recovery failed — {reason}; continuing to poll"
-                        );
+                        crate::core::logger::log_diagnostic(&format!(
+                            "usage monitor: recovery failed — {reason}; continuing to poll"
+                        ));
                         // Don't return; keep the loop alive
                     }
                 }
             } else {
-                eprintln!(
-                    "[agent-view] usage monitor: recovery cap reached ({MAX_RECOVERIES_PER_WINDOW} in 10 min); skipping auto-recover, continuing to poll"
-                );
+                crate::core::logger::log_diagnostic(&format!(
+                    "usage monitor: recovery cap reached ({MAX_RECOVERIES_PER_WINDOW} in 10 min); skipping auto-recover, continuing to poll"
+                ));
                 // Reset unchanged_count so we don't spam on every subsequent poll
                 unchanged_count = 0;
             }
