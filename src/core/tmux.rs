@@ -229,11 +229,30 @@ pub fn send_keys_raw(name: &str, keys: &str) -> Result<(), String> {
 /// Capture pane content from a tmux session.
 /// If `escape` is true, ANSI escape sequences are preserved (-e flag).
 pub fn capture_pane(name: &str, start_line: Option<i32>, escape: bool) -> Result<String, String> {
+    capture_pane_inner(name, start_line, escape, false)
+}
+
+/// Like `capture_pane` but passes `-J` so tmux joins lines that wrap at the
+/// pane width back into single logical lines. Use this when downstream parsing
+/// relies on suffix matches (e.g. "X% used") that would be split by wrap.
+pub fn capture_pane_joined(name: &str, start_line: Option<i32>) -> Result<String, String> {
+    capture_pane_inner(name, start_line, false, true)
+}
+
+fn capture_pane_inner(
+    name: &str,
+    start_line: Option<i32>,
+    escape: bool,
+    join_wrapped: bool,
+) -> Result<String, String> {
     let mut args = vec!["capture-pane", "-t", name, "-p"];
     let start_str;
 
     if escape {
         args.push("-e");
+    }
+    if join_wrapped {
+        args.push("-J");
     }
 
     if let Some(start) = start_line {
@@ -252,6 +271,33 @@ pub fn capture_pane(name: &str, start_line: Option<i32>, escape: bool) -> Result
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Force a tmux window to a fixed size (useful for detached sessions whose
+/// pane width would otherwise default to ~80 cols and wrap content).
+pub fn resize_window(name: &str, width: u32, height: u32) -> Result<(), String> {
+    let w = width.to_string();
+    let h = height.to_string();
+    let status = Command::new("tmux")
+        .args(["resize-window", "-t", name, "-x", &w, "-y", &h])
+        .status()
+        .map_err(|e| format!("Failed to resize-window: {}", e))?;
+    if !status.success() {
+        return Err(format!("tmux resize-window failed with status {}", status));
+    }
+    Ok(())
+}
+
+/// Clear the scrollback history for a session's pane.
+pub fn clear_history(name: &str) -> Result<(), String> {
+    let status = Command::new("tmux")
+        .args(["clear-history", "-t", name])
+        .status()
+        .map_err(|e| format!("Failed to clear-history: {}", e))?;
+    if !status.success() {
+        return Err(format!("tmux clear-history failed with status {}", status));
+    }
+    Ok(())
 }
 
 /// Get sessions that currently have an attached client
