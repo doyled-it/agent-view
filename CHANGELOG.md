@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.4] - 2026-04-30
+
+### Changed
+
+- fix(usage): stop monitor warnings from bleeding into attached sessions (#19) (@doyled-it)
+
 ## [1.5.3] - 2026-04-30
 
 ### Changed
