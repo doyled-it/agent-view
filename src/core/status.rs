@@ -256,6 +256,43 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
     status
 }
 
+/// Resolve a parsed `ToolStatus` plus the tmux pane's active flag into the
+/// canonical `SessionStatus` shown in the UI.
+///
+/// Priority is significant: each branch represents a more specific signal that
+/// outranks the ones below it. In particular, when the agent is idle at the
+/// prompt with a monitor attached, `Monitoring` outranks `Paused` — the user
+/// explicitly armed the monitor, so that signal should remain visible even if
+/// recent prose contains a question mark.
+pub fn resolve_session_status(parsed: &ToolStatus, is_active: bool) -> crate::types::SessionStatus {
+    use crate::types::SessionStatus;
+    if parsed.is_waiting {
+        SessionStatus::Waiting
+    } else if parsed.is_compacting {
+        SessionStatus::Compacting
+    } else if parsed.has_exited {
+        SessionStatus::Idle
+    } else if parsed.has_error {
+        SessionStatus::Error
+    } else if parsed.has_draft {
+        SessionStatus::Draft
+    } else if parsed.has_idle_prompt {
+        if parsed.is_monitoring {
+            SessionStatus::Monitoring
+        } else if parsed.has_question {
+            SessionStatus::Paused
+        } else {
+            SessionStatus::Idle
+        }
+    } else if parsed.is_busy || is_active {
+        SessionStatus::Running
+    } else if parsed.is_monitoring {
+        SessionStatus::Monitoring
+    } else {
+        SessionStatus::Idle
+    }
+}
+
 /// Extract Claude Code session ID from pane output, if present.
 pub fn extract_claude_session_id(output: &str) -> Option<String> {
     let cleaned = crate::core::tmux::strip_ansi(output);
@@ -674,5 +711,63 @@ mod tests {
         let output = "Task completed.\n\n  Resume this session with:\n    claude --resume 7a3f2b1e-4c5d-6e7f-8a9b-0c1d2e3f4a5b\n\n";
         let id = extract_claude_session_id(output);
         assert_eq!(id, Some("7a3f2b1e-4c5d-6e7f-8a9b-0c1d2e3f4a5b".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_monitoring_overrides_paused() {
+        // Idle prompt + question + monitor attached → Monitoring (user explicitly armed it)
+        let parsed = ToolStatus {
+            has_idle_prompt: true,
+            has_question: true,
+            is_monitoring: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_session_status(&parsed, false),
+            crate::types::SessionStatus::Monitoring
+        );
+    }
+
+    #[test]
+    fn test_resolve_paused_without_monitor() {
+        // Idle prompt + question, no monitor → Paused
+        let parsed = ToolStatus {
+            has_idle_prompt: true,
+            has_question: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_session_status(&parsed, false),
+            crate::types::SessionStatus::Paused
+        );
+    }
+
+    #[test]
+    fn test_resolve_draft_overrides_monitoring() {
+        // Drafted input still wins over monitoring — user is mid-typing
+        let parsed = ToolStatus {
+            has_idle_prompt: true,
+            has_draft: true,
+            is_monitoring: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_session_status(&parsed, false),
+            crate::types::SessionStatus::Draft
+        );
+    }
+
+    #[test]
+    fn test_resolve_running_overrides_monitoring() {
+        // Active work in progress wins over monitoring
+        let parsed = ToolStatus {
+            is_busy: true,
+            is_monitoring: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_session_status(&parsed, false),
+            crate::types::SessionStatus::Running
+        );
     }
 }

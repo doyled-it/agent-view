@@ -97,32 +97,7 @@ pub fn spawn(
                                 }
                             }
 
-                            if parsed.is_waiting {
-                                crate::types::SessionStatus::Waiting
-                            } else if parsed.is_compacting {
-                                crate::types::SessionStatus::Compacting
-                            } else if parsed.has_exited {
-                                crate::types::SessionStatus::Idle
-                            } else if parsed.has_error {
-                                crate::types::SessionStatus::Error
-                            } else if parsed.has_draft {
-                                // User has typed text at the prompt — draft overrides paused
-                                crate::types::SessionStatus::Draft
-                            } else if parsed.has_idle_prompt && parsed.has_question {
-                                crate::types::SessionStatus::Paused
-                            } else if parsed.has_idle_prompt {
-                                if parsed.is_monitoring {
-                                    crate::types::SessionStatus::Monitoring
-                                } else {
-                                    crate::types::SessionStatus::Idle
-                                }
-                            } else if parsed.is_busy || is_active {
-                                crate::types::SessionStatus::Running
-                            } else if parsed.is_monitoring {
-                                crate::types::SessionStatus::Monitoring
-                            } else {
-                                crate::types::SessionStatus::Idle
-                            }
+                            crate::core::status::resolve_session_status(&parsed, is_active)
                         }
                         Err(_) => {
                             if is_active {
