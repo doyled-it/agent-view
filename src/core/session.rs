@@ -119,6 +119,7 @@ impl StatusProcessor {
                     | SessionStatus::Paused
                     | SessionStatus::Error
                     | SessionStatus::Idle
+                    | SessionStatus::Monitoring
                     | SessionStatus::Draft
                     | SessionStatus::Crashed
             ) {

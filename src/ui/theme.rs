@@ -334,6 +334,7 @@ pub fn status_color(theme: &Theme, status: crate::types::SessionStatus) -> Color
         crate::types::SessionStatus::Draft => theme.info,
         crate::types::SessionStatus::Paused => theme.secondary,
         crate::types::SessionStatus::Compacting => theme.accent,
+        crate::types::SessionStatus::Monitoring => theme.info,
         crate::types::SessionStatus::Idle => theme.text_muted,
         crate::types::SessionStatus::Error => theme.error,
         crate::types::SessionStatus::Crashed => theme.error,

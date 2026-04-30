@@ -17,6 +17,7 @@ pub struct ToolStatus {
     pub has_idle_prompt: bool,
     pub has_question: bool,
     pub has_draft: bool,
+    pub is_monitoring: bool,
 }
 
 /// Spinner characters used by Claude Code when processing
@@ -26,8 +27,10 @@ const SPINNER_CHARS: &[&str] = &[
 ];
 
 lazy_static! {
-    // Claude Code busy indicators — agent is actively working
-    static ref CLAUDE_BUSY_PATTERNS: Vec<Regex> = vec![
+    // Claude Code busy indicators that appear in the footer (below the bottom
+    // separator). Scoped to the footer so quoted prose in the conversation
+    // ("...esc to interrupt...") cannot false-positive.
+    static ref CLAUDE_FOOTER_BUSY_PATTERNS: Vec<Regex> = vec![
         Regex::new(r"(?i)ctrl\+c to interrupt").unwrap(),
         Regex::new(r"(?i)esc to interrupt").unwrap(),
         Regex::new(r"(?i)\u{2026}.*tokens").unwrap(),
@@ -81,6 +84,11 @@ lazy_static! {
     // Question detection
     static ref QUESTION_RE: Regex = Regex::new(r"\?\s*$").unwrap();
 
+    // Claude Code "N monitor(s)" footer indicator. The status bar uses U+00B7
+    // middle-dot separators around each item, e.g. `· 1 monitor ·`.
+    static ref MONITOR_RE: Regex =
+        Regex::new(r"\u{00b7}\s*\d+\s+monitors?\s*\u{00b7}").unwrap();
+
     // Non-content line patterns (for question scanning)
     static ref SEPARATOR_RE: Regex = Regex::new(r"^[\u{2500}\u{2501}\u{2550}]{10,}").unwrap();
     static ref COMPANION_RE: Regex = Regex::new(r"Thistle").unwrap();
@@ -95,6 +103,25 @@ lazy_static! {
 /// Check if text contains spinner characters
 fn has_spinner(text: &str) -> bool {
     SPINNER_CHARS.iter().any(|c| text.contains(c))
+}
+
+/// Extract the footer region — everything after the last horizontal-rule
+/// separator. Claude Code's status footer (mode line, monitor count, hotkey
+/// hints) always renders below the bottom `─` separator. Matching footer
+/// patterns inside this slice avoids false positives from quoted text in the
+/// conversation body.
+///
+/// Falls back to the last 2 lines if no separator is found.
+fn extract_footer(trimmed_lines: &[&str]) -> String {
+    if let Some(idx) = trimmed_lines
+        .iter()
+        .rposition(|l| SEPARATOR_RE.is_match(l.trim_start()))
+    {
+        trimmed_lines[idx + 1..].join("\n")
+    } else {
+        let start = trimmed_lines.len().saturating_sub(2);
+        trimmed_lines[start..].join("\n")
+    }
 }
 
 /// Parse tmux pane output to detect Claude Code tool status.
@@ -121,6 +148,7 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
         0
     };
     let last_few_lines = trimmed_lines[last_10_start..].join("\n");
+    let footer = extract_footer(&trimmed_lines);
 
     let mut status = ToolStatus::default();
 
@@ -131,13 +159,22 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
             .any(|p| p.is_match(&last_lines));
 
         if !status.has_exited {
+            // Monitoring footer indicator (e.g. "· 1 monitor ·") — footer-only
+            // to avoid matching quoted text in the conversation body.
+            status.is_monitoring = MONITOR_RE.is_match(&footer);
+
             // Compacting
             status.is_compacting = CLAUDE_COMPACTING_PATTERNS
                 .iter()
                 .any(|p| p.is_match(&last_lines));
 
-            // Busy (actively working)
-            status.is_busy = CLAUDE_BUSY_PATTERNS.iter().any(|p| p.is_match(&last_lines))
+            // Busy (actively working) — footer hotkey hints are footer-anchored
+            // so prose like "...esc to interrupt..." won't false-positive.
+            // The spinner glyph itself is matched broadly because it can render
+            // mid-line in inline status indicators.
+            status.is_busy = CLAUDE_FOOTER_BUSY_PATTERNS
+                .iter()
+                .any(|p| p.is_match(&footer))
                 || has_spinner(&last_few_lines);
 
             // Idle prompt detection — BEFORE waiting patterns
@@ -526,6 +563,110 @@ mod tests {
         let output = "Normal claude output with no resume line";
         let id = extract_claude_session_id(output);
         assert_eq!(id, None);
+    }
+
+    #[test]
+    fn test_monitoring_singular_in_footer() {
+        // Idle Claude session with one monitor attached (footer at idle has no "esc to interrupt")
+        let output = "\u{276f}\u{00a0}\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n  \u{23f5}\u{23f5} accept edits on \u{00b7} 1 monitor \u{00b7} \u{2193} to manage\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.is_monitoring);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_monitoring_plural_in_footer() {
+        let output = "\u{276f}\u{00a0}\n  \u{23f5}\u{23f5} accept edits on \u{00b7} 3 monitors \u{00b7} \u{2193} to manage\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.is_monitoring);
+    }
+
+    #[test]
+    fn test_monitoring_detected_alongside_busy() {
+        // While the agent is actively working with monitors attached, both flags fire.
+        // The poller chooses Running over Monitoring — verified by poller priority order.
+        let output = "Working on it...\n\u{00b7} 1 monitor \u{00b7} esc to interrupt \u{00b7}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.is_monitoring);
+        assert!(status.is_busy);
+    }
+
+    #[test]
+    fn test_busy_not_detected_when_phrase_quoted_above_footer() {
+        // Regression: Claude's own conversation rendered "esc to interrupt" as
+        // part of a summary message, with a benign idle footer below. The old
+        // detection scanned the last 30 lines and matched the prose, falsely
+        // marking the session Running.
+        let separator = "\u{2500}".repeat(20);
+        let output = format!(
+            "Behavior note: assumes the idle footer omits esc to interrupt.\n\
+             {separator}\n\
+             \u{276f}\u{00a0}\n\
+             {separator}\n\
+               \u{23f5}\u{23f5} accept edits on (shift+tab to cycle)\n"
+        );
+        let status = parse_tool_status(&output, Some("claude"));
+        assert!(!status.is_busy, "footer has no busy indicator");
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_monitoring_not_detected_when_phrase_quoted_above_footer() {
+        // Regression: prose containing "· 1 monitor ·" must not trigger
+        // is_monitoring when the actual footer has no monitor indicator.
+        let separator = "\u{2500}".repeat(20);
+        let output = format!(
+            "Summary: a session with \u{00b7} 1 monitor \u{00b7} in its footer would resolve to Monitoring.\n\
+             {separator}\n\
+             \u{276f}\u{00a0}\n\
+             {separator}\n\
+               \u{23f5}\u{23f5} accept edits on (shift+tab to cycle)\n"
+        );
+        let status = parse_tool_status(&output, Some("claude"));
+        assert!(!status.is_monitoring);
+    }
+
+    #[test]
+    fn test_busy_detected_when_in_actual_footer() {
+        // Claude actively working — footer below the separator carries the
+        // "esc to interrupt" hint. is_busy should still fire.
+        let separator = "\u{2500}".repeat(20);
+        let output = format!(
+            "Calling tool...\n\
+             {separator}\n\
+             \u{276f}\u{00a0}\n\
+             {separator}\n\
+             \u{273d} Working\u{2026} (esc to interrupt \u{00b7} ctrl+t to show todos)\n"
+        );
+        let status = parse_tool_status(&output, Some("claude"));
+        assert!(status.is_busy);
+    }
+
+    #[test]
+    fn test_monitoring_not_detected_in_prose() {
+        // Natural language mention of "monitors" without the middle-dot footer separators
+        let output = "I have 2 monitors on my desk.\n\u{276f}\u{00a0}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(!status.is_monitoring);
+    }
+
+    #[test]
+    fn test_monitoring_not_detected_in_normal_idle() {
+        // Plain idle session with no monitor footer
+        let output = "Claude finished.\n\u{276f}\u{00a0}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(!status.is_monitoring);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_monitoring_not_detected_after_exit() {
+        // Once Claude has exited, monitoring detection should be skipped
+        let output =
+            "Resume this session with:\nclaude --resume abc123\n  \u{00b7} 1 monitor \u{00b7}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.has_exited);
+        assert!(!status.is_monitoring);
     }
 
     #[test]

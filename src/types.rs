@@ -10,6 +10,7 @@ pub enum SessionStatus {
     Draft,
     Paused,
     Compacting,
+    Monitoring,
     Idle,
     Error,
     Crashed,
@@ -25,9 +26,10 @@ impl SessionStatus {
             Self::Paused => 3,
             Self::Running => 4,
             Self::Compacting => 5,
-            Self::Idle => 6,
-            Self::Stopped => 7,
-            Self::Error => 8,
+            Self::Monitoring => 6,
+            Self::Idle => 7,
+            Self::Stopped => 8,
+            Self::Error => 9,
         }
     }
 
@@ -38,6 +40,7 @@ impl SessionStatus {
             Self::Draft => "draft",
             Self::Paused => "paused",
             Self::Compacting => "compacting",
+            Self::Monitoring => "monitoring",
             Self::Idle => "idle",
             Self::Error => "error",
             Self::Crashed => "crashed",
@@ -52,6 +55,7 @@ impl SessionStatus {
             "draft" => Self::Draft,
             "paused" => Self::Paused,
             "compacting" => Self::Compacting,
+            "monitoring" => Self::Monitoring,
             "idle" => Self::Idle,
             "error" => Self::Error,
             "crashed" => Self::Crashed,
@@ -67,6 +71,7 @@ impl SessionStatus {
             Self::Draft => "✎",
             Self::Paused => "◆",
             Self::Compacting => "◌",
+            Self::Monitoring => "◉",
             Self::Idle => "○",
             Self::Error => "✗",
             Self::Crashed => "⚠",
@@ -431,6 +436,7 @@ mod tests {
             SessionStatus::Waiting,
             SessionStatus::Paused,
             SessionStatus::Compacting,
+            SessionStatus::Monitoring,
             SessionStatus::Idle,
             SessionStatus::Error,
             SessionStatus::Crashed,
@@ -489,6 +495,7 @@ mod tests {
             SessionStatus::Waiting,
             SessionStatus::Paused,
             SessionStatus::Compacting,
+            SessionStatus::Monitoring,
             SessionStatus::Idle,
             SessionStatus::Error,
             SessionStatus::Crashed,
@@ -509,6 +516,7 @@ mod tests {
             SessionStatus::Waiting,
             SessionStatus::Paused,
             SessionStatus::Compacting,
+            SessionStatus::Monitoring,
             SessionStatus::Idle,
             SessionStatus::Error,
             SessionStatus::Crashed,
@@ -526,6 +534,7 @@ mod tests {
             SessionStatus::Waiting,
             SessionStatus::Paused,
             SessionStatus::Compacting,
+            SessionStatus::Monitoring,
             SessionStatus::Idle,
             SessionStatus::Error,
             SessionStatus::Crashed,
@@ -538,12 +547,15 @@ mod tests {
 
     #[test]
     fn test_session_status_sort_priority_ordering() {
-        // Crashed < Waiting < Paused < Running < Compacting < Idle < Stopped < Error
+        // Crashed < Waiting < Paused < Running < Compacting < Monitoring < Idle < Stopped < Error
         assert!(SessionStatus::Crashed.sort_priority() < SessionStatus::Waiting.sort_priority());
         assert!(SessionStatus::Waiting.sort_priority() < SessionStatus::Paused.sort_priority());
         assert!(SessionStatus::Paused.sort_priority() < SessionStatus::Running.sort_priority());
         assert!(SessionStatus::Running.sort_priority() < SessionStatus::Compacting.sort_priority());
-        assert!(SessionStatus::Compacting.sort_priority() < SessionStatus::Idle.sort_priority());
+        assert!(
+            SessionStatus::Compacting.sort_priority() < SessionStatus::Monitoring.sort_priority()
+        );
+        assert!(SessionStatus::Monitoring.sort_priority() < SessionStatus::Idle.sort_priority());
         assert!(SessionStatus::Idle.sort_priority() < SessionStatus::Stopped.sort_priority());
         assert!(SessionStatus::Stopped.sort_priority() < SessionStatus::Error.sort_priority());
     }
