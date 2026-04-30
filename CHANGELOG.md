@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.2] - 2026-04-30
+
+### Changed
+
+- fix(usage): make /usage parsing robust to partial renders and scrollback (#21) (@doyled-it)
+
 ## [1.5.1] - 2026-04-30
 
 ### Changed
