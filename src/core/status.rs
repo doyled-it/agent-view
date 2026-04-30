@@ -17,6 +17,7 @@ pub struct ToolStatus {
     pub has_idle_prompt: bool,
     pub has_question: bool,
     pub has_draft: bool,
+    pub is_monitoring: bool,
 }
 
 /// Spinner characters used by Claude Code when processing
@@ -81,6 +82,11 @@ lazy_static! {
     // Question detection
     static ref QUESTION_RE: Regex = Regex::new(r"\?\s*$").unwrap();
 
+    // Claude Code "N monitor(s)" footer indicator. The status bar uses U+00B7
+    // middle-dot separators around each item, e.g. `· 1 monitor ·`.
+    static ref MONITOR_RE: Regex =
+        Regex::new(r"\u{00b7}\s*\d+\s+monitors?\s*\u{00b7}").unwrap();
+
     // Non-content line patterns (for question scanning)
     static ref SEPARATOR_RE: Regex = Regex::new(r"^[\u{2500}\u{2501}\u{2550}]{10,}").unwrap();
     static ref COMPANION_RE: Regex = Regex::new(r"Thistle").unwrap();
@@ -131,6 +137,9 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
             .any(|p| p.is_match(&last_lines));
 
         if !status.has_exited {
+            // Monitoring footer indicator (e.g. "· 1 monitor ·")
+            status.is_monitoring = MONITOR_RE.is_match(&last_few_lines);
+
             // Compacting
             status.is_compacting = CLAUDE_COMPACTING_PATTERNS
                 .iter()
@@ -526,6 +535,59 @@ mod tests {
         let output = "Normal claude output with no resume line";
         let id = extract_claude_session_id(output);
         assert_eq!(id, None);
+    }
+
+    #[test]
+    fn test_monitoring_singular_in_footer() {
+        // Idle Claude session with one monitor attached (footer at idle has no "esc to interrupt")
+        let output = "\u{276f}\u{00a0}\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n  \u{23f5}\u{23f5} accept edits on \u{00b7} 1 monitor \u{00b7} \u{2193} to manage\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.is_monitoring);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_monitoring_plural_in_footer() {
+        let output = "\u{276f}\u{00a0}\n  \u{23f5}\u{23f5} accept edits on \u{00b7} 3 monitors \u{00b7} \u{2193} to manage\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.is_monitoring);
+    }
+
+    #[test]
+    fn test_monitoring_detected_alongside_busy() {
+        // While the agent is actively working with monitors attached, both flags fire.
+        // The poller chooses Running over Monitoring — verified by poller priority order.
+        let output = "Working on it...\n\u{00b7} 1 monitor \u{00b7} esc to interrupt \u{00b7}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.is_monitoring);
+        assert!(status.is_busy);
+    }
+
+    #[test]
+    fn test_monitoring_not_detected_in_prose() {
+        // Natural language mention of "monitors" without the middle-dot footer separators
+        let output = "I have 2 monitors on my desk.\n\u{276f}\u{00a0}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(!status.is_monitoring);
+    }
+
+    #[test]
+    fn test_monitoring_not_detected_in_normal_idle() {
+        // Plain idle session with no monitor footer
+        let output = "Claude finished.\n\u{276f}\u{00a0}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(!status.is_monitoring);
+        assert!(status.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_monitoring_not_detected_after_exit() {
+        // Once Claude has exited, monitoring detection should be skipped
+        let output =
+            "Resume this session with:\nclaude --resume abc123\n  \u{00b7} 1 monitor \u{00b7}\n";
+        let status = parse_tool_status(output, Some("claude"));
+        assert!(status.has_exited);
+        assert!(!status.is_monitoring);
     }
 
     #[test]

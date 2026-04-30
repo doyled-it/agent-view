@@ -111,9 +111,15 @@ pub fn spawn(
                             } else if parsed.has_idle_prompt && parsed.has_question {
                                 crate::types::SessionStatus::Paused
                             } else if parsed.has_idle_prompt {
-                                crate::types::SessionStatus::Idle
+                                if parsed.is_monitoring {
+                                    crate::types::SessionStatus::Monitoring
+                                } else {
+                                    crate::types::SessionStatus::Idle
+                                }
                             } else if parsed.is_busy || is_active {
                                 crate::types::SessionStatus::Running
+                            } else if parsed.is_monitoring {
+                                crate::types::SessionStatus::Monitoring
                             } else {
                                 crate::types::SessionStatus::Idle
                             }
