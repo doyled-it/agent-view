@@ -23,7 +23,6 @@ ansi-to-tui = "8"
 ratatui-core = "0.1"
 croner = "2"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
-iana-time-zone = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -21,4 +21,3 @@ pub mod storage;
 pub mod tmux;
 pub mod tokens;
 pub mod usage;
-pub mod usage_api;
