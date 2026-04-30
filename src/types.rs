@@ -381,6 +381,47 @@ pub struct UsageData {
     pub last_updated: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum StatusIndicator {
+    None,
+    Minor,
+    Major,
+    Critical,
+    Maintenance,
+}
+
+impl StatusIndicator {
+    #[allow(clippy::should_implement_trait, dead_code)]
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "none" => Self::None,
+            "minor" => Self::Minor,
+            "major" => Self::Major,
+            "critical" => Self::Critical,
+            "maintenance" => Self::Maintenance,
+            _ => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub struct StatusIncident {
+    pub name: String,
+    pub status: String,
+    pub impact: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub struct StatusPageData {
+    pub indicator: StatusIndicator,
+    pub description: String,
+    pub incidents: Vec<StatusIncident>,
+    pub last_updated: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,5 +778,34 @@ mod tests {
         assert!(data.week_all.is_none());
         assert!(data.week_sonnet.is_none());
         assert_eq!(data.last_updated, 0);
+    }
+
+    #[test]
+    fn test_status_indicator_from_str() {
+        assert_eq!(StatusIndicator::from_str("none"), StatusIndicator::None);
+        assert_eq!(StatusIndicator::from_str("minor"), StatusIndicator::Minor);
+        assert_eq!(StatusIndicator::from_str("major"), StatusIndicator::Major);
+        assert_eq!(
+            StatusIndicator::from_str("critical"),
+            StatusIndicator::Critical
+        );
+        assert_eq!(
+            StatusIndicator::from_str("maintenance"),
+            StatusIndicator::Maintenance
+        );
+        // unknown defaults to None (treat as operational so failures don't surface as red)
+        assert_eq!(StatusIndicator::from_str("garbage"), StatusIndicator::None);
+    }
+
+    #[test]
+    fn test_status_page_data_default_empty() {
+        let data = StatusPageData {
+            indicator: StatusIndicator::None,
+            description: "All Systems Operational".to_string(),
+            incidents: vec![],
+            last_updated: 0,
+        };
+        assert!(data.incidents.is_empty());
+        assert_eq!(data.indicator, StatusIndicator::None);
     }
 }
