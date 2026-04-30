@@ -48,6 +48,11 @@ fn init_meta_session() -> Result<String, &'static str> {
         return Err("claude not available");
     }
 
+    // Pin the pane width so /usage output doesn't wrap. Without this the
+    // detached session inherits tmux's default-size (~80 cols) and bar/Resets
+    // lines wrap at "% used", breaking suffix-based percent extraction.
+    let _ = crate::core::tmux::resize_window(META_SESSION_NAME, 200, 50);
+
     // Wait for Claude to reach idle prompt
     let start = Instant::now();
     let mut trust_accepted = false;
@@ -57,7 +62,7 @@ fn init_meta_session() -> Result<String, &'static str> {
             let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
             return Err("timed out waiting for idle prompt");
         }
-        if let Ok(output) = crate::core::tmux::capture_pane(META_SESSION_NAME, Some(-20), false) {
+        if let Ok(output) = crate::core::tmux::capture_pane_joined(META_SESSION_NAME, Some(-20)) {
             // Accept the workspace trust prompt if it appears
             if !trust_accepted && output.contains("Yes, I trust this folder") {
                 let _ = crate::core::tmux::send_keys_raw(META_SESSION_NAME, "Enter");
@@ -88,19 +93,43 @@ fn init_meta_session() -> Result<String, &'static str> {
 }
 
 /// Wait for the /usage view to render the quota bars. Returns the final captured
-/// output once "Current session" appears, or the last capture after timeout.
+/// output once all three buckets have parsed (header + Resets line each), or
+/// the last capture after timeout.
 fn wait_for_usage_render(session_name: &str) -> Option<String> {
     let mut last_capture: Option<String> = None;
     for _ in 0..20 {
         std::thread::sleep(Duration::from_millis(250));
-        if let Ok(output) = crate::core::tmux::capture_pane(session_name, Some(-30), false) {
-            if output.contains("Current session") {
+        if let Ok(output) = crate::core::tmux::capture_pane_joined(session_name, Some(-30)) {
+            let data = parse_usage_output(&output);
+            if data.session.is_some() && data.week_all.is_some() && data.week_sonnet.is_some() {
                 return Some(output);
             }
             last_capture = Some(output);
         }
     }
     last_capture
+}
+
+/// Merge a freshly-parsed `UsageData` into the shared state, preserving any
+/// previously-known bucket whose corresponding new field is `None`. Without
+/// this the first transient poll where one bucket fails to parse (e.g. its
+/// "Resets" line hadn't rendered yet) wipes the bar from the UI.
+fn merge_into(shared: &SharedUsageData, fresh: &UsageData) {
+    if fresh.session.is_none() && fresh.week_all.is_none() && fresh.week_sonnet.is_none() {
+        return;
+    }
+    if let Ok(mut guard) = shared.lock() {
+        let merged = match guard.take() {
+            Some(prev) => UsageData {
+                session: fresh.session.clone().or(prev.session),
+                week_all: fresh.week_all.clone().or(prev.week_all),
+                week_sonnet: fresh.week_sonnet.clone().or(prev.week_sonnet),
+                last_updated: fresh.last_updated,
+            },
+            None => fresh.clone(),
+        };
+        *guard = Some(merged);
+    }
 }
 
 /// Hash the percent values and reset strings of the parsed buckets to detect unchanged data.
@@ -150,11 +179,7 @@ fn monitor_loop(shared: SharedUsageData) {
     // Initial parse
     {
         let data = parse_usage_output(&initial_capture);
-        if data.session.is_some() || data.week_all.is_some() || data.week_sonnet.is_some() {
-            if let Ok(mut guard) = shared.lock() {
-                *guard = Some(data);
-            }
-        }
+        merge_into(&shared, &data);
     }
 
     let mut prev_hash: Option<u64> = None;
@@ -175,6 +200,9 @@ fn monitor_loop(shared: SharedUsageData) {
         // Escape closes the /usage view, returning to idle prompt
         let _ = crate::core::tmux::send_keys_raw(META_SESSION_NAME, "Escape");
         std::thread::sleep(Duration::from_secs(1));
+        // Drop accumulated scrollback so parse_bucket's rposition only sees
+        // the upcoming render — bounds the cost of repeated polls.
+        let _ = crate::core::tmux::clear_history(META_SESSION_NAME);
         // Re-send /usage to get fresh data
         let _ = crate::core::tmux::send_keys(META_SESSION_NAME, "/usage");
 
@@ -194,11 +222,7 @@ fn monitor_loop(shared: SharedUsageData) {
         } else {
             unchanged_count = 0;
             prev_hash = Some(new_hash);
-            if data.session.is_some() || data.week_all.is_some() || data.week_sonnet.is_some() {
-                if let Ok(mut guard) = shared.lock() {
-                    *guard = Some(data);
-                }
-            }
+            merge_into(&shared, &data);
         }
 
         // Auto-recover if stuck for too many consecutive polls
@@ -216,14 +240,7 @@ fn monitor_loop(shared: SharedUsageData) {
                         let fresh_data = parse_usage_output(&fresh_capture);
                         let fresh_hash = hash_usage_data(&fresh_data);
                         prev_hash = Some(fresh_hash);
-                        if fresh_data.session.is_some()
-                            || fresh_data.week_all.is_some()
-                            || fresh_data.week_sonnet.is_some()
-                        {
-                            if let Ok(mut guard) = shared.lock() {
-                                *guard = Some(fresh_data);
-                            }
-                        }
+                        merge_into(&shared, &fresh_data);
                     }
                     Err(reason) => {
                         eprintln!(
@@ -262,8 +279,11 @@ pub fn parse_usage_output(output: &str) -> UsageData {
 }
 
 fn parse_bucket(lines: &[&str], label: &str) -> Option<UsageBucket> {
-    // Find the line containing this label
-    let label_idx = lines.iter().position(|l| l.trim().starts_with(label))?;
+    // /usage output accumulates in scrollback (each poll re-renders inline),
+    // so multiple matching headers may be present. Use the most recent one —
+    // older renders may have been pushed apart by intervening output and no
+    // longer have their Resets line within the scan window.
+    let label_idx = lines.iter().rposition(|l| l.trim().starts_with(label))?;
 
     // Scan forward for "Resets ..." and a "X% used" value. Formats seen:
     //   Old: bar line "████ 33% used" followed by "Resets ..."
@@ -272,7 +292,10 @@ fn parse_bucket(lines: &[&str], label: &str) -> Option<UsageBucket> {
     let mut percent: Option<u8> = None;
     let mut resets: Option<String> = None;
 
-    for line in lines.iter().skip(label_idx + 1).take(4) {
+    // Scan up to 8 lines or until the next bucket header — claude occasionally
+    // renders a transient "Loading usage data…" or extra blank between the
+    // header and the Resets line, so a tighter window misses them.
+    for line in lines.iter().skip(label_idx + 1).take(8) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -495,5 +518,99 @@ mod tests {
         let data = parse_usage_output(capture);
         let h = hash_usage_data(&data);
         assert!(!is_stuck(capture, h, None));
+    }
+
+    // Two stacked /usage renders in one capture: an older one that was dismissed
+    // mid-render (header but no Resets), then a fresh full render. The parser
+    // must use the newest render, not the first match.
+    #[test]
+    fn test_parse_uses_most_recent_render() {
+        let capture = r#"
+  Current session
+  Loading usage data…
+
+  ❯ /usage
+
+  Current session
+  ████████████████▌                                  33% used
+  Resets 12pm (America/Los_Angeles)
+
+  Current week (all models)
+  ████████████████████                               40% used
+  Resets Apr 23 at 12pm (America/Los_Angeles)
+
+  Current week (Sonnet only)
+  ███▌                                               7% used
+  Resets Apr 23 at 6pm (America/Los_Angeles)
+"#;
+        let data = parse_usage_output(capture);
+        let s = data.session.expect("should parse newest session render");
+        assert_eq!(s.percent, 33);
+        assert_eq!(s.resets, "12pm (America/Los_Angeles)");
+    }
+
+    // A transient "Loading…" line between header and Resets used to push Resets
+    // outside the 4-line scan window. The widened window must catch it.
+    #[test]
+    fn test_parse_tolerates_loading_line_above_resets() {
+        let capture = r#"
+  Current session
+  Loading usage data…
+
+  ████████████████▌                                  33% used
+  Resets 12pm (America/Los_Angeles)
+"#;
+        let data = parse_usage_output(capture);
+        let s = data
+            .session
+            .expect("session should parse with loading line");
+        assert_eq!(s.percent, 33);
+        assert_eq!(s.resets, "12pm (America/Los_Angeles)");
+    }
+
+    #[test]
+    fn test_merge_into_preserves_missing_buckets() {
+        let shared: SharedUsageData = Arc::new(Mutex::new(None));
+        let full = parse_usage_output(SAMPLE_OUTPUT);
+        merge_into(&shared, &full);
+
+        // Now a "partial" poll where only week_all parsed.
+        let partial = UsageData {
+            session: None,
+            week_all: Some(UsageBucket {
+                label: "Current week (all models)".into(),
+                percent: 99,
+                resets: "tomorrow".into(),
+            }),
+            week_sonnet: None,
+            last_updated: 12345,
+        };
+        merge_into(&shared, &partial);
+
+        let guard = shared.lock().unwrap();
+        let merged = guard.as_ref().expect("merged data present");
+        // Session and Sonnet preserved from prior full poll
+        assert_eq!(merged.session.as_ref().unwrap().percent, 33);
+        assert_eq!(merged.week_sonnet.as_ref().unwrap().percent, 7);
+        // Week updated with the fresh value
+        assert_eq!(merged.week_all.as_ref().unwrap().percent, 99);
+        // last_updated reflects the freshest poll
+        assert_eq!(merged.last_updated, 12345);
+    }
+
+    #[test]
+    fn test_merge_into_ignores_fully_empty_poll() {
+        let shared: SharedUsageData = Arc::new(Mutex::new(None));
+        let full = parse_usage_output(SAMPLE_OUTPUT);
+        merge_into(&shared, &full);
+
+        // Fully empty poll: must not clobber prior good data.
+        merge_into(&shared, &UsageData::default());
+
+        let guard = shared.lock().unwrap();
+        let merged = guard.as_ref().expect("prior data must be preserved");
+        assert_eq!(merged.session.as_ref().unwrap().percent, 33);
+        assert_eq!(merged.week_all.as_ref().unwrap().percent, 40);
+        assert_eq!(merged.week_sonnet.as_ref().unwrap().percent, 7);
     }
 }
