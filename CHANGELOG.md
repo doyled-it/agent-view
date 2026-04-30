@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.3] - 2026-04-30
+
+### Changed
+
+- fix(status): show monitoring instead of paused when monitor is attached (#22) (@doyled-it)
+
 ## [1.5.2] - 2026-04-30
 
 ### Changed
