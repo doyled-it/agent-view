@@ -533,6 +533,8 @@ pub struct App {
     pub routine_tab_warning_shown: bool,
     pub usage_data: Option<crate::types::UsageData>,
     pub usage_shared: Option<crate::core::usage::SharedUsageData>,
+    pub status_data: Option<crate::types::StatusPageData>,
+    pub status_shared: Option<crate::core::status_page::SharedStatusData>,
 }
 
 impl App {
@@ -572,6 +574,8 @@ impl App {
             routine_tab_warning_shown: false,
             usage_data: None,
             usage_shared: None,
+            status_data: None,
+            status_shared: None,
         }
     }
 

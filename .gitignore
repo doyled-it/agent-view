@@ -1,6 +1,8 @@
 # Build output
 /target
 bin/
+dist/
+node_modules/
 
 # Database
 *.db

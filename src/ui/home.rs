@@ -45,15 +45,27 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
     let has_usage = app.usage_data.is_some();
     let usage_height = if has_usage { 4u16 } else { 0 }; // 1 border + 3 rows
+    let status_incidents = app
+        .status_data
+        .as_ref()
+        .map(|s| s.incidents.len())
+        .unwrap_or(0);
+    let status_height = if app.status_data.is_some() {
+        // 1 border + 1 description + min(incidents, 3)
+        2u16 + (status_incidents.min(3) as u16)
+    } else {
+        0
+    };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),            // ASCII header + tab bar
-            Constraint::Min(0),               // session/routine list
-            Constraint::Length(feed_height),  // activity feed
-            Constraint::Length(usage_height), // usage pane
-            Constraint::Length(1),            // footer
+            Constraint::Length(6),             // ASCII header + tab bar
+            Constraint::Min(0),                // session/routine list
+            Constraint::Length(feed_height),   // activity feed
+            Constraint::Length(usage_height),  // usage pane
+            Constraint::Length(status_height), // status pane
+            Constraint::Length(1),             // footer
         ])
         .split(list_area);
 
@@ -69,6 +81,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     if has_usage {
         render_usage_pane(frame, chunks[3], app);
+    }
+    if app.status_data.is_some() {
+        render_status_pane(frame, chunks[4], app);
     }
     if let Some(ref query) = app.search_query {
         let matches = app.search_matches();
@@ -86,9 +101,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                 Style::default().fg(app.theme.text_muted),
             ),
         ]);
-        frame.render_widget(Paragraph::new(search_line), chunks[4]);
+        frame.render_widget(Paragraph::new(search_line), chunks[5]);
     } else {
-        crate::ui::footer::render(frame, chunks[4], app);
+        crate::ui::footer::render(frame, chunks[5], app);
     }
 
     // Render detail panel when wide enough
@@ -588,19 +603,30 @@ fn truncate_path(path: &str, max_len: usize) -> String {
 fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
+    let usage = match app.usage_data {
+        Some(ref u) => u,
+        None => return,
+    };
+
+    // Compute staleness
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let age_ms = now_ms - usage.last_updated;
+    let is_stale = age_ms > 5 * 60 * 1000; // 5 minutes
+
+    let title = if is_stale {
+        " Usage (stale) "
+    } else {
+        " Usage "
+    };
+
     let block = Block::default()
-        .title(" Usage ")
+        .title(title)
         .title_style(Style::default().fg(theme.text_muted))
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.border));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
-
-    let usage = match app.usage_data {
-        Some(ref u) => u,
-        None => return,
-    };
 
     let buckets: Vec<(&str, Option<&crate::types::UsageBucket>)> = vec![
         ("Session", usage.session.as_ref()),
@@ -638,22 +664,40 @@ fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
             Some(Line::from(vec![
                 Span::styled(
                     format!(" {:<8}", label),
-                    Style::default().fg(theme.text_muted),
+                    maybe_dim(Style::default().fg(theme.text_muted), is_stale),
                 ),
-                Span::styled(bar_filled, Style::default().fg(color)),
+                Span::styled(bar_filled, maybe_dim(Style::default().fg(color), is_stale)),
                 Span::styled(
                     bar_empty,
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::DIM),
+                    maybe_dim(
+                        Style::default()
+                            .fg(theme.text_muted)
+                            .add_modifier(Modifier::DIM),
+                        is_stale,
+                    ),
                 ),
-                Span::styled(format!(" {:>3}%", b.percent), Style::default().fg(color)),
-                Span::styled(padded_resets, Style::default().fg(theme.text_muted)),
+                Span::styled(
+                    format!(" {:>3}%", b.percent),
+                    maybe_dim(Style::default().fg(color), is_stale),
+                ),
+                Span::styled(
+                    padded_resets,
+                    maybe_dim(Style::default().fg(theme.text_muted), is_stale),
+                ),
             ]))
         })
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Conditionally add DIM modifier to a style
+fn maybe_dim(style: Style, dim: bool) -> Style {
+    if dim {
+        style.add_modifier(Modifier::DIM)
+    } else {
+        style
+    }
 }
 
 fn abbreviate_resets(resets: &str) -> String {
@@ -688,6 +732,59 @@ fn usage_percent_color(theme: &crate::ui::theme::Theme, percent: u8) -> Color {
     } else {
         theme.success
     }
+}
+
+fn render_status_pane(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+
+    let block = Block::default()
+        .title(" Claude Status ")
+        .title_style(Style::default().fg(theme.text_muted))
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    use crate::types::StatusIndicator;
+
+    let (icon, color, description) = match app.status_data {
+        Some(ref s) => {
+            let color = match s.indicator {
+                StatusIndicator::None => theme.success,
+                StatusIndicator::Minor | StatusIndicator::Maintenance => theme.warning,
+                StatusIndicator::Major | StatusIndicator::Critical => theme.error,
+            };
+            let icon = match s.indicator {
+                StatusIndicator::None => "\u{25CF}",
+                StatusIndicator::Minor | StatusIndicator::Maintenance => "\u{25D0}",
+                StatusIndicator::Major | StatusIndicator::Critical => "\u{26A0}",
+            };
+            (icon, color, s.description.as_str())
+        }
+        None => ("\u{25CB}", theme.text_muted, "status: unknown"),
+    };
+
+    let mut lines: Vec<Line> = vec![Line::from(vec![
+        Span::styled(format!(" {} ", icon), Style::default().fg(color)),
+        Span::styled(description.to_string(), Style::default().fg(theme.text)),
+    ])];
+
+    if let Some(ref s) = app.status_data {
+        let max_incidents = inner.height.saturating_sub(1) as usize;
+        for inc in s.incidents.iter().take(max_incidents) {
+            lines.push(Line::from(vec![
+                Span::styled("   \u{2022} ", Style::default().fg(theme.text_muted)),
+                Span::styled(inc.name.clone(), Style::default().fg(theme.text)),
+                Span::styled(
+                    format!("  ({})", inc.status),
+                    Style::default().fg(theme.text_muted),
+                ),
+            ]));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 #[cfg(test)]
@@ -858,5 +955,19 @@ mod tests {
                 assert_ne!(colors[i], colors[j]);
             }
         }
+    }
+
+    #[test]
+    fn test_usage_staleness_threshold() {
+        let now = chrono::Utc::now().timestamp_millis();
+        let four_min_ago = now - 4 * 60 * 1000;
+        let six_min_ago = now - 6 * 60 * 1000;
+
+        // Stale threshold is 5 min: 4-min-ago is fresh, 6-min-ago is stale
+        let age_4_min = now - four_min_ago;
+        let age_6_min = now - six_min_ago;
+
+        assert!(age_4_min <= 5 * 60 * 1000);
+        assert!(age_6_min > 5 * 60 * 1000);
     }
 }
