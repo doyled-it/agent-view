@@ -4,17 +4,12 @@ use crate::types::{StatusIncident, StatusIndicator, StatusPageData};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-#[allow(dead_code)]
 pub type SharedStatusData = Arc<Mutex<Option<StatusPageData>>>;
 
-#[allow(dead_code)]
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
-#[allow(dead_code)]
 const SUMMARY_URL: &str = "https://status.claude.com/api/v2/summary.json";
-#[allow(dead_code)]
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[allow(dead_code)]
 pub fn parse_response(json: &serde_json::Value) -> Option<StatusPageData> {
     let status = json.get("status")?;
     let indicator = StatusIndicator::from_str(
@@ -62,7 +57,6 @@ pub fn parse_response(json: &serde_json::Value) -> Option<StatusPageData> {
 }
 
 /// Spawn the status-page monitor background thread.
-#[allow(dead_code)]
 pub fn spawn_monitor() -> (SharedStatusData, std::thread::JoinHandle<()>) {
     let shared: SharedStatusData = Arc::new(Mutex::new(None));
     let shared_clone = Arc::clone(&shared);
@@ -74,7 +68,6 @@ pub fn spawn_monitor() -> (SharedStatusData, std::thread::JoinHandle<()>) {
     (shared, handle)
 }
 
-#[allow(dead_code)]
 fn monitor_loop(shared: SharedStatusData) {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(REQUEST_TIMEOUT)

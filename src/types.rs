@@ -382,7 +382,6 @@ pub struct UsageData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum StatusIndicator {
     None,
     Minor,
@@ -392,7 +391,7 @@ pub enum StatusIndicator {
 }
 
 impl StatusIndicator {
-    #[allow(clippy::should_implement_trait, dead_code)]
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "none" => Self::None,
@@ -406,15 +405,14 @@ impl StatusIndicator {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct StatusIncident {
     pub name: String,
     pub status: String,
+    #[allow(dead_code)] // reserved for future use
     pub impact: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct StatusPageData {
     pub indicator: StatusIndicator,
     pub description: String,
