@@ -1,6 +1,8 @@
 //! Parser for Claude Code /usage terminal output
 
 use crate::types::{UsageBucket, UsageData};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -9,6 +11,12 @@ pub const META_SESSION_PREFIX: &str = "__agentview_meta_";
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 const INIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const INIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How many polls in a row with no bars (or identical data) before we consider the session stuck.
+const STUCK_THRESHOLD: u8 = 3;
+/// Max recoveries in any rolling 10-minute window before we give up recovering.
+const MAX_RECOVERIES_PER_WINDOW: usize = 3;
+const RECOVERY_WINDOW: Duration = Duration::from_secs(600); // 10 minutes
 
 /// Shared usage data between the monitor thread and the main UI thread.
 pub type SharedUsageData = Arc<Mutex<Option<UsageData>>>;
@@ -26,24 +34,10 @@ pub fn spawn_monitor() -> (SharedUsageData, std::thread::JoinHandle<()>) {
     (shared, handle)
 }
 
-/// Wait for the /usage view to render the quota bars. Returns the final captured
-/// output once "Current session" appears, or the last capture after timeout.
-fn wait_for_usage_render(session_name: &str) -> Option<String> {
-    let mut last_capture: Option<String> = None;
-    for _ in 0..20 {
-        std::thread::sleep(Duration::from_millis(250));
-        if let Ok(output) = crate::core::tmux::capture_pane(session_name, Some(-30), false) {
-            if output.contains("Current session") {
-                return Some(output);
-            }
-            last_capture = Some(output);
-        }
-    }
-    last_capture
-}
-
-fn monitor_loop(shared: SharedUsageData) {
-    // Create the hidden tmux session running claude
+/// Initialize (or re-initialize) the meta session: create it, wait for idle prompt,
+/// accept trust prompt, send /usage, and wait for the quota bars to render.
+/// Returns Ok(capture) with the rendered output on success, or Err with a reason.
+fn init_meta_session() -> Result<String, &'static str> {
     if crate::core::tmux::session_exists(META_SESSION_NAME) {
         let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
     }
@@ -51,7 +45,7 @@ fn monitor_loop(shared: SharedUsageData) {
     if crate::core::tmux::create_session(META_SESSION_NAME, Some("claude"), Some("/tmp"), None)
         .is_err()
     {
-        return; // claude not available — silently disable usage tracking
+        return Err("claude not available");
     }
 
     // Wait for Claude to reach idle prompt
@@ -61,7 +55,7 @@ fn monitor_loop(shared: SharedUsageData) {
         std::thread::sleep(INIT_POLL_INTERVAL);
         if start.elapsed() > INIT_TIMEOUT {
             let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
-            return; // timed out waiting for Claude
+            return Err("timed out waiting for idle prompt");
         }
         if let Ok(output) = crate::core::tmux::capture_pane(META_SESSION_NAME, Some(-20), false) {
             // Accept the workspace trust prompt if it appears
@@ -83,21 +77,89 @@ fn monitor_loop(shared: SharedUsageData) {
     // Send /usage — the command shows a persistent usage view
     if crate::core::tmux::send_keys(META_SESSION_NAME, "/usage").is_err() {
         let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
-        return;
+        return Err("failed to send /usage");
     }
 
-    // Wait for the quota bars to render before initial capture
-    let initial_capture = wait_for_usage_render(META_SESSION_NAME);
+    // Wait for the quota bars to render
+    let capture =
+        wait_for_usage_render(META_SESSION_NAME).ok_or("render wait returned no capture")?;
 
-    // Initial capture
-    if let Some(output) = initial_capture {
-        let data = parse_usage_output(&output);
+    Ok(capture)
+}
+
+/// Wait for the /usage view to render the quota bars. Returns the final captured
+/// output once "Current session" appears, or the last capture after timeout.
+fn wait_for_usage_render(session_name: &str) -> Option<String> {
+    let mut last_capture: Option<String> = None;
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(250));
+        if let Ok(output) = crate::core::tmux::capture_pane(session_name, Some(-30), false) {
+            if output.contains("Current session") {
+                return Some(output);
+            }
+            last_capture = Some(output);
+        }
+    }
+    last_capture
+}
+
+/// Hash the percent values and reset strings of the parsed buckets to detect unchanged data.
+fn hash_usage_data(data: &UsageData) -> u64 {
+    let mut h = DefaultHasher::new();
+    if let Some(b) = &data.session {
+        b.percent.hash(&mut h);
+        b.resets.hash(&mut h);
+    }
+    if let Some(b) = &data.week_all {
+        b.percent.hash(&mut h);
+        b.resets.hash(&mut h);
+    }
+    if let Some(b) = &data.week_sonnet {
+        b.percent.hash(&mut h);
+        b.resets.hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Decide whether a poll result looks stuck.
+///
+/// Returns true (stuck) when:
+/// - The capture contains "Loading usage data" but NOT "Current session", OR
+/// - The new data hash equals the previous hash (data did not change).
+fn is_stuck(capture: &str, new_hash: u64, prev_hash: Option<u64>) -> bool {
+    let has_bars = capture.contains("Current session");
+    let loading = capture.contains("Loading usage data");
+    if loading && !has_bars {
+        return true;
+    }
+    if let Some(ph) = prev_hash {
+        if new_hash == ph {
+            return true;
+        }
+    }
+    false
+}
+
+fn monitor_loop(shared: SharedUsageData) {
+    // Initial session setup
+    let initial_capture = match init_meta_session() {
+        Ok(c) => c,
+        Err(_) => return, // claude not available — silently disable usage tracking
+    };
+
+    // Initial parse
+    {
+        let data = parse_usage_output(&initial_capture);
         if data.session.is_some() || data.week_all.is_some() || data.week_sonnet.is_some() {
             if let Ok(mut guard) = shared.lock() {
                 *guard = Some(data);
             }
         }
     }
+
+    let mut prev_hash: Option<u64> = None;
+    let mut unchanged_count: u8 = 0;
+    let mut recovery_timestamps: Vec<Instant> = Vec::new();
 
     // Poll loop — close and reopen /usage to refresh data
     loop {
@@ -116,13 +178,66 @@ fn monitor_loop(shared: SharedUsageData) {
         // Re-send /usage to get fresh data
         let _ = crate::core::tmux::send_keys(META_SESSION_NAME, "/usage");
 
-        // Wait for the quota bars to render
-        if let Some(output) = wait_for_usage_render(META_SESSION_NAME) {
-            let data = parse_usage_output(&output);
+        // Wait for bars to render
+        let capture = match wait_for_usage_render(META_SESSION_NAME) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let data = parse_usage_output(&capture);
+        let new_hash = hash_usage_data(&data);
+
+        let stuck = is_stuck(&capture, new_hash, prev_hash);
+
+        if stuck {
+            unchanged_count = unchanged_count.saturating_add(1);
+        } else {
+            unchanged_count = 0;
+            prev_hash = Some(new_hash);
             if data.session.is_some() || data.week_all.is_some() || data.week_sonnet.is_some() {
                 if let Ok(mut guard) = shared.lock() {
                     *guard = Some(data);
                 }
+            }
+        }
+
+        // Auto-recover if stuck for too many consecutive polls
+        if unchanged_count >= STUCK_THRESHOLD {
+            // Prune recovery timestamps older than the window
+            let now = Instant::now();
+            recovery_timestamps.retain(|t| now.duration_since(*t) < RECOVERY_WINDOW);
+
+            if recovery_timestamps.len() < MAX_RECOVERIES_PER_WINDOW {
+                recovery_timestamps.push(now);
+
+                match init_meta_session() {
+                    Ok(fresh_capture) => {
+                        unchanged_count = 0;
+                        let fresh_data = parse_usage_output(&fresh_capture);
+                        let fresh_hash = hash_usage_data(&fresh_data);
+                        prev_hash = Some(fresh_hash);
+                        if fresh_data.session.is_some()
+                            || fresh_data.week_all.is_some()
+                            || fresh_data.week_sonnet.is_some()
+                        {
+                            if let Ok(mut guard) = shared.lock() {
+                                *guard = Some(fresh_data);
+                            }
+                        }
+                    }
+                    Err(reason) => {
+                        eprintln!(
+                            "[agent-view] usage monitor: recovery failed — {reason}; continuing to poll"
+                        );
+                        // Don't return; keep the loop alive
+                    }
+                }
+            } else {
+                eprintln!(
+                    "[agent-view] usage monitor: recovery cap reached ({MAX_RECOVERIES_PER_WINDOW} in 10 min); skipping auto-recover, continuing to poll"
+                );
+                // Reset unchanged_count so we don't spam on every subsequent poll
+                unchanged_count = 0;
             }
         }
     }
@@ -343,5 +458,42 @@ mod tests {
         assert!(data.session.is_some());
         assert!(data.week_all.is_none());
         assert!(data.week_sonnet.is_none());
+    }
+
+    // --- Stuck-state detection unit tests ---
+
+    #[test]
+    fn test_is_stuck_loading_without_bars() {
+        let capture = "Loading usage data…\n  Esc to cancel";
+        let data = parse_usage_output(capture);
+        let h = hash_usage_data(&data);
+        assert!(is_stuck(capture, h, None));
+    }
+
+    #[test]
+    fn test_is_stuck_same_hash() {
+        // No "Loading" but same hash as previous → stuck
+        let capture = "some output without loading";
+        let data = parse_usage_output(capture);
+        let h = hash_usage_data(&data);
+        assert!(is_stuck(capture, h, Some(h)));
+    }
+
+    #[test]
+    fn test_not_stuck_with_bars_and_changed_data() {
+        let capture = SAMPLE_OUTPUT;
+        let data = parse_usage_output(capture);
+        let h = hash_usage_data(&data);
+        // Different previous hash
+        assert!(!is_stuck(capture, h, Some(h.wrapping_add(1))));
+    }
+
+    #[test]
+    fn test_not_stuck_first_poll() {
+        // No previous hash → even identical data should not be stuck on first poll
+        let capture = SAMPLE_OUTPUT;
+        let data = parse_usage_output(capture);
+        let h = hash_usage_data(&data);
+        assert!(!is_stuck(capture, h, None));
     }
 }
