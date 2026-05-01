@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::types::UsageBucket;
 use crate::ui::theme::Theme;
 
 pub(super) fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
@@ -37,7 +38,7 @@ pub(super) fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let buckets: Vec<(&str, Option<&crate::types::UsageBucket>)> = vec![
+    let buckets: Vec<(&str, Option<&UsageBucket>)> = vec![
         ("Session", usage.session.as_ref()),
         ("Week", usage.week_all.as_ref()),
         ("Sonnet", usage.week_sonnet.as_ref()),

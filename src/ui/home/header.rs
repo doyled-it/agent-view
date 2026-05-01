@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{ActiveTab, App};
 
 const LOGO: [&str; 4] = [
     r"  __    ___  ____  __ _  ____    _  _  __  ____  _  _ ",
@@ -43,7 +43,7 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled("  ", muted_style),
         Span::styled(
             " Sessions ",
-            if active_tab == crate::app::ActiveTab::Sessions {
+            if active_tab == ActiveTab::Sessions {
                 Style::default()
                     .fg(theme.selected_item_text)
                     .bg(theme.primary)
@@ -55,7 +55,7 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(" ", muted_style),
         Span::styled(
             " Routines ",
-            if active_tab == crate::app::ActiveTab::Routines {
+            if active_tab == ActiveTab::Routines {
                 Style::default()
                     .fg(theme.selected_item_text)
                     .bg(theme.primary)

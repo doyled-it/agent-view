@@ -33,11 +33,7 @@ pub(super) fn render_sparkline_str(history: &[StatusHistoryEntry], buckets: usiz
 }
 
 /// Testable version that accepts a custom "now" timestamp.
-pub(super) fn render_sparkline_at(
-    history: &[StatusHistoryEntry],
-    buckets: usize,
-    now_ms: i64,
-) -> String {
+fn render_sparkline_at(history: &[StatusHistoryEntry], buckets: usize, now_ms: i64) -> String {
     if history.is_empty() {
         return String::new();
     }

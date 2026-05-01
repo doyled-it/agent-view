@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::ui::theme::status_color;
 
 pub(super) fn render_activity_feed(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
@@ -40,7 +41,7 @@ pub(super) fn render_activity_feed(frame: &mut Frame, area: Rect, app: &App) {
     let lines: Vec<Line> = events
         .iter()
         .map(|(age, event)| {
-            let status_color = crate::ui::theme::status_color(theme, event.new_status);
+            let status_color = status_color(theme, event.new_status);
             Line::from(vec![
                 Span::styled(
                     format!(" {age:>age_width$}  "),
