@@ -65,6 +65,8 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         section_header("Groups", section_style),
         binding("g", "Create group", key_style, desc_style),
         binding("J / K", "Move group", key_style, desc_style),
+        binding("d", "Delete group", key_style, desc_style),
+        binding("R", "Rename group", key_style, desc_style),
     ];
 
     let right_lines: Vec<Line> = if app.active_tab == ActiveTab::Routines {

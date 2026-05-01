@@ -174,6 +174,14 @@ pub fn handle_main_key(
                     message: msg,
                     action: crate::app::ConfirmAction::DeleteSession(session.id.clone()),
                 });
+            } else if let Some(group) = app.selected_group() {
+                if group.path != crate::core::groups::DEFAULT_GROUP_PATH {
+                    let msg = format!("Delete group \"{}\"?", group.name);
+                    app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
+                        message: msg,
+                        action: crate::app::ConfirmAction::DeleteGroup(group.path.clone()),
+                    });
+                }
             }
         }
         (KeyModifiers::NONE, KeyCode::Char(' ')) => {
