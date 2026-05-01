@@ -1,7 +1,8 @@
 use chrono::{Local, TimeZone};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::prelude::*;
-use ratatui::widgets::*;
+use ratatui::style::{Style, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{NewRoutineForm, ScheduleFrequency};

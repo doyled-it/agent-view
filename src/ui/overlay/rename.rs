@@ -1,6 +1,6 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::prelude::*;
-use ratatui::widgets::*;
+use ratatui::style::{Style, Stylize};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{RenameForm, RenameTarget};

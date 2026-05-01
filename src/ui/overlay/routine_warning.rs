@@ -1,6 +1,7 @@
 use ratatui::layout::Rect;
-use ratatui::prelude::*;
-use ratatui::widgets::*;
+use ratatui::style::{Style, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::ui::theme::Theme;
