@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.5] - 2026-05-01
+
+### Changed
+
+- fix(groups): unstick reorder on tied sort_orders, add d-key delete (#26) (@doyled-it)
+
 ## [1.5.4] - 2026-04-30
 
 ### Changed
