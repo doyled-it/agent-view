@@ -2,17 +2,18 @@ use rusqlite::params;
 use rusqlite::Result as SqlResult;
 
 use super::Storage;
+use crate::types::Group;
 
 impl Storage {
     /// Load all groups ordered by sort_order
-    pub fn load_groups(&self) -> SqlResult<Vec<crate::types::Group>> {
+    pub fn load_groups(&self) -> SqlResult<Vec<Group>> {
         let mut stmt = self.conn.prepare(
             "SELECT path, name, expanded, sort_order, default_path
              FROM groups ORDER BY sort_order",
         )?;
 
         let rows = stmt.query_map([], |row| {
-            Ok(crate::types::Group {
+            Ok(Group {
                 path: row.get(0)?,
                 name: row.get(1)?,
                 expanded: row.get::<_, i32>(2)? == 1,
@@ -25,7 +26,7 @@ impl Storage {
     }
 
     /// Save a group (insert or replace)
-    pub fn save_group(&self, group: &crate::types::Group) -> SqlResult<()> {
+    pub fn save_group(&self, group: &Group) -> SqlResult<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO groups (path, name, expanded, sort_order, default_path)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -83,11 +84,12 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
+    use crate::types::Group;
 
     #[test]
     fn test_save_and_load_groups() {
         let (storage, _dir) = test_storage();
-        let group = crate::types::Group {
+        let group = Group {
             path: "work".to_string(),
             name: "Work".to_string(),
             expanded: true,
@@ -105,7 +107,7 @@ mod tests {
     #[test]
     fn test_delete_group() {
         let (storage, _dir) = test_storage();
-        let group = crate::types::Group {
+        let group = Group {
             path: "work".to_string(),
             name: "Work".to_string(),
             expanded: true,
@@ -121,14 +123,14 @@ mod tests {
     #[test]
     fn test_swap_group_order() {
         let (storage, _dir) = test_storage();
-        let g1 = crate::types::Group {
+        let g1 = Group {
             path: "work".to_string(),
             name: "Work".to_string(),
             expanded: true,
             order: 0,
             default_path: String::new(),
         };
-        let g2 = crate::types::Group {
+        let g2 = Group {
             path: "personal".to_string(),
             name: "Personal".to_string(),
             expanded: true,
@@ -148,7 +150,7 @@ mod tests {
     #[test]
     fn test_toggle_group_expanded() {
         let (storage, _dir) = test_storage();
-        let group = crate::types::Group {
+        let group = Group {
             path: "work".to_string(),
             name: "Work".to_string(),
             expanded: true,

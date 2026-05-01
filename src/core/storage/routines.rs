@@ -2,12 +2,13 @@ use rusqlite::params;
 use rusqlite::Result as SqlResult;
 
 use super::Storage;
+use crate::types::Routine;
 
 impl Storage {
     /// Save a routine (insert or update).
     /// Uses ON CONFLICT UPDATE instead of INSERT OR REPLACE to avoid
     /// triggering FK CASCADE deletes on routine_runs.
-    pub fn save_routine(&self, routine: &crate::types::Routine) -> SqlResult<()> {
+    pub fn save_routine(&self, routine: &Routine) -> SqlResult<()> {
         let steps_json = serde_json::to_string(&routine.steps).unwrap_or_else(|_| "[]".to_string());
         self.conn.execute(
             "INSERT INTO routines (
@@ -46,7 +47,7 @@ impl Storage {
         Ok(())
     }
 
-    pub fn load_routines(&self) -> SqlResult<Vec<crate::types::Routine>> {
+    pub fn load_routines(&self) -> SqlResult<Vec<Routine>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, group_path, sort_order, working_dir, default_tool,
                     schedule, steps, enabled, created_at, last_run_at, next_run_at,
@@ -55,7 +56,7 @@ impl Storage {
         )?;
         let rows = stmt.query_map([], |row| {
             let steps_json: String = row.get(7)?;
-            Ok(crate::types::Routine {
+            Ok(Routine {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 group_path: row.get(2)?,
@@ -78,7 +79,7 @@ impl Storage {
         rows.collect()
     }
 
-    pub fn get_routine(&self, id: &str) -> SqlResult<Option<crate::types::Routine>> {
+    pub fn get_routine(&self, id: &str) -> SqlResult<Option<Routine>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, group_path, sort_order, working_dir, default_tool,
                     schedule, steps, enabled, created_at, last_run_at, next_run_at,
@@ -87,7 +88,7 @@ impl Storage {
         )?;
         let result = stmt.query_row(params![id], |row| {
             let steps_json: String = row.get(7)?;
-            Ok(crate::types::Routine {
+            Ok(Routine {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 group_path: row.get(2)?,
@@ -170,6 +171,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
+    use crate::types::{RoutineRun, RunStatus};
 
     #[test]
     fn test_save_and_load_routine() {
@@ -216,12 +218,12 @@ mod tests {
         let routine = make_test_routine("r1");
         storage.save_routine(&routine).unwrap();
 
-        let run = crate::types::RoutineRun {
+        let run = RoutineRun {
             id: "run1".to_string(),
             routine_id: "r1".to_string(),
             started_at: 1700000000000,
             finished_at: Some(1700000001000),
-            status: crate::types::RunStatus::Completed,
+            status: RunStatus::Completed,
             steps_completed: 1,
             steps_total: 1,
             log_path: None,

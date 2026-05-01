@@ -3,7 +3,7 @@ use rusqlite::Result as SqlResult;
 
 use super::Storage;
 
-pub(super) const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 7;
 
 impl Storage {
     pub fn migrate(&self) -> SqlResult<()> {

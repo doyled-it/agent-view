@@ -2,10 +2,11 @@ use rusqlite::params;
 use rusqlite::Result as SqlResult;
 
 use super::Storage;
+use crate::types::{Session, SessionStatus, StatusHistoryEntry, Tool};
 
 impl Storage {
     /// Save a session (insert or replace)
-    pub fn save_session(&self, session: &crate::types::Session) -> SqlResult<()> {
+    pub fn save_session(&self, session: &Session) -> SqlResult<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO sessions (
                 id, title, project_path, group_path, sort_order,
@@ -50,7 +51,7 @@ impl Storage {
     }
 
     /// Load all sessions ordered by sort_order
-    pub fn load_sessions(&self) -> SqlResult<Vec<crate::types::Session>> {
+    pub fn load_sessions(&self) -> SqlResult<Vec<Session>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, project_path, group_path, sort_order,
                     command, wrapper, tool, status, tmux_session,
@@ -69,7 +70,7 @@ impl Storage {
             let status_changed_at: i64 = row.get(20)?;
             let created_at: i64 = row.get(10)?;
 
-            Ok(crate::types::Session {
+            Ok(Session {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 project_path: row.get(2)?,
@@ -77,8 +78,8 @@ impl Storage {
                 order: row.get(4)?,
                 command: row.get(5)?,
                 wrapper: row.get(6)?,
-                tool: crate::types::Tool::from_str(&tool_str),
-                status: crate::types::SessionStatus::from_str(&status_str),
+                tool: Tool::from_str(&tool_str),
+                status: SessionStatus::from_str(&status_str),
                 tmux_session: row.get(9)?,
                 created_at,
                 last_accessed: row.get(11)?,
@@ -118,7 +119,7 @@ impl Storage {
     }
 
     /// Get a single session by ID
-    pub fn get_session(&self, id: &str) -> SqlResult<Option<crate::types::Session>> {
+    pub fn get_session(&self, id: &str) -> SqlResult<Option<Session>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, project_path, group_path, sort_order,
                     command, wrapper, tool, status, tmux_session,
@@ -137,7 +138,7 @@ impl Storage {
             let status_changed_at: i64 = row.get(20)?;
             let created_at: i64 = row.get(10)?;
 
-            Ok(crate::types::Session {
+            Ok(Session {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 project_path: row.get(2)?,
@@ -145,8 +146,8 @@ impl Storage {
                 order: row.get(4)?,
                 command: row.get(5)?,
                 wrapper: row.get(6)?,
-                tool: crate::types::Tool::from_str(&tool_str),
-                status: crate::types::SessionStatus::from_str(&status_str),
+                tool: Tool::from_str(&tool_str),
+                status: SessionStatus::from_str(&status_str),
                 tmux_session: row.get(9)?,
                 created_at,
                 last_accessed: row.get(11)?,
@@ -197,12 +198,7 @@ impl Storage {
     }
 
     /// Update status and tool for a session
-    pub fn write_status(
-        &self,
-        id: &str,
-        status: crate::types::SessionStatus,
-        tool: crate::types::Tool,
-    ) -> SqlResult<()> {
+    pub fn write_status(&self, id: &str, status: SessionStatus, tool: Tool) -> SqlResult<()> {
         // Check if status actually changed (to append to history)
         let current: Option<String> = self
             .conn
@@ -286,7 +282,7 @@ impl Storage {
     pub fn update_status_history(
         &self,
         id: &str,
-        status: crate::types::SessionStatus,
+        status: SessionStatus,
         timestamp: i64,
     ) -> SqlResult<()> {
         let history_json: String = self
@@ -298,10 +294,10 @@ impl Storage {
             )
             .unwrap_or_else(|_| "[]".to_string());
 
-        let mut history: Vec<crate::types::StatusHistoryEntry> =
+        let mut history: Vec<StatusHistoryEntry> =
             serde_json::from_str(&history_json).unwrap_or_default();
 
-        history.push(crate::types::StatusHistoryEntry {
+        history.push(StatusHistoryEntry {
             status: status.as_str().to_string(),
             timestamp,
         });
@@ -353,6 +349,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
+    use crate::types::{SessionStatus, Tool};
 
     #[test]
     fn test_save_and_load_session() {
@@ -364,8 +361,8 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].id, "s1");
         assert_eq!(loaded[0].title, "Session s1");
-        assert_eq!(loaded[0].tool, crate::types::Tool::Claude);
-        assert_eq!(loaded[0].status, crate::types::SessionStatus::Idle);
+        assert_eq!(loaded[0].tool, Tool::Claude);
+        assert_eq!(loaded[0].status, SessionStatus::Idle);
     }
 
     #[test]
@@ -400,15 +397,11 @@ mod tests {
         storage.save_session(&session).unwrap();
 
         storage
-            .write_status(
-                "s1",
-                crate::types::SessionStatus::Running,
-                crate::types::Tool::Claude,
-            )
+            .write_status("s1", SessionStatus::Running, Tool::Claude)
             .unwrap();
 
         let loaded = storage.get_session("s1").unwrap().unwrap();
-        assert_eq!(loaded.status, crate::types::SessionStatus::Running);
+        assert_eq!(loaded.status, SessionStatus::Running);
     }
 
     #[test]
@@ -433,10 +426,10 @@ mod tests {
         storage.save_session(&session).unwrap();
 
         storage
-            .update_status_history("s1", crate::types::SessionStatus::Running, 1700000001000)
+            .update_status_history("s1", SessionStatus::Running, 1700000001000)
             .unwrap();
         storage
-            .update_status_history("s1", crate::types::SessionStatus::Waiting, 1700000002000)
+            .update_status_history("s1", SessionStatus::Waiting, 1700000002000)
             .unwrap();
 
         let loaded = storage.get_session("s1").unwrap().unwrap();
@@ -467,11 +460,7 @@ mod tests {
 
         for i in 0..60 {
             storage
-                .update_status_history(
-                    "s1",
-                    crate::types::SessionStatus::Running,
-                    1700000000000 + i,
-                )
+                .update_status_history("s1", SessionStatus::Running, 1700000000000 + i)
                 .unwrap();
         }
 
