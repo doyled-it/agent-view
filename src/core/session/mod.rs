@@ -1,10 +1,10 @@
-//! Session lifecycle management with status debouncing and notification logic
+//! Session module — lifecycle ops, status processor, crash detection, title generation.
 
 mod crash;
 mod ops;
 mod processor;
 
-pub use crash::{build_restart_command, detect_crashed_statuses};
+pub use crash::detect_crashed_statuses;
 pub use ops::SessionOps;
 pub use processor::StatusProcessor;
 

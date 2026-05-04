@@ -23,7 +23,7 @@ pub fn detect_crashed_statuses(sessions: &[Session]) -> Vec<String> {
 /// Build the command to use when restarting a session.
 /// For Claude: uses --resume <id> if we captured the session ID, otherwise --continue.
 /// For other tools: re-runs the original command.
-pub fn build_restart_command(tool: Tool, original_command: &str, tool_data: &str) -> String {
+pub(super) fn build_restart_command(tool: Tool, original_command: &str, tool_data: &str) -> String {
     if tool == Tool::Claude {
         if let Ok(data) = serde_json::from_str::<serde_json::Value>(tool_data) {
             if let Some(session_id) = data.get("claude_session_id").and_then(|v| v.as_str()) {
