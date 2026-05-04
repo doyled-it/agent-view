@@ -8,8 +8,9 @@ use ratatui::Frame;
 
 use ansi_to_tui::IntoText;
 
+use crate::core::tokens::format_tokens;
 use crate::types::{Session, SessionStatus};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{status_color, Theme};
 
 use super::compat::convert_core_line;
 use super::format::{format_note_age, format_session_duration, format_timestamp};
@@ -120,11 +121,11 @@ pub(super) fn render_metadata(frame: &mut Frame, area: Rect, session: &Session, 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let status_color = crate::ui::theme::status_color(theme, session.status);
+    let status_color = status_color(theme, session.status);
 
     let created = format_timestamp(session.created_at);
     let started = format_timestamp(session.last_started_at);
-    let duration = format_session_duration(session.last_started_at, session.status);
+    let duration = format_session_duration(session.last_started_at);
 
     let mut lines = vec![
         Line::from(vec![
@@ -207,7 +208,7 @@ pub(super) fn render_metadata(frame: &mut Frame, area: Rect, session: &Session, 
         lines.push(Line::from(vec![
             Span::styled("Tokens: ", Style::default().fg(theme.text_muted)),
             Span::styled(
-                crate::core::tokens::format_tokens(session.tokens_used),
+                format_tokens(session.tokens_used),
                 Style::default().fg(theme.text),
             ),
         ]));

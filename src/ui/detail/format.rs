@@ -1,7 +1,5 @@
 //! Formatting helpers for timestamps, durations, and text truncation
 
-use crate::types::SessionStatus;
-
 pub(super) fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
@@ -22,7 +20,7 @@ pub(super) fn format_timestamp(ms: i64) -> String {
     }
 }
 
-pub(super) fn format_session_duration(created_at_ms: i64, _status: SessionStatus) -> String {
+pub(super) fn format_session_duration(created_at_ms: i64) -> String {
     let now = chrono::Utc::now().timestamp_millis();
     let diff_ms = now - created_at_ms;
     if diff_ms < 0 {

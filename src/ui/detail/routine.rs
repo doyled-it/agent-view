@@ -6,8 +6,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
+use chrono::{Local, TimeZone};
+
 use ansi_to_tui::IntoText;
 
+use crate::core::schedule::human_readable;
 use crate::types::{Routine, RoutineStep};
 use crate::ui::theme::Theme;
 
@@ -74,12 +77,11 @@ pub(super) fn render_routine_metadata(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let schedule_str = crate::core::schedule::human_readable(&routine.schedule);
+    let schedule_str = human_readable(&routine.schedule);
     let enabled_str = if routine.enabled { "Yes" } else { "No" };
     let next_str = routine
         .next_run_at
         .map(|t| {
-            use chrono::{Local, TimeZone};
             Local
                 .timestamp_millis_opt(t)
                 .single()

@@ -1,5 +1,7 @@
 //! Run detail panel: metadata view for a routine run
 
+use chrono::{Local, TimeZone};
+
 use ratatui::layout::Rect;
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
@@ -25,7 +27,6 @@ pub(super) fn render_run_metadata(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    use chrono::{Local, TimeZone};
     let started = Local
         .timestamp_millis_opt(run.started_at)
         .single()

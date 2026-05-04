@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 
 /// Convert a `ratatui_core::Color` to a `ratatui::Color`
-pub(super) fn convert_core_color(c: ratatui_core::style::Color) -> Color {
+fn convert_core_color(c: ratatui_core::style::Color) -> Color {
     use ratatui_core::style::Color as CC;
     match c {
         CC::Reset => Color::Reset,
@@ -30,7 +30,7 @@ pub(super) fn convert_core_color(c: ratatui_core::style::Color) -> Color {
 }
 
 /// Convert a `ratatui_core::Style` to a `ratatui::Style`
-pub(super) fn convert_core_style(s: ratatui_core::style::Style) -> Style {
+fn convert_core_style(s: ratatui_core::style::Style) -> Style {
     let mut out = Style::default();
     if let Some(fg) = s.fg {
         out = out.fg(convert_core_color(fg));
