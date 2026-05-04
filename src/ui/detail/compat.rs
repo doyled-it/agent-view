@@ -68,7 +68,7 @@ pub(super) fn convert_core_style(s: ratatui_core::style::Style) -> Style {
 }
 
 /// Convert a `ratatui_core::Span` to a `ratatui::Span`
-pub(super) fn convert_core_span(s: ratatui_core::text::Span<'_>) -> Span<'_> {
+fn convert_core_span(s: ratatui_core::text::Span<'_>) -> Span<'_> {
     Span::styled(s.content, convert_core_style(s.style))
 }
 
