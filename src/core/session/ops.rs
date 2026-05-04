@@ -5,7 +5,8 @@ use crate::core::tmux;
 use crate::core::tmux::SessionCache;
 use crate::types::{Session, SessionCreateOptions, SessionStatus, StatusHistoryEntry, Tool};
 
-use super::{build_restart_command, generate_title};
+use super::crash::build_restart_command;
+use super::generate_title;
 
 /// Session lifecycle operations (create, stop, delete, restart).
 /// Stateless — lives on the main thread.
