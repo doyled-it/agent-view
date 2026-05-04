@@ -1,36 +1,17 @@
-//! Session lifecycle management with status debouncing and notification logic
-
-use crate::core::notify::{send_notification, NotificationOptions};
-use crate::core::storage::Storage;
-use crate::core::tmux::SessionCache;
-#[cfg(test)]
-use crate::types::Tool;
-use crate::types::{Session, SessionCreateOptions, SessionStatus};
 use std::collections::HashMap;
 use std::time::Instant;
 
-// Name generation word lists
-const ADJECTIVES: &[&str] = &[
-    "swift", "bright", "calm", "deep", "eager", "fair", "gentle", "happy", "keen", "light", "mild",
-    "noble", "proud", "quick", "rich", "safe", "true", "vivid", "warm", "wise", "bold", "cool",
-    "dark", "fast",
-];
+use crate::core::notify::{send_notification, NotificationOptions};
+use crate::types::{Session, SessionStatus};
 
-const NOUNS: &[&str] = &[
-    "fox", "owl", "wolf", "bear", "hawk", "lion", "deer", "crow", "dove", "seal", "swan", "hare",
-    "lynx", "moth", "newt", "orca", "pike", "rook", "toad", "vole", "wren", "yak", "bass", "crab",
-];
-
-fn generate_title() -> String {
-    use std::time::SystemTime;
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos() as usize;
-    let adj = ADJECTIVES[nanos % ADJECTIVES.len()];
-    let noun = NOUNS[(nanos / ADJECTIVES.len()) % NOUNS.len()];
-    format!("{}-{}", adj, noun)
-}
+/// Minimum time (ms) a session must be "running" before idle triggers "completed" notification
+const MIN_RUNNING_DURATION_MS: u128 = 10_000;
+/// Minimum time (ms) a session must be idle before we consider it "completed"
+const MIN_IDLE_DURATION_MS: u128 = 8_000;
+/// Minimum time (ms) error patterns must persist before showing error status
+const MIN_ERROR_DURATION_MS: u128 = 5_000;
+/// Minimum time (ms) a new status must persist before the UI updates
+const STATUS_DEBOUNCE_MS: u128 = 750;
 
 /// Tracks debounce and notification state for status processing.
 /// Lives in the background thread.
@@ -50,15 +31,6 @@ pub struct StatusProcessor {
     /// Pending status transitions for debouncing
     pending_status: HashMap<String, (SessionStatus, Instant)>,
 }
-
-/// Minimum time (ms) a session must be "running" before idle triggers "completed" notification
-const MIN_RUNNING_DURATION_MS: u128 = 10_000;
-/// Minimum time (ms) a session must be idle before we consider it "completed"
-const MIN_IDLE_DURATION_MS: u128 = 8_000;
-/// Minimum time (ms) error patterns must persist before showing error status
-const MIN_ERROR_DURATION_MS: u128 = 5_000;
-/// Minimum time (ms) a new status must persist before the UI updates
-const STATUS_DEBOUNCE_MS: u128 = 750;
 
 impl StatusProcessor {
     pub fn new() -> Self {
@@ -283,227 +255,10 @@ impl StatusProcessor {
     }
 }
 
-/// Detect sessions whose tmux sessions no longer exist.
-/// Returns IDs of sessions that should be marked as Crashed.
-pub fn detect_crashed_statuses(sessions: &[crate::types::Session]) -> Vec<String> {
-    sessions
-        .iter()
-        .filter(|s| {
-            matches!(
-                s.status,
-                crate::types::SessionStatus::Running
-                    | crate::types::SessionStatus::Waiting
-                    | crate::types::SessionStatus::Paused
-                    | crate::types::SessionStatus::Compacting
-            ) && !s.tmux_session.is_empty()
-                && !crate::core::tmux::session_exists(&s.tmux_session)
-        })
-        .map(|s| s.id.clone())
-        .collect()
-}
-
-/// Build the command to use when restarting a session.
-/// For Claude: uses --resume <id> if we captured the session ID, otherwise --continue.
-/// For other tools: re-runs the original command.
-pub fn build_restart_command(
-    tool: crate::types::Tool,
-    original_command: &str,
-    tool_data: &str,
-) -> String {
-    if tool == crate::types::Tool::Claude {
-        if let Ok(data) = serde_json::from_str::<serde_json::Value>(tool_data) {
-            if let Some(session_id) = data.get("claude_session_id").and_then(|v| v.as_str()) {
-                return format!("claude --resume {}", session_id);
-            }
-        }
-        return "claude --continue".to_string();
-    }
-    original_command.to_string()
-}
-
-/// Session lifecycle operations (create, stop, delete, restart).
-/// Stateless — lives on the main thread.
-pub struct SessionOps;
-
-impl SessionOps {
-    /// Create a new session (creates tmux session and saves to storage)
-    pub fn create_session(
-        &self,
-        storage: &Storage,
-        cache: &mut SessionCache,
-        options: SessionCreateOptions,
-    ) -> Result<Session, String> {
-        let title = options.title.unwrap_or_else(generate_title);
-        let id = uuid::Uuid::new_v4().to_string();
-        let tmux_name = crate::core::tmux::generate_session_name(&title);
-        let command = options
-            .command
-            .unwrap_or_else(|| options.tool.command().to_string());
-
-        let now = chrono::Utc::now().timestamp_millis();
-
-        let mut env = HashMap::new();
-        env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), id.clone());
-
-        crate::core::tmux::create_session(
-            &tmux_name,
-            Some(&command),
-            Some(&options.project_path),
-            Some(&env),
-        )?;
-
-        cache.register(&tmux_name);
-
-        let session = Session {
-            id: id.clone(),
-            title,
-            project_path: options.project_path,
-            group_path: options
-                .group_path
-                .unwrap_or_else(|| "my-sessions".to_string()),
-            order: storage.load_sessions().unwrap_or_default().len() as i32,
-            command,
-            wrapper: String::new(),
-            tool: options.tool,
-            status: SessionStatus::Running,
-            tmux_session: tmux_name,
-            created_at: now,
-            last_accessed: now,
-            parent_session_id: String::new(),
-            worktree_path: String::new(),
-            worktree_repo: String::new(),
-            worktree_branch: String::new(),
-            tool_data: "{}".to_string(),
-            acknowledged: false,
-            notify: false,
-            follow_up: false,
-            status_changed_at: now,
-            restart_count: 0,
-            last_started_at: now,
-            notes: vec![],
-            status_history: vec![crate::types::StatusHistoryEntry {
-                status: "running".to_string(),
-                timestamp: now,
-            }],
-            pinned: false,
-            tokens_used: 0,
-        };
-
-        storage
-            .save_session(&session)
-            .map_err(|e| format!("Failed to save session: {}", e))?;
-        storage.touch().ok();
-
-        Ok(session)
-    }
-
-    /// Stop a session (kill tmux but keep the record)
-    pub fn stop_session(&self, storage: &Storage, session_id: &str) -> Result<(), String> {
-        let session = storage
-            .get_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?
-            .ok_or_else(|| "Session not found".to_string())?;
-
-        if !session.tmux_session.is_empty() {
-            crate::core::tmux::kill_session(&session.tmux_session)?;
-        }
-
-        storage
-            .write_status(session_id, SessionStatus::Stopped, session.tool)
-            .map_err(|e| format!("DB error: {}", e))?;
-        storage.touch().ok();
-
-        Ok(())
-    }
-
-    /// Delete a session (kill tmux and remove from storage)
-    pub fn delete_session(
-        &self,
-        storage: &Storage,
-        cache: &mut SessionCache,
-        session_id: &str,
-    ) -> Result<(), String> {
-        let session = storage
-            .get_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?;
-
-        if let Some(session) = session {
-            if !session.tmux_session.is_empty() {
-                crate::core::tmux::kill_session(&session.tmux_session)?;
-                cache.remove(&session.tmux_session);
-            }
-        }
-
-        storage
-            .delete_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?;
-        storage.touch().ok();
-
-        Ok(())
-    }
-
-    /// Restart a session (kill and recreate tmux session)
-    pub fn restart_session(
-        &self,
-        storage: &Storage,
-        cache: &mut SessionCache,
-        session_id: &str,
-    ) -> Result<Session, String> {
-        let mut session = storage
-            .get_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?
-            .ok_or_else(|| "Session not found".to_string())?;
-
-        if !session.tmux_session.is_empty() {
-            if crate::core::tmux::session_exists(&session.tmux_session) {
-                crate::core::tmux::kill_session(&session.tmux_session)?;
-            }
-            cache.remove(&session.tmux_session);
-        }
-
-        let new_tmux_name = crate::core::tmux::generate_session_name(&session.title);
-        let mut env = HashMap::new();
-        env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), session.id.clone());
-
-        let restart_cmd = build_restart_command(session.tool, &session.command, &session.tool_data);
-        crate::core::tmux::create_session(
-            &new_tmux_name,
-            Some(&restart_cmd),
-            Some(&session.project_path),
-            Some(&env),
-        )?;
-
-        cache.register(&new_tmux_name);
-
-        session.tmux_session = new_tmux_name;
-        session.status = SessionStatus::Running;
-        let now = chrono::Utc::now().timestamp_millis();
-        session.last_accessed = now;
-        session.last_started_at = now;
-
-        // Clear old Claude session ID — new session will get a new one
-        if session.tool == crate::types::Tool::Claude {
-            if let Ok(mut data) = serde_json::from_str::<serde_json::Value>(&session.tool_data) {
-                data.as_object_mut().map(|o| o.remove("claude_session_id"));
-                session.tool_data = data.to_string();
-            }
-        }
-
-        storage
-            .save_session(&session)
-            .map_err(|e| format!("DB error: {}", e))?;
-        storage
-            .increment_restart_count(session_id)
-            .map_err(|e| format!("DB error: {}", e))?;
-        storage.touch().ok();
-
-        Ok(session)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Tool;
 
     fn make_test_session(id: &str, notify: bool) -> Session {
         Session {
@@ -578,15 +333,6 @@ mod tests {
         // Error just started — should not immediately show
         let result = mgr.resolve_status("s1", SessionStatus::Error, SessionStatus::Running);
         assert_eq!(result, SessionStatus::Running); // error not sustained yet
-    }
-
-    #[test]
-    fn test_generate_title_format() {
-        let title = generate_title();
-        let parts: Vec<&str> = title.split('-').collect();
-        assert_eq!(parts.len(), 2);
-        assert!(ADJECTIVES.contains(&parts[0]));
-        assert!(NOUNS.contains(&parts[1]));
     }
 
     #[test]
@@ -678,51 +424,5 @@ mod tests {
         // Not attached to anything — should allow notification
         let result = mgr.maybe_notify(&session, SessionStatus::Waiting, None, false);
         assert!(result);
-    }
-
-    #[test]
-    fn test_detect_crashed_sessions() {
-        use crate::types::SessionStatus;
-
-        let mut session = make_test_session("crash-test", false);
-        session.status = SessionStatus::Running;
-        session.tmux_session = "agentorch_nonexistent_session_xyz".to_string();
-
-        let crashed = detect_crashed_statuses(&[session]);
-        assert_eq!(crashed.len(), 1);
-        assert_eq!(crashed[0], "crash-test");
-    }
-
-    #[test]
-    fn test_stopped_sessions_not_detected_as_crashed() {
-        use crate::types::SessionStatus;
-
-        let mut session = make_test_session("stopped-test", false);
-        session.status = SessionStatus::Stopped;
-        session.tmux_session = "agentorch_nonexistent_session_xyz".to_string();
-
-        let crashed = detect_crashed_statuses(&[session]);
-        assert!(crashed.is_empty());
-    }
-
-    #[test]
-    fn test_build_restart_command_claude_with_session_id() {
-        let tool_data = r#"{"claude_session_id": "abc123"}"#;
-        let cmd = build_restart_command(crate::types::Tool::Claude, "claude", tool_data);
-        assert_eq!(cmd, "claude --resume abc123");
-    }
-
-    #[test]
-    fn test_build_restart_command_claude_without_session_id() {
-        let tool_data = "{}";
-        let cmd = build_restart_command(crate::types::Tool::Claude, "claude", tool_data);
-        assert_eq!(cmd, "claude --continue");
-    }
-
-    #[test]
-    fn test_build_restart_command_non_claude() {
-        let tool_data = "{}";
-        let cmd = build_restart_command(crate::types::Tool::Gemini, "gemini", tool_data);
-        assert_eq!(cmd, "gemini");
     }
 }
