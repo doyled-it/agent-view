@@ -169,11 +169,10 @@ pub fn handle_new_routine_key(app: &mut App, key: KeyEvent, storage: &Storage) {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::NewRoutineForm;
+    use crate::app::{NewRoutineForm, ScheduleFrequency};
 
     #[test]
     fn test_new_routine_form_defaults() {
-        use crate::app::ScheduleFrequency;
         let form = NewRoutineForm::new();
         assert_eq!(form.default_tool, "claude");
         assert_eq!(form.frequency, ScheduleFrequency::Daily);
@@ -187,7 +186,6 @@ mod tests {
 
     #[test]
     fn test_cron_expression_daily() {
-        use crate::app::ScheduleFrequency;
         let mut form = NewRoutineForm::new();
         form.frequency = ScheduleFrequency::Daily;
         form.hour = 9;
@@ -199,7 +197,6 @@ mod tests {
 
     #[test]
     fn test_cron_expression_hourly() {
-        use crate::app::ScheduleFrequency;
         let mut form = NewRoutineForm::new();
         form.frequency = ScheduleFrequency::Hourly;
         form.minute = 30;
@@ -210,7 +207,6 @@ mod tests {
 
     #[test]
     fn test_cron_expression_advanced_returns_raw() {
-        use crate::app::ScheduleFrequency;
         let mut form = NewRoutineForm::new();
         form.frequency = ScheduleFrequency::Advanced;
         form.cron_raw = "0 */6 * * *".to_string();
@@ -219,7 +215,6 @@ mod tests {
 
     #[test]
     fn test_cron_expression_weekly_no_days_falls_back_to_daily() {
-        use crate::app::ScheduleFrequency;
         let mut form = NewRoutineForm::new();
         form.frequency = ScheduleFrequency::Weekly;
         form.weekdays = [false; 7];

@@ -1,4 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::execute;
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
 use crate::app::{
     App, ConfirmAction, ConfirmDialog, MoveForm, NewRoutineForm, Overlay, RenameForm, RenameTarget,
@@ -308,14 +310,11 @@ pub fn handle_routine_list_key(
                     }
 
                     // Leave TUI
-                    use crossterm::terminal::disable_raw_mode;
                     let _ = disable_raw_mode();
 
                     let promote_result = attach_inspect_session_sync(&tmux_name, &run.id);
 
                     // Re-enter TUI
-                    use crossterm::execute;
-                    use crossterm::terminal::enable_raw_mode;
                     let _ = enable_raw_mode();
                     let _ = execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen);
                     let _ = terminal.clear();
