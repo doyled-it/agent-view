@@ -72,6 +72,9 @@ impl SessionOps {
         let mut env = HashMap::new();
         env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), id.clone());
 
+        // NOTE: if tmux::create_session fails here, a freshly created worktree
+        // at `working_dir` is leaked on disk. Task 8's orphan sweep is the
+        // recovery path; no inline rollback to keep the failure message simple.
         tmux::create_session(&tmux_name, Some(&command), Some(&working_dir), Some(&env))?;
 
         cache.register(&tmux_name);
@@ -295,21 +298,5 @@ mod tests {
         // Cleanup tmux + worktree
         let _ = crate::core::tmux::kill_session(&session.tmux_session);
         let _ = crate::core::git::remove_worktree(&repo_path, &session.worktree_path, true);
-    }
-
-    #[test]
-    fn test_create_session_without_worktree_leaves_fields_empty() {
-        let dir = tempfile::tempdir().unwrap();
-        let storage = Storage::open(":memory:").unwrap();
-        let ops = SessionOps;
-
-        // Build a Session manually via storage write to verify the no-worktree
-        // branch leaves all three fields empty when create_session is called
-        // without the worktree option. We can't easily call create_session
-        // without spinning up tmux, so this test asserts via the option path:
-        // a SessionCreateOptions { worktree: None, .. } compiles and the type
-        // round-trips through the codepath. The actual create_session run is
-        // gated under #[ignore] above.
-        let _ = (dir, storage, ops);
     }
 }
