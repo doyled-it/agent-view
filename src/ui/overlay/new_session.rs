@@ -191,11 +191,11 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
 
     // Worktree branch
     let mode_hint = if form.worktree_new_branch {
-        "[new branch \u{2014} ^t to attach]"
+        "new (^T attach)"
     } else {
-        "[attach existing \u{2014} ^t to create]"
+        "attach (^T new)"
     };
-    let branch_label = format!("Worktree Branch (empty to skip): {}", mode_hint);
+    let branch_label = format!("Worktree Branch \u{00b7} {}:", mode_hint);
     frame.render_widget(
         Paragraph::new(branch_label).style(label_style(form.focused_field == 2)),
         chunks[i],
@@ -240,11 +240,11 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
 
     i += 1; // spacer before base
 
-    // Base ref — Issue 3: clearer label, dimmed in attach mode
+    // Base ref — clearer label, dimmed in attach mode
     let base_label = if form.worktree_new_branch {
-        "Branch from (default: current HEAD):".to_string()
+        "Branch off from (optional):".to_string()
     } else {
-        "Branch from (unused \u{2014} attach mode):".to_string()
+        "Branch off from (n/a in attach mode):".to_string()
     };
     let base_label_style = if !form.worktree_new_branch {
         // Attach mode: always dim regardless of focus
@@ -261,7 +261,7 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         format!("{}\u{2588}", form.worktree_base)
     } else if form.worktree_base.is_empty() {
         if form.worktree_new_branch {
-            "current HEAD".to_string()
+            "(currently checked out branch)".to_string()
         } else {
             "\u{2014}".to_string()
         }
