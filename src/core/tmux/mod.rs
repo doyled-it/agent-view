@@ -327,13 +327,13 @@ pub fn get_attached_sessions() -> std::collections::HashSet<String> {
     }
 }
 
+static ANSI_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)")
+        .unwrap()
+});
+
 /// Strip ANSI escape sequences from terminal output
 pub fn strip_ansi(text: &str) -> String {
-    lazy_static::lazy_static! {
-        static ref ANSI_RE: regex::Regex = regex::Regex::new(
-            r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)"
-        ).unwrap();
-    }
     ANSI_RE.replace_all(text, "").to_string()
 }
 

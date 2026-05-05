@@ -1,8 +1,8 @@
 //! Claude Code status detection via regex pattern matching
 //! Ports the exact patterns from the TypeScript tmux.ts
 
-use lazy_static::lazy_static;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// Result of parsing tmux pane output for tool status
 #[derive(Debug, Clone, Default)]
@@ -26,18 +26,20 @@ const SPINNER_CHARS: &[&str] = &[
     "\u{2807}", "\u{280f}", "\u{2733}", "\u{273d}", "\u{2736}", "\u{2722}",
 ];
 
-lazy_static! {
-    // Claude Code busy indicators that appear in the footer (below the bottom
-    // separator). Scoped to the footer so quoted prose in the conversation
-    // ("...esc to interrupt...") cannot false-positive.
-    static ref CLAUDE_FOOTER_BUSY_PATTERNS: Vec<Regex> = vec![
+// Claude Code busy indicators that appear in the footer (below the bottom
+// separator). Scoped to the footer so quoted prose in the conversation
+// ("...esc to interrupt...") cannot false-positive.
+static CLAUDE_FOOTER_BUSY_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
         Regex::new(r"(?i)ctrl\+c to interrupt").unwrap(),
         Regex::new(r"(?i)esc to interrupt").unwrap(),
         Regex::new(r"(?i)\u{2026}.*tokens").unwrap(),
-    ];
+    ]
+});
 
-    // Claude Code waiting indicators — needs user input
-    static ref CLAUDE_WAITING_PATTERNS: Vec<Regex> = vec![
+// Claude Code waiting indicators — needs user input
+static CLAUDE_WAITING_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
         Regex::new(r"(?i)Do you want to proceed\?").unwrap(),
         Regex::new(r"(?i)\d\.\s*Yes\b").unwrap(),
         Regex::new(r"(?i)Esc to cancel.*Tab to amend").unwrap(),
@@ -50,55 +52,68 @@ lazy_static! {
         Regex::new(r"(?i)Yes,? allow once").unwrap(),
         Regex::new(r"(?i)Allow always").unwrap(),
         Regex::new(r"(?i)No,? and tell Claude").unwrap(),
-    ];
+    ]
+});
 
-    // Claude exited patterns (shell returned)
-    static ref CLAUDE_EXITED_PATTERNS: Vec<Regex> = vec![
+// Claude exited patterns (shell returned)
+static CLAUDE_EXITED_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
         Regex::new(r"(?i)Resume this session with:").unwrap(),
         Regex::new(r"(?i)claude --resume").unwrap(),
         Regex::new(r"(?i)Press Ctrl-C again to exit").unwrap(),
-    ];
+    ]
+});
 
-    // Claude compacting patterns
-    static ref CLAUDE_COMPACTING_PATTERNS: Vec<Regex> = vec![
+// Claude compacting patterns
+static CLAUDE_COMPACTING_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
         Regex::new(r"(?i)compacting conversation").unwrap(),
         Regex::new(r"(?i)summarizing conversation").unwrap(),
         Regex::new(r"(?i)context window.*(compact|compress)").unwrap(),
-    ];
+    ]
+});
 
-    // Error patterns
-    static ref ERROR_PATTERNS: Vec<Regex> = vec![
+// Error patterns
+static ERROR_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
         Regex::new(r"(?i)error:").unwrap(),
         Regex::new(r"(?i)failed:").unwrap(),
         Regex::new(r"(?i)exception:").unwrap(),
         Regex::new(r"(?i)traceback").unwrap(),
         Regex::new(r"(?i)panic:").unwrap(),
-    ];
+    ]
+});
 
-    // Idle prompt pattern (used only for question detection scan guard)
-    static ref IDLE_PROMPT_RE: Regex = Regex::new(r"(?m)^\u{276f}").unwrap();
+// Idle prompt pattern (used only for question detection scan guard)
+static IDLE_PROMPT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\u{276f}").unwrap());
 
-    /// Match "claude --resume <session-id>" to extract the session ID
-    static ref CLAUDE_SESSION_ID_RE: Regex = Regex::new(r"claude\s+--resume\s+([\w-]+)").unwrap();
+/// Match "claude --resume <session-id>" to extract the session ID
+static CLAUDE_SESSION_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"claude\s+--resume\s+([\w-]+)").unwrap());
 
-    // Question detection
-    static ref QUESTION_RE: Regex = Regex::new(r"\?\s*$").unwrap();
+// Question detection
+static QUESTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\?\s*$").unwrap());
 
-    // Claude Code "N monitor(s)" footer indicator. The status bar uses U+00B7
-    // middle-dot separators around each item, e.g. `· 1 monitor ·`.
-    static ref MONITOR_RE: Regex =
-        Regex::new(r"\u{00b7}\s*\d+\s+monitors?\s*\u{00b7}").unwrap();
+// Claude Code "N monitor(s)" footer indicator. The status bar uses U+00B7
+// middle-dot separators around each item, e.g. `· 1 monitor ·`.
+static MONITOR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\u{00b7}\s*\d+\s+monitors?\s*\u{00b7}").unwrap());
 
-    // Non-content line patterns (for question scanning)
-    static ref SEPARATOR_RE: Regex = Regex::new(r"^[\u{2500}\u{2501}\u{2550}]{10,}").unwrap();
-    static ref COMPANION_RE: Regex = Regex::new(r"Thistle").unwrap();
-    static ref ART_LINE_RE: Regex = Regex::new(r"^\.\-\-\.$|^\\|^\\_|^~+$").unwrap();
-    static ref SPINNER_LINE_RE: Regex = Regex::new(
-        r"^[\u{273b}\u{273d}\u{2736}\u{2722}\u{280b}\u{2819}\u{2839}\u{2838}\u{283c}\u{2834}\u{2826}\u{2827}\u{2807}\u{280f}\u{00b7}]"
-    ).unwrap();
-    static ref USER_INPUT_RE: Regex = Regex::new(r"^\u{276f}").unwrap();
-    static ref SHORTCUTS_RE: Regex = Regex::new(r"^\u{23f5}\u{23f5}|^\? for shortcuts").unwrap();
-}
+// Non-content line patterns (for question scanning)
+static SEPARATOR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\u{2500}\u{2501}\u{2550}]{10,}").unwrap());
+static COMPANION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Thistle").unwrap());
+static ART_LINE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\.\-\-\.$|^\\|^\\_|^~+$").unwrap());
+static SPINNER_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^[\u{273b}\u{273d}\u{2736}\u{2722}\u{280b}\u{2819}\u{2839}\u{2838}\u{283c}\u{2834}\u{2826}\u{2827}\u{2807}\u{280f}\u{00b7}]",
+    )
+    .unwrap()
+});
+static USER_INPUT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\u{276f}").unwrap());
+static SHORTCUTS_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\u{23f5}\u{23f5}|^\? for shortcuts").unwrap());
 
 /// Check if text contains spinner characters
 fn has_spinner(text: &str) -> bool {
