@@ -83,7 +83,15 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     // help hint
     constraints.push(Constraint::Length(1));
 
-    let overlay_height = (constraints.len() as u16 + 2).min(area.height.saturating_sub(4));
+    // Sum actual constraint lengths — the grid constraint covers multiple rows.
+    let inner_height: u16 = constraints
+        .iter()
+        .map(|c| match c {
+            Constraint::Length(n) => *n,
+            _ => 0,
+        })
+        .sum();
+    let overlay_height = (inner_height + 2).min(area.height.saturating_sub(4));
 
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;
