@@ -140,6 +140,26 @@ pub fn execute_command_action(
                 });
             }
         }
+        CommandAction::FinishSession => {
+            if let Some(session) = app.selected_session() {
+                if !session.worktree_path.is_empty() {
+                    let title = session.title.clone();
+                    let id = session.id.clone();
+                    app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
+                        message: format!(
+                            "Finish '{}'? Removes worktree and (if merged) branch.",
+                            title
+                        ),
+                        action: crate::app::ConfirmAction::FinishSession(id),
+                    });
+                } else {
+                    app.toast_message =
+                        Some("Session has no worktree — use 'd' to delete".to_string());
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                }
+            }
+        }
         CommandAction::RestartSession => {
             if let Some(session) = app.selected_session() {
                 let id = session.id.clone();

@@ -249,6 +249,39 @@ pub fn handle_confirm_key(
                         app.rebuild_routine_list_rows();
                         storage.touch().ok();
                     }
+                    crate::app::ConfirmAction::FinishSession(id) => {
+                        let mut cache = crate::core::tmux::SessionCache::new();
+                        match session_ops.finish_session(storage, &mut cache, id, true) {
+                            Ok(outcome) => {
+                                let msg = match (
+                                    outcome.worktree_removed,
+                                    outcome.branch_deleted,
+                                    outcome.branch_skipped_unmerged,
+                                ) {
+                                    (true, true, _) => "Worktree removed and branch deleted",
+                                    (true, false, true) => {
+                                        "Worktree removed; branch kept (not merged)"
+                                    }
+                                    (true, false, false) => "Worktree removed",
+                                    _ => "Session finished",
+                                };
+                                app.toast_message = Some(msg.to_string());
+                                app.toast_expire = Some(
+                                    std::time::Instant::now() + std::time::Duration::from_secs(5),
+                                );
+                                if let Ok(sessions) = storage.load_sessions() {
+                                    app.sessions = sessions;
+                                    app.rebuild_list_rows();
+                                }
+                            }
+                            Err(e) => {
+                                app.toast_message = Some(format!("Finish failed: {}", e));
+                                app.toast_expire = Some(
+                                    std::time::Instant::now() + std::time::Duration::from_secs(6),
+                                );
+                            }
+                        }
+                    }
                 }
                 // Refresh sessions
                 if let Ok(sessions) = storage.load_sessions() {

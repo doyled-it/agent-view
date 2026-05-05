@@ -224,6 +224,80 @@ impl SessionOps {
 
         Ok(session)
     }
+
+    /// Finish a session: kill tmux, remove the worktree (force, to nuke any
+    /// uncommitted scratch), and optionally delete the branch when it has
+    /// been merged into the repository's default upstream (`main` or
+    /// `master`). Always deletes the session record.
+    pub fn finish_session(
+        &self,
+        storage: &Storage,
+        cache: &mut SessionCache,
+        session_id: &str,
+        delete_branch: bool,
+    ) -> Result<FinishOutcome, String> {
+        let session = storage
+            .get_session(session_id)
+            .map_err(|e| format!("DB error: {}", e))?
+            .ok_or_else(|| "Session not found".to_string())?;
+
+        if !session.tmux_session.is_empty() && tmux::session_exists(&session.tmux_session) {
+            tmux::kill_session(&session.tmux_session)?;
+            cache.remove(&session.tmux_session);
+        }
+
+        let mut outcome = FinishOutcome {
+            worktree_removed: false,
+            branch_deleted: false,
+            branch_skipped_unmerged: false,
+        };
+
+        if !session.worktree_path.is_empty() && !session.worktree_repo.is_empty() {
+            crate::core::git::remove_worktree(
+                &session.worktree_repo,
+                &session.worktree_path,
+                /*force=*/ true,
+            )?;
+            outcome.worktree_removed = true;
+
+            if delete_branch && !session.worktree_branch.is_empty() {
+                if let Some(upstream) =
+                    crate::core::git::default_upstream_branch(&session.worktree_repo)
+                {
+                    let merged = crate::core::git::is_branch_merged(
+                        &session.worktree_repo,
+                        &session.worktree_branch,
+                        &upstream,
+                    )
+                    .unwrap_or(false);
+                    if merged {
+                        crate::core::git::delete_branch(
+                            &session.worktree_repo,
+                            &session.worktree_branch,
+                            false,
+                        )?;
+                        outcome.branch_deleted = true;
+                    } else {
+                        outcome.branch_skipped_unmerged = true;
+                    }
+                }
+            }
+        }
+
+        storage
+            .delete_session(session_id)
+            .map_err(|e| format!("DB error: {}", e))?;
+        storage.touch().ok();
+
+        Ok(outcome)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FinishOutcome {
+    pub worktree_removed: bool,
+    pub branch_deleted: bool,
+    pub branch_skipped_unmerged: bool,
 }
 
 #[cfg(test)]
@@ -298,5 +372,52 @@ mod tests {
         // Cleanup tmux + worktree
         let _ = crate::core::tmux::kill_session(&session.tmux_session);
         let _ = crate::core::git::remove_worktree(&repo_path, &session.worktree_path, true);
+    }
+
+    #[test]
+    #[ignore = "creates real tmux + git worktree"]
+    fn test_finish_session_removes_worktree_and_branch() {
+        let repo = init_repo();
+        let repo_path = repo.path().to_str().unwrap().to_string();
+        let storage = Storage::open(":memory:").unwrap();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (session, _) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                SessionCreateOptions {
+                    title: Some("finish-test".to_string()),
+                    project_path: repo_path.clone(),
+                    group_path: None,
+                    tool: Tool::Shell,
+                    command: Some("sleep 5".to_string()),
+                    worktree: Some(WorktreeCreateOptions {
+                        branch: "merged-branch".to_string(),
+                        new_branch: true,
+                        base: None,
+                    }),
+                },
+            )
+            .unwrap();
+
+        let outcome = ops
+            .finish_session(
+                &storage,
+                &mut cache,
+                &session.id,
+                /*delete_branch=*/ true,
+            )
+            .unwrap();
+
+        assert!(outcome.worktree_removed);
+        assert!(outcome.branch_deleted);
+        assert!(!outcome.branch_skipped_unmerged);
+        assert!(!std::path::Path::new(&session.worktree_path).exists());
+        assert!(!crate::core::git::branch_exists(
+            &repo_path,
+            "merged-branch"
+        ));
     }
 }

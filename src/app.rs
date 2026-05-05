@@ -107,6 +107,7 @@ pub enum CommandAction {
     NewRoutine,
     ToggleRoutine,
     DeleteRoutine,
+    FinishSession,
 }
 
 impl CommandPalette {
@@ -131,6 +132,11 @@ impl CommandPalette {
                 label: "Delete Session".to_string(),
                 key_hint: "d".to_string(),
                 action: CommandAction::DeleteSession,
+            },
+            CommandItem {
+                label: "Finish Session (remove worktree)".to_string(),
+                key_hint: "f".to_string(),
+                action: CommandAction::FinishSession,
             },
             CommandItem {
                 label: "Rename".to_string(),
@@ -462,6 +468,7 @@ pub enum ConfirmAction {
     BulkStop,
     DeleteGroup(String),
     DeleteRoutine(String),
+    FinishSession(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
