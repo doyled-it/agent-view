@@ -276,6 +276,36 @@ pub fn delete_branch(repo_dir: &str, branch: &str, force: bool) -> Result<(), St
     Ok(())
 }
 
+/// List local branch names for completion. Returns an empty Vec if `repo_dir`
+/// is not a git repository or the command fails.
+pub fn list_local_branches(repo_dir: &str) -> Result<Vec<String>, String> {
+    if !is_git_repo(repo_dir) {
+        return Ok(Vec::new());
+    }
+    let output = Command::new("git")
+        .args([
+            "-C",
+            repo_dir,
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to list branches: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,5 +502,30 @@ branch refs/heads/main";
         remove_worktree(path, &wt, false).unwrap();
         delete_branch(path, "deletable", false).unwrap();
         assert!(!branch_exists(path, "deletable"));
+    }
+
+    #[test]
+    fn test_list_local_branches() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "branch", "feature-a"])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "branch", "feature-b"])
+            .status()
+            .unwrap();
+        let branches = list_local_branches(path).unwrap();
+        assert!(branches.contains(&"main".to_string()));
+        assert!(branches.contains(&"feature-a".to_string()));
+        assert!(branches.contains(&"feature-b".to_string()));
+    }
+
+    #[test]
+    fn test_list_local_branches_non_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let branches = list_local_branches(dir.path().to_str().unwrap()).unwrap();
+        assert!(branches.is_empty());
     }
 }

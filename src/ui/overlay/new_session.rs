@@ -9,7 +9,8 @@ use crate::ui::theme::Theme;
 
 /// Render the new session creation form as a centered overlay.
 pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, theme: &Theme) {
-    let has_completions = form.focused_field == 1 && form.completions.len() > 1;
+    let has_completions =
+        (form.focused_field == 1 || form.focused_field == 2) && form.completions.len() > 1;
     let max_completion_rows: usize = 6;
     let overlay_width = 64u16.min(area.width.saturating_sub(4));
 
@@ -27,6 +28,7 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     // Inner rows: title-label, title-in, blank, path-label, path-in, blank,
     // branch-label, branch-in, blank, base-label, base-in (= 11 fixed).
     // Optional: error row (+1). Optional completion label + grid (+1 + N).
+    // Always: help hint row (+1).
     let mut inner_rows: u16 = 11;
     if form.error.is_some() {
         inner_rows += 1;
@@ -36,7 +38,8 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     } else {
         0
     };
-    let overlay_height = (inner_rows + 2 + extra).min(area.height.saturating_sub(4));
+    // +1 for the help hint line
+    let overlay_height = (inner_rows + 2 + extra + 1).min(area.height.saturating_sub(4));
 
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;
@@ -73,6 +76,7 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         constraints.push(Constraint::Length(1));
         constraints.push(Constraint::Length(completion_rows as u16));
     }
+    constraints.push(Constraint::Length(1)); // help hint
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -218,5 +222,15 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
             lines.push(Line::from(spans));
         }
         frame.render_widget(Paragraph::new(lines), grid_area);
+        next_chunk += 1;
     }
+
+    // Help hint line — always rendered last
+    frame.render_widget(
+        Paragraph::new(
+            "^S save · Esc cancel · Tab/\u{2193} next · \u{21e7}Tab/\u{2191} back · ^T toggle",
+        )
+        .style(Style::default().fg(theme.text_muted)),
+        chunks[next_chunk],
+    );
 }
