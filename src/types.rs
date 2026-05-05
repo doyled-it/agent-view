@@ -326,7 +326,7 @@ pub struct WorktreeCreateOptions {
     /// Branch name to attach the worktree to (or create if `new_branch`).
     pub branch: String,
     /// If true, create the branch fresh (errors if it already exists).
-    /// Reserved for Task 4 enforcement; `create_worktree` currently auto-detects.
+    /// Validated in `handle_new_session_key`; enforcement in `create_worktree` is a future task.
     #[allow(dead_code)]
     pub new_branch: bool,
     /// Optional base ref for new branches (defaults to HEAD when None).

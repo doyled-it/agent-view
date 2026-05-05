@@ -6,14 +6,18 @@ pub fn handle_new_session_key(
     storage: &crate::core::storage::Storage,
     session_ops: &crate::core::session::SessionOps,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crossterm::event::KeyCode;
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     if let crate::app::Overlay::NewSession(ref mut form) = app.overlay {
-        match key.code {
-            KeyCode::Esc => {
+        match (key.modifiers, key.code) {
+            (_, KeyCode::Esc) => {
                 app.overlay = crate::app::Overlay::None;
             }
-            KeyCode::Tab => {
+            (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
+                form.worktree_new_branch = !form.worktree_new_branch;
+                form.error = None;
+            }
+            (_, KeyCode::Tab) => {
                 if form.focused_field == 1 {
                     // Path field: do filesystem completion
                     if !form.completions.is_empty() && form.completions.len() > 1 {
@@ -63,18 +67,53 @@ pub fn handle_new_session_key(
                         form.completion_index = None;
                     }
                 } else {
-                    // Title field: advance to path field
-                    form.focused_field = 1;
+                    form.focused_field = (form.focused_field + 1) % 4;
                     form.completions.clear();
                     form.completion_index = None;
                 }
             }
-            KeyCode::BackTab => {
-                form.focused_field = if form.focused_field == 0 { 1 } else { 0 };
+            (_, KeyCode::BackTab) => {
+                form.focused_field = (form.focused_field + 3) % 4;
                 form.completions.clear();
                 form.completion_index = None;
             }
-            KeyCode::Enter => {
+            (_, KeyCode::Enter) => {
+                let wt_branch_trimmed = form.worktree_branch.trim().to_string();
+                let worktree = if wt_branch_trimmed.is_empty() {
+                    None
+                } else {
+                    if let Some(err) = crate::core::git::validate_branch_name(&wt_branch_trimmed) {
+                        form.error = Some(err);
+                        return Ok(());
+                    }
+                    if !crate::core::git::is_git_repo(&form.project_path) {
+                        form.error = Some("Project path is not a git repository".to_string());
+                        return Ok(());
+                    }
+                    let exists =
+                        crate::core::git::branch_exists(&form.project_path, &wt_branch_trimmed);
+                    if form.worktree_new_branch && exists {
+                        form.error = Some(format!(
+                            "Branch '{}' already exists — toggle to attach (^t)",
+                            wt_branch_trimmed
+                        ));
+                        return Ok(());
+                    }
+                    if !form.worktree_new_branch && !exists {
+                        form.error = Some(format!(
+                            "Branch '{}' does not exist — toggle to create (^t)",
+                            wt_branch_trimmed
+                        ));
+                        return Ok(());
+                    }
+                    let base = form.worktree_base.trim().to_string();
+                    Some(crate::types::WorktreeCreateOptions {
+                        branch: wt_branch_trimmed,
+                        new_branch: form.worktree_new_branch,
+                        base: if base.is_empty() { None } else { Some(base) },
+                    })
+                };
+
                 let title = if form.title.is_empty() {
                     None
                 } else {
@@ -88,7 +127,7 @@ pub fn handle_new_session_key(
                     group_path: None,
                     tool: crate::types::Tool::Claude,
                     command: None,
-                    worktree: None,
+                    worktree,
                 };
 
                 let mut cache = crate::core::tmux::SessionCache::new();
@@ -107,25 +146,31 @@ pub fn handle_new_session_key(
                                 app.selected_index = app.list_rows.len() - 1;
                             }
                         }
+                        app.overlay = crate::app::Overlay::None;
                     }
                     Err(e) => {
-                        app.toast_message = Some(format!("Failed to create session: {}", e));
-                        app.toast_expire =
-                            Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+                        form.error = Some(e);
                     }
                 }
-                app.overlay = crate::app::Overlay::None;
             }
-            KeyCode::Char(c) => match form.focused_field {
+            (_, KeyCode::Char(c)) => match form.focused_field {
                 0 => form.title.push(c),
                 1 => {
                     form.project_path.push(c);
                     form.completions.clear();
                     form.completion_index = None;
                 }
+                2 => {
+                    form.worktree_branch.push(c);
+                    form.error = None;
+                }
+                3 => {
+                    form.worktree_base.push(c);
+                    form.error = None;
+                }
                 _ => {}
             },
-            KeyCode::Backspace => match form.focused_field {
+            (_, KeyCode::Backspace) => match form.focused_field {
                 0 => {
                     form.title.pop();
                 }
@@ -133,6 +178,14 @@ pub fn handle_new_session_key(
                     form.project_path.pop();
                     form.completions.clear();
                     form.completion_index = None;
+                }
+                2 => {
+                    form.worktree_branch.pop();
+                    form.error = None;
+                }
+                3 => {
+                    form.worktree_base.pop();
+                    form.error = None;
                 }
                 _ => {}
             },
