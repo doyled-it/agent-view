@@ -249,8 +249,6 @@ mod tests {
 
     use crate::types::{UsageBucket, UsageData};
 
-    use super::super::parser::parse_usage_output;
-    use super::super::SharedUsageData;
     use super::*;
 
     const SAMPLE_OUTPUT: &str = r#"
