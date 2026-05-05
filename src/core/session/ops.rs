@@ -342,7 +342,6 @@ pub struct FinishOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::storage::Storage;
     use crate::core::tmux::SessionCache;
     use crate::types::{SessionCreateOptions, Tool, WorktreeCreateOptions};
     use std::process::Command as Cmd;
@@ -392,7 +391,7 @@ mod tests {
     fn test_create_session_with_worktree_populates_fields_and_uses_wt_path() {
         let repo = init_repo();
         let repo_path = repo.path().to_str().unwrap().to_string();
-        let storage = Storage::open(":memory:").unwrap();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
         let mut cache = SessionCache::new();
         let ops = SessionOps;
 
@@ -431,7 +430,7 @@ mod tests {
     fn test_finish_session_removes_worktree_and_branch() {
         let repo = init_repo();
         let repo_path = repo.path().to_str().unwrap().to_string();
-        let storage = Storage::open(":memory:").unwrap();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
         let mut cache = SessionCache::new();
         let ops = SessionOps;
 
