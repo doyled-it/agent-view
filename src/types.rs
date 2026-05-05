@@ -321,12 +321,26 @@ impl SortMode {
     }
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct WorktreeCreateOptions {
+    /// Branch name to attach the worktree to (or create if `new_branch`).
+    pub branch: String,
+    /// If true, create the branch fresh (errors if it already exists).
+    pub new_branch: bool,
+    /// Optional base ref for new branches (defaults to HEAD when None).
+    pub base: Option<String>,
+}
+
 pub struct SessionCreateOptions {
     pub title: Option<String>,
     pub project_path: String,
     pub group_path: Option<String>,
     pub tool: Tool,
     pub command: Option<String>,
+    /// Worktree to create alongside this session; `None` means no worktree.
+    #[allow(dead_code)]
+    pub worktree: Option<WorktreeCreateOptions>,
 }
 
 #[derive(Debug, Clone)]
@@ -817,5 +831,23 @@ mod tests {
         };
         assert!(data.incidents.is_empty());
         assert_eq!(data.indicator, StatusIndicator::None);
+    }
+
+    #[test]
+    fn test_session_create_options_with_worktree() {
+        let opts = SessionCreateOptions {
+            title: None,
+            project_path: "/repo".to_string(),
+            group_path: None,
+            tool: Tool::Claude,
+            command: None,
+            worktree: Some(WorktreeCreateOptions {
+                branch: "feature/x".to_string(),
+                new_branch: true,
+                base: None,
+            }),
+        };
+        assert_eq!(opts.worktree.as_ref().unwrap().branch, "feature/x");
+        assert!(opts.worktree.as_ref().unwrap().new_branch);
     }
 }

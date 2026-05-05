@@ -88,6 +88,7 @@ pub fn handle_new_session_key(
                     group_path: None,
                     tool: crate::types::Tool::Claude,
                     command: None,
+                    worktree: None,
                 };
 
                 let mut cache = crate::core::tmux::SessionCache::new();
