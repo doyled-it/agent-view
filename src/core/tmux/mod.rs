@@ -8,6 +8,7 @@ pub use inspect::attach_inspect_session_sync;
 
 use std::collections::HashMap;
 use std::process::Command;
+use std::sync::LazyLock;
 use std::time::Instant;
 
 pub const SESSION_PREFIX: &str = "agentorch_";
@@ -306,7 +307,7 @@ pub fn clear_history(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-static ANSI_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+static ANSI_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)")
         .unwrap()
 });
