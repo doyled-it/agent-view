@@ -1,31 +1,31 @@
 //! Application state and event dispatch
 
+use std::collections::HashSet;
+use std::collections::VecDeque;
+
 use crate::core::groups::ListRow;
 use crate::types::{Group, Session};
 use crate::ui::theme::Theme;
-use std::collections::HashSet;
-use std::collections::VecDeque;
+
+mod command_palette;
+mod detail_panel;
+mod forms;
+mod overlay;
+mod schedule_freq;
+
+pub use command_palette::{CommandAction, CommandPalette};
+pub use detail_panel::DetailPanelMode;
+pub use forms::{
+    ConfirmAction, ConfirmDialog, GroupForm, MoveForm, NewRoutineForm, NewSessionForm, NoteForm,
+    RenameForm, RenameTarget, ThemeSelectForm,
+};
+pub use overlay::Overlay;
+pub use schedule_freq::ScheduleFrequency;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
     Sessions,
     Routines,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Overlay {
-    None,
-    NewSession(NewSessionForm),
-    NewRoutine(NewRoutineForm),
-    Confirm(ConfirmDialog),
-    Rename(RenameForm),
-    Move(MoveForm),
-    GroupManage(GroupForm),
-    RoutineWarning,
-    CommandPalette(CommandPalette),
-    Help,
-    ThemeSelect(ThemeSelectForm),
-    AddNote(NoteForm),
 }
 
 #[derive(Debug, Clone)]
@@ -39,492 +39,6 @@ pub enum RoutineListRow {
         run: Box<crate::types::RoutineRun>,
         routine_name: String,
     },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct NoteForm {
-    pub session_id: String,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ThemeSelectForm {
-    pub options: Vec<String>,
-    pub selected: usize,
-    pub original_theme_name: String,
-}
-
-impl ThemeSelectForm {
-    pub fn new(current_theme: &str) -> Self {
-        let options: Vec<String> = crate::ui::theme::Theme::available()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let selected = options.iter().position(|o| o == current_theme).unwrap_or(0);
-        Self {
-            options,
-            selected,
-            original_theme_name: current_theme.to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct CommandPalette {
-    pub query: String,
-    pub items: Vec<CommandItem>,
-    pub filtered: Vec<usize>,
-    pub selected: usize,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct CommandItem {
-    pub label: String,
-    pub key_hint: String,
-    pub action: CommandAction,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum CommandAction {
-    NewSession,
-    StopSession,
-    RestartSession,
-    DeleteSession,
-    RenameSession,
-    MoveSession,
-    ToggleNotify,
-    ToggleFollowUp,
-    ExportLog,
-    CreateGroup,
-    DeleteGroup,
-    Search,
-    CycleSort,
-    PinSession,
-    ShowHelp,
-    SelectTheme,
-    CyclePanel,
-    Quit,
-    NewRoutine,
-    ToggleRoutine,
-    DeleteRoutine,
-    FinishSession,
-    SweepOrphanWorktrees,
-}
-
-impl CommandPalette {
-    pub fn new() -> Self {
-        let items = vec![
-            CommandItem {
-                label: "New Session".to_string(),
-                key_hint: "n".to_string(),
-                action: CommandAction::NewSession,
-            },
-            CommandItem {
-                label: "Stop Session".to_string(),
-                key_hint: "s".to_string(),
-                action: CommandAction::StopSession,
-            },
-            CommandItem {
-                label: "Restart Session".to_string(),
-                key_hint: "r".to_string(),
-                action: CommandAction::RestartSession,
-            },
-            CommandItem {
-                label: "Delete Session".to_string(),
-                key_hint: "d".to_string(),
-                action: CommandAction::DeleteSession,
-            },
-            CommandItem {
-                label: "Finish Session (remove worktree)".to_string(),
-                key_hint: "f".to_string(),
-                action: CommandAction::FinishSession,
-            },
-            CommandItem {
-                label: "Sweep Orphan Worktrees".to_string(),
-                key_hint: String::new(),
-                action: CommandAction::SweepOrphanWorktrees,
-            },
-            CommandItem {
-                label: "Rename".to_string(),
-                key_hint: "R".to_string(),
-                action: CommandAction::RenameSession,
-            },
-            CommandItem {
-                label: "Move to Group".to_string(),
-                key_hint: "m".to_string(),
-                action: CommandAction::MoveSession,
-            },
-            CommandItem {
-                label: "Toggle Notifications".to_string(),
-                key_hint: "!".to_string(),
-                action: CommandAction::ToggleNotify,
-            },
-            CommandItem {
-                label: "Toggle Follow-up".to_string(),
-                key_hint: "i".to_string(),
-                action: CommandAction::ToggleFollowUp,
-            },
-            CommandItem {
-                label: "Export Log".to_string(),
-                key_hint: "e".to_string(),
-                action: CommandAction::ExportLog,
-            },
-            CommandItem {
-                label: "Create Group".to_string(),
-                key_hint: "g".to_string(),
-                action: CommandAction::CreateGroup,
-            },
-            CommandItem {
-                label: "Delete Group".to_string(),
-                key_hint: "G".to_string(),
-                action: CommandAction::DeleteGroup,
-            },
-            CommandItem {
-                label: "Search Sessions".to_string(),
-                key_hint: "/".to_string(),
-                action: CommandAction::Search,
-            },
-            CommandItem {
-                label: "Cycle Sort Mode".to_string(),
-                key_hint: "S".to_string(),
-                action: CommandAction::CycleSort,
-            },
-            CommandItem {
-                label: "Pin/Unpin Session".to_string(),
-                key_hint: "p".to_string(),
-                action: CommandAction::PinSession,
-            },
-            CommandItem {
-                label: "Select Theme".to_string(),
-                key_hint: "t".to_string(),
-                action: CommandAction::SelectTheme,
-            },
-            CommandItem {
-                label: "Cycle Panel".to_string(),
-                key_hint: "v".to_string(),
-                action: CommandAction::CyclePanel,
-            },
-            CommandItem {
-                label: "Show Help".to_string(),
-                key_hint: "?".to_string(),
-                action: CommandAction::ShowHelp,
-            },
-            CommandItem {
-                label: "Quit".to_string(),
-                key_hint: "q".to_string(),
-                action: CommandAction::Quit,
-            },
-            CommandItem {
-                label: "New Routine".to_string(),
-                key_hint: "n".to_string(),
-                action: CommandAction::NewRoutine,
-            },
-            CommandItem {
-                label: "Toggle Routine".to_string(),
-                key_hint: "Space".to_string(),
-                action: CommandAction::ToggleRoutine,
-            },
-            CommandItem {
-                label: "Delete Routine".to_string(),
-                key_hint: "d".to_string(),
-                action: CommandAction::DeleteRoutine,
-            },
-        ];
-        let filtered: Vec<usize> = (0..items.len()).collect();
-        Self {
-            query: String::new(),
-            items,
-            filtered,
-            selected: 0,
-        }
-    }
-
-    pub fn filter(&mut self) {
-        let q = self.query.to_lowercase();
-        if q.is_empty() {
-            self.filtered = (0..self.items.len()).collect();
-        } else {
-            self.filtered = self
-                .items
-                .iter()
-                .enumerate()
-                .filter(|(_, item)| item.label.to_lowercase().contains(&q))
-                .map(|(i, _)| i)
-                .collect();
-        }
-        self.selected = 0;
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct MoveForm {
-    pub session_id: String,
-    pub session_title: String,
-    pub groups: Vec<(String, String)>, // (path, name)
-    pub selected: usize,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct GroupForm {
-    pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RenameForm {
-    pub target_id: String,
-    pub target_type: RenameTarget,
-    pub input: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RenameTarget {
-    Session,
-    Group,
-    Routine,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScheduleFrequency {
-    Hourly,
-    Daily,
-    Weekly,
-    Monthly,
-    Yearly,
-    Advanced,
-}
-
-impl ScheduleFrequency {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Hourly => "Hourly",
-            Self::Daily => "Daily",
-            Self::Weekly => "Weekly",
-            Self::Monthly => "Monthly",
-            Self::Yearly => "Yearly",
-            Self::Advanced => "Advanced",
-        }
-    }
-
-    pub fn next(&self) -> Self {
-        match self {
-            Self::Hourly => Self::Daily,
-            Self::Daily => Self::Weekly,
-            Self::Weekly => Self::Monthly,
-            Self::Monthly => Self::Yearly,
-            Self::Yearly => Self::Advanced,
-            Self::Advanced => Self::Hourly,
-        }
-    }
-
-    pub fn prev(&self) -> Self {
-        match self {
-            Self::Hourly => Self::Advanced,
-            Self::Daily => Self::Hourly,
-            Self::Weekly => Self::Daily,
-            Self::Monthly => Self::Weekly,
-            Self::Yearly => Self::Monthly,
-            Self::Advanced => Self::Yearly,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct NewRoutineForm {
-    pub name: String,
-    pub default_tool: String,
-    pub working_dir: String,
-    pub frequency: ScheduleFrequency,
-    pub hour: u8,
-    pub minute: u8,
-    pub weekdays: [bool; 7], // Sun=0 through Sat=6
-    pub month_day: u8,
-    pub month: u8,
-    pub cron_raw: String,
-    pub steps: Vec<crate::types::RoutineStep>,
-    pub editing_step: Option<String>, // text buffer when adding a step
-    pub notify: bool,
-    pub step_timeout_secs: i32,
-    pub focused_field: usize,
-    pub completions: Vec<String>,
-    pub completion_index: Option<usize>,
-    pub edit_routine_id: Option<String>, // Some(id) when editing existing routine
-}
-
-impl NewRoutineForm {
-    pub fn new() -> Self {
-        let home = dirs::home_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/tmp".to_string());
-        Self {
-            name: String::new(),
-            default_tool: "claude".to_string(),
-            working_dir: home,
-            frequency: ScheduleFrequency::Daily,
-            hour: 9,
-            minute: 0,
-            weekdays: [false, true, true, true, true, true, false], // Mon-Fri
-            month_day: 1,
-            month: 1,
-            cron_raw: String::new(),
-            steps: Vec::new(),
-            editing_step: None,
-            notify: true,
-            step_timeout_secs: 1800,
-            focused_field: 0,
-            completions: Vec::new(),
-            completion_index: None,
-            edit_routine_id: None,
-        }
-    }
-
-    pub fn from_routine(routine: &crate::types::Routine) -> Self {
-        let mut form = Self::new();
-        form.name = routine.name.clone();
-        form.default_tool = routine.default_tool.clone();
-        form.working_dir = routine.working_dir.clone();
-        form.steps = routine.steps.clone();
-        form.notify = routine.notify;
-        form.step_timeout_secs = routine.step_timeout_secs;
-        form.edit_routine_id = Some(routine.id.clone());
-        // Try to parse the cron expression back into frequency fields
-        form.cron_raw = routine.schedule.clone();
-        form.frequency = ScheduleFrequency::Advanced;
-        form
-    }
-
-    pub fn cron_expression(&self) -> String {
-        match self.frequency {
-            ScheduleFrequency::Hourly => crate::core::schedule::build_hourly(self.minute),
-            ScheduleFrequency::Daily => crate::core::schedule::build_daily(self.hour, self.minute),
-            ScheduleFrequency::Weekly => {
-                let days: Vec<crate::core::schedule::Weekday> = self
-                    .weekdays
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, &selected)| selected)
-                    .map(|(i, _)| crate::core::schedule::Weekday::all()[i])
-                    .collect();
-                if days.is_empty() {
-                    crate::core::schedule::build_daily(self.hour, self.minute)
-                } else {
-                    crate::core::schedule::build_weekly(&days, self.hour, self.minute)
-                }
-            }
-            ScheduleFrequency::Monthly => {
-                crate::core::schedule::build_monthly_by_day(self.month_day, self.hour, self.minute)
-            }
-            ScheduleFrequency::Yearly => crate::core::schedule::build_yearly(
-                self.month,
-                self.month_day,
-                self.hour,
-                self.minute,
-            ),
-            ScheduleFrequency::Advanced => self.cron_raw.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct NewSessionForm {
-    pub title: String,
-    pub project_path: String,
-    /// 0 = title, 1 = project path, 2 = worktree branch, 3 = base ref
-    pub focused_field: usize,
-    pub completions: Vec<String>,
-    pub completion_index: Option<usize>,
-    pub worktree_branch: String,
-    /// When true, branch is created fresh; when false, attach to an
-    /// existing branch. Toggle wired via Ctrl-T in Task 6.
-    pub worktree_new_branch: bool,
-    pub worktree_base: String,
-    /// Inline validation error rendered under the worktree row.
-    pub error: Option<String>,
-}
-
-impl NewSessionForm {
-    pub fn new() -> Self {
-        let home = dirs::home_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/tmp".to_string());
-        Self {
-            title: String::new(),
-            project_path: home,
-            focused_field: 0,
-            completions: Vec::new(),
-            completion_index: None,
-            worktree_branch: String::new(),
-            worktree_new_branch: true,
-            worktree_base: String::new(),
-            error: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConfirmDialog {
-    pub message: String,
-    pub action: ConfirmAction,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConfirmAction {
-    DeleteSession(String),
-    StopSession(String),
-    BulkDelete,
-    BulkStop,
-    DeleteGroup(String),
-    DeleteRoutine(String),
-    FinishSession(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DetailPanelMode {
-    None,
-    Preview,
-    Metadata,
-    Both,
-}
-
-impl DetailPanelMode {
-    pub fn next(self) -> Self {
-        match self {
-            Self::None => Self::Preview,
-            Self::Preview => Self::Metadata,
-            Self::Metadata => Self::Both,
-            Self::Both => Self::None,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::None => "Off",
-            Self::Preview => "Preview",
-            Self::Metadata => "Details",
-            Self::Both => "Both",
-        }
-    }
-
-    pub fn shows_preview(self) -> bool {
-        matches!(self, Self::Preview | Self::Both)
-    }
-
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "none" => Self::None,
-            "preview" => Self::Preview,
-            "both" => Self::Both,
-            _ => Self::Metadata,
-        }
-    }
-
-    pub fn as_config_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Preview => "preview",
-            Self::Metadata => "metadata",
-            Self::Both => "both",
-        }
-    }
 }
 
 pub struct App {
@@ -889,7 +403,6 @@ mod tests {
 
     #[test]
     fn test_detail_panel_mode_cycles() {
-        use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::None.next(), DetailPanelMode::Preview);
         assert_eq!(DetailPanelMode::Preview.next(), DetailPanelMode::Metadata);
         assert_eq!(DetailPanelMode::Metadata.next(), DetailPanelMode::Both);
@@ -898,7 +411,6 @@ mod tests {
 
     #[test]
     fn test_detail_panel_mode_labels() {
-        use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::None.label(), "Off");
         assert_eq!(DetailPanelMode::Preview.label(), "Preview");
         assert_eq!(DetailPanelMode::Metadata.label(), "Details");
@@ -907,7 +419,6 @@ mod tests {
 
     #[test]
     fn test_detail_panel_mode_from_str() {
-        use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::from_str("none"), DetailPanelMode::None);
         assert_eq!(
             DetailPanelMode::from_str("preview"),
@@ -926,7 +437,6 @@ mod tests {
 
     #[test]
     fn test_detail_panel_mode_as_config_str() {
-        use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::None.as_config_str(), "none");
         assert_eq!(DetailPanelMode::Preview.as_config_str(), "preview");
         assert_eq!(DetailPanelMode::Metadata.as_config_str(), "metadata");
