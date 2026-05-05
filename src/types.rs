@@ -322,11 +322,12 @@ impl SortMode {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct WorktreeCreateOptions {
     /// Branch name to attach the worktree to (or create if `new_branch`).
     pub branch: String,
     /// If true, create the branch fresh (errors if it already exists).
+    /// Reserved for Task 4 enforcement; `create_worktree` currently auto-detects.
+    #[allow(dead_code)]
     pub new_branch: bool,
     /// Optional base ref for new branches (defaults to HEAD when None).
     pub base: Option<String>,
@@ -339,7 +340,6 @@ pub struct SessionCreateOptions {
     pub tool: Tool,
     pub command: Option<String>,
     /// Worktree to create alongside this session; `None` means no worktree.
-    #[allow(dead_code)]
     pub worktree: Option<WorktreeCreateOptions>,
 }
 

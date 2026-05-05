@@ -93,19 +93,25 @@ pub fn handle_new_session_key(
 
                 let mut cache = crate::core::tmux::SessionCache::new();
                 match session_ops.create_session(storage, &mut cache, options) {
-                    Ok(_) => {
+                    Ok((_, warn)) => {
+                        if let Some(msg) = warn {
+                            app.toast_message = Some(msg);
+                            app.toast_expire =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+                        }
                         if let Ok(sessions) = storage.load_sessions() {
                             app.sessions = sessions;
                             app.groups = storage.load_groups().unwrap_or_default();
                             app.rebuild_list_rows();
-                            // Select the newly created session (last row)
                             if !app.list_rows.is_empty() {
                                 app.selected_index = app.list_rows.len() - 1;
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed to create session: {}", e);
+                        app.toast_message = Some(format!("Failed to create session: {}", e));
+                        app.toast_expire =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
                     }
                 }
                 app.overlay = crate::app::Overlay::None;
