@@ -403,7 +403,6 @@ mod tests {
 
     #[test]
     fn test_detail_panel_mode_cycles() {
-        use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::None.next(), DetailPanelMode::Preview);
         assert_eq!(DetailPanelMode::Preview.next(), DetailPanelMode::Metadata);
         assert_eq!(DetailPanelMode::Metadata.next(), DetailPanelMode::Both);
@@ -412,7 +411,6 @@ mod tests {
 
     #[test]
     fn test_detail_panel_mode_labels() {
-        use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::None.label(), "Off");
         assert_eq!(DetailPanelMode::Preview.label(), "Preview");
         assert_eq!(DetailPanelMode::Metadata.label(), "Details");
@@ -421,7 +419,6 @@ mod tests {
 
     #[test]
     fn test_detail_panel_mode_from_str() {
-        use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::from_str("none"), DetailPanelMode::None);
         assert_eq!(
             DetailPanelMode::from_str("preview"),
@@ -440,7 +437,6 @@ mod tests {
 
     #[test]
     fn test_detail_panel_mode_as_config_str() {
-        use crate::app::DetailPanelMode;
         assert_eq!(DetailPanelMode::None.as_config_str(), "none");
         assert_eq!(DetailPanelMode::Preview.as_config_str(), "preview");
         assert_eq!(DetailPanelMode::Metadata.as_config_str(), "metadata");
