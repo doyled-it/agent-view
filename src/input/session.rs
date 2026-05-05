@@ -109,8 +109,10 @@ pub fn handle_new_session_key(
                             };
                             form.completion_index = Some(idx);
                             // Build the completed path from parent + candidate.
-                            // Strip trailing '/' first so rfind lands on the parent separator,
-                            // not the one we appended during a previous cycle.
+                            // If the path already ends with '/', the user has navigated INTO
+                            // that directory — use it as-is as the parent.  Otherwise strip the
+                            // last segment (a partial filename) via rfind('/').
+                            let ends_with_slash = form.project_path.ends_with('/');
                             let raw = form.project_path.trim_end_matches('/').to_string();
                             let expanded = if raw.starts_with('~') {
                                 let home = dirs::home_dir()
@@ -120,10 +122,12 @@ pub fn handle_new_session_key(
                             } else {
                                 raw.clone()
                             };
-                            let parent = if let Some(pos) = expanded.rfind('/') {
-                                &expanded[..=pos]
+                            let parent = if ends_with_slash {
+                                format!("{}/", expanded)
+                            } else if let Some(pos) = expanded.rfind('/') {
+                                expanded[..=pos].to_string()
                             } else {
-                                ""
+                                String::new()
                             };
                             let candidate = &form.completions[idx];
                             let new_path = format!("{}{}/", parent, candidate);
