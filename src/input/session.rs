@@ -100,57 +100,33 @@ pub fn handle_new_session_key(
             (_, KeyCode::Tab) => {
                 match form.focused_field {
                     1 => {
-                        // Path field: filesystem completion (verbatim)
+                        // Path field: filesystem completion
                         if !form.completions.is_empty() && form.completions.len() > 1 {
-                            // Already have ambiguous completions — cycle through them
+                            // Cycle: rebuild path from the captured base + next candidate.
                             let idx = match form.completion_index {
                                 Some(i) => (i + 1) % form.completions.len(),
                                 None => 0,
                             };
                             form.completion_index = Some(idx);
-                            // Build the completed path from parent + candidate.
-                            // If the path already ends with '/', the user has navigated INTO
-                            // that directory — use it as-is as the parent.  Otherwise strip the
-                            // last segment (a partial filename) via rfind('/').
-                            let ends_with_slash = form.project_path.ends_with('/');
-                            let raw = form.project_path.trim_end_matches('/').to_string();
-                            let expanded = if raw.starts_with('~') {
-                                let home = dirs::home_dir()
-                                    .map(|h| h.to_string_lossy().to_string())
-                                    .unwrap_or_default();
-                                raw.replacen('~', &home, 1)
-                            } else {
-                                raw.clone()
-                            };
-                            let parent = if ends_with_slash {
-                                format!("{}/", expanded)
-                            } else if let Some(pos) = expanded.rfind('/') {
-                                expanded[..=pos].to_string()
-                            } else {
-                                String::new()
-                            };
                             let candidate = &form.completions[idx];
-                            let new_path = format!("{}{}/", parent, candidate);
-                            // Restore ~ if original used it
-                            if form.project_path.starts_with('~') {
-                                let home = dirs::home_dir()
-                                    .map(|h| h.to_string_lossy().to_string())
-                                    .unwrap_or_default();
-                                if let Some(rest) = new_path.strip_prefix(&home) {
-                                    form.project_path = format!("~{}", rest);
-                                } else {
-                                    form.project_path = new_path;
-                                }
-                            } else {
-                                form.project_path = new_path;
-                            }
+                            form.project_path = format!("{}{}/", form.completion_base, candidate);
                         } else {
-                            // First Tab press — get completions
+                            // First Tab press — fetch completions and remember the base.
                             let result =
                                 crate::core::path_complete::complete_path(&form.project_path);
                             form.project_path = result.completed;
                             form.completions = result.candidates;
                             form.completion_index = None;
+                            // Base = directory containing the candidates. If the completed
+                            // path ends with '/', it IS the parent. Otherwise strip its last
+                            // (partial) segment.
+                            form.completion_base = if form.project_path.ends_with('/') {
+                                form.project_path.clone()
+                            } else if let Some(pos) = form.project_path.rfind('/') {
+                                form.project_path[..=pos].to_string()
+                            } else {
+                                String::new()
+                            };
                         }
                     }
                     2 => {
@@ -172,8 +148,7 @@ pub fn handle_new_session_key(
                                 0 => {} // no-op
                                 1 => {
                                     form.worktree_branch = candidates.into_iter().next().unwrap();
-                                    form.completions.clear();
-                                    form.completion_index = None;
+                                    form.clear_completions();
                                 }
                                 _ => {
                                     form.completions = candidates;
@@ -185,31 +160,26 @@ pub fn handle_new_session_key(
                     _ => {
                         // Fields 0 and 3: advance focus
                         form.focused_field = (form.focused_field + 1) % 4;
-                        form.completions.clear();
-                        form.completion_index = None;
+                        form.clear_completions();
                     }
                 }
             }
             (_, KeyCode::BackTab) => {
                 form.focused_field = (form.focused_field + 3) % 4;
-                form.completions.clear();
-                form.completion_index = None;
+                form.clear_completions();
             }
             (_, KeyCode::Down) => {
                 form.focused_field = (form.focused_field + 1) % 4;
-                form.completions.clear();
-                form.completion_index = None;
+                form.clear_completions();
             }
             (_, KeyCode::Up) => {
                 form.focused_field = (form.focused_field + 3) % 4;
-                form.completions.clear();
-                form.completion_index = None;
+                form.clear_completions();
             }
             (_, KeyCode::Enter) => {
                 // Advance focus forward — NEVER submits
                 form.focused_field = (form.focused_field + 1) % 4;
-                form.completions.clear();
-                form.completion_index = None;
+                form.clear_completions();
             }
             // Generic Char arm — guard excludes Ctrl and Super so those don't append
             (m, KeyCode::Char(c))
@@ -219,8 +189,7 @@ pub fn handle_new_session_key(
                     0 => form.title.push(c),
                     1 => {
                         form.project_path.push(c);
-                        form.completions.clear();
-                        form.completion_index = None;
+                        form.clear_completions();
                     }
                     2 => {
                         form.worktree_branch.push(c);
@@ -239,8 +208,7 @@ pub fn handle_new_session_key(
                 }
                 1 => {
                     form.project_path.pop();
-                    form.completions.clear();
-                    form.completion_index = None;
+                    form.clear_completions();
                 }
                 2 => {
                     form.worktree_branch.pop();
