@@ -21,10 +21,10 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
         .has_active_run(routine_id)
         .map_err(|e| format!("DB error: {}", e))?
     {
-        eprintln!(
+        crate::core::logger::log_diagnostic(&format!(
             "Routine '{}' already has an active run, skipping",
             routine.name
-        );
+        ));
         return Ok(());
     }
 
@@ -70,7 +70,11 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
 
         // Send command to tmux
         if let Err(e) = crate::core::tmux::send_keys(&tmux_name, &command) {
-            eprintln!("Failed to send keys for step {}: {}", i + 1, e);
+            crate::core::logger::log_diagnostic(&format!(
+                "Failed to send keys for step {}: {}",
+                i + 1,
+                e
+            ));
             final_status = RunStatus::Failed;
             break;
         }
@@ -99,14 +103,17 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
             std::thread::sleep(std::time::Duration::from_millis(500));
 
             if start.elapsed() > timeout {
-                eprintln!("Step {} timed out", i + 1);
+                crate::core::logger::log_diagnostic(&format!("Step {} timed out", i + 1));
                 final_status = RunStatus::TimedOut;
                 break;
             }
 
             // Check if tmux session still exists
             if !crate::core::tmux::session_exists(&tmux_name) {
-                eprintln!("tmux session died during step {}", i + 1);
+                crate::core::logger::log_diagnostic(&format!(
+                    "tmux session died during step {}",
+                    i + 1
+                ));
                 final_status = RunStatus::Crashed;
                 break;
             }
@@ -135,7 +142,10 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
                     }
 
                     if parsed.has_error {
-                        eprintln!("Step {} encountered an error", i + 1);
+                        crate::core::logger::log_diagnostic(&format!(
+                            "Step {} encountered an error",
+                            i + 1
+                        ));
                         final_status = RunStatus::Failed;
                         break;
                     }
