@@ -327,6 +327,59 @@ pub fn execute_command_action(
                 });
             }
         }
+        CommandAction::SweepOrphanWorktrees => {
+            let repo = app
+                .selected_session()
+                .map(|s| {
+                    if s.worktree_repo.is_empty() {
+                        s.project_path.clone()
+                    } else {
+                        s.worktree_repo.clone()
+                    }
+                })
+                .unwrap_or_default();
+            if repo.is_empty() {
+                app.toast_message = Some("Select a session in the target repo first".to_string());
+                app.toast_expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                return Ok(());
+            }
+            match session_ops.find_orphan_worktrees(storage, &repo) {
+                Ok(orphans) if orphans.is_empty() => {
+                    app.toast_message = Some("No orphan worktrees".to_string());
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                }
+                Ok(orphans) => {
+                    let mut removed = 0usize;
+                    let mut failed: Vec<String> = Vec::new();
+                    for path in &orphans {
+                        match session_ops.remove_orphan_worktree(&repo, path) {
+                            Ok(()) => removed += 1,
+                            Err(e) => failed.push(format!("{}: {}", path, e)),
+                        }
+                    }
+                    let msg = if failed.is_empty() {
+                        format!("Removed {} orphan worktree(s)", removed)
+                    } else {
+                        format!(
+                            "Removed {} orphans; {} failed: {}",
+                            removed,
+                            failed.len(),
+                            failed.join("; ")
+                        )
+                    };
+                    app.toast_message = Some(msg);
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(8));
+                }
+                Err(e) => {
+                    app.toast_message = Some(format!("Sweep failed: {}", e));
+                    app.toast_expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+                }
+            }
+        }
     }
     Ok(())
 }

@@ -225,6 +225,45 @@ impl SessionOps {
         Ok(session)
     }
 
+    /// Return worktree paths under `repo_dir` that have no matching session
+    /// record. Excludes the primary worktree (the repo itself).
+    pub fn find_orphan_worktrees(
+        &self,
+        storage: &Storage,
+        repo_dir: &str,
+    ) -> Result<Vec<String>, String> {
+        let worktrees = crate::core::git::list_worktrees(repo_dir)?;
+        let sessions = storage
+            .load_sessions()
+            .map_err(|e| format!("DB error: {}", e))?;
+        let known: std::collections::HashSet<String> = sessions
+            .iter()
+            .map(|s| s.worktree_path.clone())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        let canonical_repo = std::fs::canonicalize(repo_dir)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| repo_dir.to_string());
+
+        Ok(worktrees
+            .into_iter()
+            .filter(|w| !w.bare)
+            .map(|w| w.path)
+            .filter(|p| *p != canonical_repo && p != repo_dir)
+            .filter(|p| !known.contains(p))
+            .collect())
+    }
+
+    /// Force-remove an orphan worktree.
+    pub fn remove_orphan_worktree(
+        &self,
+        repo_dir: &str,
+        worktree_path: &str,
+    ) -> Result<(), String> {
+        crate::core::git::remove_worktree(repo_dir, worktree_path, true)
+    }
+
     /// Finish a session: kill tmux, remove the worktree (force, to nuke any
     /// uncommitted scratch), and optionally delete the branch when it has
     /// been merged into the repository's default upstream (`main` or
@@ -333,6 +372,19 @@ mod tests {
             .status()
             .unwrap();
         dir
+    }
+
+    #[test]
+    fn test_find_orphan_worktrees_returns_unknown_paths() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap().to_string();
+        let _ = crate::core::git::create_worktree(&path, "orphan-1", None).unwrap();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+
+        let orphans = SessionOps.find_orphan_worktrees(&storage, &path).unwrap();
+        // Main repo worktree is excluded; orphan-1 has no session row → orphan.
+        assert!(orphans.iter().any(|w| w.contains("orphan-1")));
+        assert!(!orphans.iter().any(|w| w == &path));
     }
 
     #[test]
