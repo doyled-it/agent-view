@@ -3,11 +3,9 @@
 use crate::core::scheduler::Scheduler;
 use crate::types::Routine;
 
-#[allow(dead_code)]
 pub struct LinuxScheduler;
 
 impl LinuxScheduler {
-    #[allow(dead_code)]
     pub fn new() -> Self {
         Self
     }

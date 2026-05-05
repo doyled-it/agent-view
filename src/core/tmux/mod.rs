@@ -8,6 +8,7 @@ pub use inspect::attach_inspect_session_sync;
 
 use std::collections::HashMap;
 use std::process::Command;
+use std::sync::LazyLock;
 use std::time::Instant;
 
 pub const SESSION_PREFIX: &str = "agentorch_";
@@ -306,34 +307,13 @@ pub fn clear_history(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Get sessions that currently have an attached client
-#[allow(dead_code)]
-pub fn get_attached_sessions() -> std::collections::HashSet<String> {
-    let output = Command::new("tmux")
-        .args(["list-clients", "-F", "#{client_session}"])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout
-                .trim()
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect()
-        }
-        _ => std::collections::HashSet::new(),
-    }
-}
+static ANSI_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)")
+        .unwrap()
+});
 
 /// Strip ANSI escape sequences from terminal output
 pub fn strip_ansi(text: &str) -> String {
-    lazy_static::lazy_static! {
-        static ref ANSI_RE: regex::Regex = regex::Regex::new(
-            r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)"
-        ).unwrap();
-    }
     ANSI_RE.replace_all(text, "").to_string()
 }
 

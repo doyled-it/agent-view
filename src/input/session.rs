@@ -104,7 +104,10 @@ pub fn handle_new_session_key(
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed to create session: {}", e);
+                        crate::core::logger::log_diagnostic(&format!(
+                            "Failed to create session: {}",
+                            e
+                        ));
                     }
                 }
                 app.overlay = crate::app::Overlay::None;

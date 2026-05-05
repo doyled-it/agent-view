@@ -145,7 +145,6 @@ impl Storage {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn move_routine_to_group(&self, id: &str, group_path: &str) -> SqlResult<()> {
         self.conn.execute(
             "UPDATE routines SET group_path = ?1 WHERE id = ?2",

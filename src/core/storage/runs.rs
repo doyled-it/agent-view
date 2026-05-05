@@ -85,37 +85,6 @@ impl Storage {
         Ok(count > 0)
     }
 
-    #[allow(dead_code)]
-    pub fn get_latest_run(&self, routine_id: &str) -> SqlResult<Option<RoutineRun>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, routine_id, started_at, finished_at, status,
-                    steps_completed, steps_total, log_path, tmux_session,
-                    tool_data, promoted_session_id
-             FROM routine_runs WHERE routine_id = ?1 ORDER BY started_at DESC LIMIT 1",
-        )?;
-        let result = stmt.query_row(params![routine_id], |row| {
-            let status_str: String = row.get(4)?;
-            Ok(RoutineRun {
-                id: row.get(0)?,
-                routine_id: row.get(1)?,
-                started_at: row.get(2)?,
-                finished_at: row.get(3)?,
-                status: RunStatus::from_str(&status_str),
-                steps_completed: row.get(5)?,
-                steps_total: row.get(6)?,
-                log_path: row.get(7)?,
-                tmux_session: row.get(8)?,
-                tool_data: row.get(9)?,
-                promoted_session_id: row.get(10)?,
-            })
-        });
-        match result {
-            Ok(run) => Ok(Some(run)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
     pub fn delete_routine_run(&self, run_id: &str) -> SqlResult<()> {
         self.conn
             .execute("DELETE FROM routine_runs WHERE id = ?1", params![run_id])?;
@@ -226,46 +195,5 @@ mod tests {
         storage.save_routine_run(&run).unwrap();
 
         assert!(storage.has_active_run("r1").unwrap());
-    }
-
-    #[test]
-    fn test_get_latest_run() {
-        let (storage, _dir) = test_storage();
-        let routine = make_test_routine("r1");
-        storage.save_routine(&routine).unwrap();
-
-        assert!(storage.get_latest_run("r1").unwrap().is_none());
-
-        let run1 = RoutineRun {
-            id: "run1".to_string(),
-            routine_id: "r1".to_string(),
-            started_at: 1700000000000,
-            finished_at: Some(1700000001000),
-            status: RunStatus::Completed,
-            steps_completed: 1,
-            steps_total: 1,
-            log_path: None,
-            tmux_session: None,
-            tool_data: "{}".to_string(),
-            promoted_session_id: None,
-        };
-        let run2 = RoutineRun {
-            id: "run2".to_string(),
-            routine_id: "r1".to_string(),
-            started_at: 1700000002000,
-            finished_at: Some(1700000003000),
-            status: RunStatus::Failed,
-            steps_completed: 0,
-            steps_total: 1,
-            log_path: None,
-            tmux_session: None,
-            tool_data: "{}".to_string(),
-            promoted_session_id: None,
-        };
-        storage.save_routine_run(&run1).unwrap();
-        storage.save_routine_run(&run2).unwrap();
-
-        let latest = storage.get_latest_run("r1").unwrap().unwrap();
-        assert_eq!(latest.id, "run2");
     }
 }
