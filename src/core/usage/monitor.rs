@@ -1,13 +1,14 @@
-//! Parser for Claude Code /usage terminal output
-
-use crate::types::{UsageBucket, UsageData};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const META_SESSION_NAME: &str = "__agentview_meta_usage";
-pub const META_SESSION_PREFIX: &str = "__agentview_meta_";
+use crate::core::{logger, status, tmux};
+use crate::types::UsageData;
+
+use super::parser::parse_usage_output;
+use super::SharedUsageData;
+use super::META_SESSION_NAME;
+
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 const INIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const INIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -18,40 +19,22 @@ const STUCK_THRESHOLD: u8 = 3;
 const MAX_RECOVERIES_PER_WINDOW: usize = 3;
 const RECOVERY_WINDOW: Duration = Duration::from_secs(600); // 10 minutes
 
-/// Shared usage data between the monitor thread and the main UI thread.
-pub type SharedUsageData = Arc<Mutex<Option<UsageData>>>;
-
-/// Spawn the usage monitor background thread.
-/// Returns the shared data handle and the thread join handle.
-pub fn spawn_monitor() -> (SharedUsageData, std::thread::JoinHandle<()>) {
-    let shared: SharedUsageData = Arc::new(Mutex::new(None));
-    let shared_clone = Arc::clone(&shared);
-
-    let handle = std::thread::spawn(move || {
-        monitor_loop(shared_clone);
-    });
-
-    (shared, handle)
-}
-
 /// Initialize (or re-initialize) the meta session: create it, wait for idle prompt,
 /// accept trust prompt, send /usage, and wait for the quota bars to render.
 /// Returns Ok(capture) with the rendered output on success, or Err with a reason.
 fn init_meta_session() -> Result<String, &'static str> {
-    if crate::core::tmux::session_exists(META_SESSION_NAME) {
-        let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
+    if tmux::session_exists(META_SESSION_NAME) {
+        let _ = tmux::kill_session(META_SESSION_NAME);
     }
 
-    if crate::core::tmux::create_session(META_SESSION_NAME, Some("claude"), Some("/tmp"), None)
-        .is_err()
-    {
+    if tmux::create_session(META_SESSION_NAME, Some("claude"), Some("/tmp"), None).is_err() {
         return Err("claude not available");
     }
 
     // Pin the pane width so /usage output doesn't wrap. Without this the
     // detached session inherits tmux's default-size (~80 cols) and bar/Resets
     // lines wrap at "% used", breaking suffix-based percent extraction.
-    let _ = crate::core::tmux::resize_window(META_SESSION_NAME, 200, 50);
+    let _ = tmux::resize_window(META_SESSION_NAME, 200, 50);
 
     // Wait for Claude to reach idle prompt
     let start = Instant::now();
@@ -59,18 +42,18 @@ fn init_meta_session() -> Result<String, &'static str> {
     loop {
         std::thread::sleep(INIT_POLL_INTERVAL);
         if start.elapsed() > INIT_TIMEOUT {
-            let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
+            let _ = tmux::kill_session(META_SESSION_NAME);
             return Err("timed out waiting for idle prompt");
         }
-        if let Ok(output) = crate::core::tmux::capture_pane_joined(META_SESSION_NAME, Some(-20)) {
+        if let Ok(output) = tmux::capture_pane_joined(META_SESSION_NAME, Some(-20)) {
             // Accept the workspace trust prompt if it appears
             if !trust_accepted && output.contains("Yes, I trust this folder") {
-                let _ = crate::core::tmux::send_keys_raw(META_SESSION_NAME, "Enter");
+                let _ = tmux::send_keys_raw(META_SESSION_NAME, "Enter");
                 trust_accepted = true;
                 continue;
             }
-            let status = crate::core::status::parse_tool_status(&output, Some("claude"));
-            if status.has_idle_prompt {
+            let s = status::parse_tool_status(&output, Some("claude"));
+            if s.has_idle_prompt {
                 break;
             }
         }
@@ -80,8 +63,8 @@ fn init_meta_session() -> Result<String, &'static str> {
     std::thread::sleep(Duration::from_secs(1));
 
     // Send /usage — the command shows a persistent usage view
-    if crate::core::tmux::send_keys(META_SESSION_NAME, "/usage").is_err() {
-        let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
+    if tmux::send_keys(META_SESSION_NAME, "/usage").is_err() {
+        let _ = tmux::kill_session(META_SESSION_NAME);
         return Err("failed to send /usage");
     }
 
@@ -99,7 +82,7 @@ fn wait_for_usage_render(session_name: &str) -> Option<String> {
     let mut last_capture: Option<String> = None;
     for _ in 0..20 {
         std::thread::sleep(Duration::from_millis(250));
-        if let Ok(output) = crate::core::tmux::capture_pane_joined(session_name, Some(-30)) {
+        if let Ok(output) = tmux::capture_pane_joined(session_name, Some(-30)) {
             let data = parse_usage_output(&output);
             if data.session.is_some() && data.week_all.is_some() && data.week_sonnet.is_some() {
                 return Some(output);
@@ -169,7 +152,7 @@ fn is_stuck(capture: &str, new_hash: u64, prev_hash: Option<u64>) -> bool {
     false
 }
 
-fn monitor_loop(shared: SharedUsageData) {
+pub(super) fn monitor_loop(shared: SharedUsageData) {
     // Initial session setup
     let initial_capture = match init_meta_session() {
         Ok(c) => c,
@@ -190,7 +173,7 @@ fn monitor_loop(shared: SharedUsageData) {
     loop {
         std::thread::sleep(POLL_INTERVAL);
 
-        if !crate::core::tmux::session_exists(META_SESSION_NAME) {
+        if !tmux::session_exists(META_SESSION_NAME) {
             if let Ok(mut guard) = shared.lock() {
                 *guard = None;
             }
@@ -198,13 +181,13 @@ fn monitor_loop(shared: SharedUsageData) {
         }
 
         // Escape closes the /usage view, returning to idle prompt
-        let _ = crate::core::tmux::send_keys_raw(META_SESSION_NAME, "Escape");
+        let _ = tmux::send_keys_raw(META_SESSION_NAME, "Escape");
         std::thread::sleep(Duration::from_secs(1));
         // Drop accumulated scrollback so parse_bucket's rposition only sees
         // the upcoming render — bounds the cost of repeated polls.
-        let _ = crate::core::tmux::clear_history(META_SESSION_NAME);
+        let _ = tmux::clear_history(META_SESSION_NAME);
         // Re-send /usage to get fresh data
-        let _ = crate::core::tmux::send_keys(META_SESSION_NAME, "/usage");
+        let _ = tmux::send_keys(META_SESSION_NAME, "/usage");
 
         // Wait for bars to render
         let capture = match wait_for_usage_render(META_SESSION_NAME) {
@@ -243,14 +226,14 @@ fn monitor_loop(shared: SharedUsageData) {
                         merge_into(&shared, &fresh_data);
                     }
                     Err(reason) => {
-                        crate::core::logger::log_diagnostic(&format!(
+                        logger::log_diagnostic(&format!(
                             "usage monitor: recovery failed — {reason}; continuing to poll"
                         ));
                         // Don't return; keep the loop alive
                     }
                 }
             } else {
-                crate::core::logger::log_diagnostic(&format!(
+                logger::log_diagnostic(&format!(
                     "usage monitor: recovery cap reached ({MAX_RECOVERIES_PER_WINDOW} in 10 min); skipping auto-recover, continuing to poll"
                 ));
                 // Reset unchanged_count so we don't spam on every subsequent poll
@@ -260,96 +243,14 @@ fn monitor_loop(shared: SharedUsageData) {
     }
 }
 
-/// Kill the usage monitor tmux session (call on app shutdown).
-pub fn kill_monitor() {
-    if crate::core::tmux::session_exists(META_SESSION_NAME) {
-        let _ = crate::core::tmux::kill_session(META_SESSION_NAME);
-    }
-}
-
-pub fn parse_usage_output(output: &str) -> UsageData {
-    let lines: Vec<&str> = output.lines().collect();
-
-    UsageData {
-        session: parse_bucket(&lines, "Current session"),
-        week_all: parse_bucket(&lines, "Current week (all models)"),
-        week_sonnet: parse_bucket(&lines, "Current week (Sonnet only)"),
-        last_updated: chrono::Utc::now().timestamp_millis(),
-    }
-}
-
-fn parse_bucket(lines: &[&str], label: &str) -> Option<UsageBucket> {
-    // /usage output accumulates in scrollback (each poll re-renders inline),
-    // so multiple matching headers may be present. Use the most recent one —
-    // older renders may have been pushed apart by intervening output and no
-    // longer have their Resets line within the scan window.
-    let label_idx = lines.iter().rposition(|l| l.trim().starts_with(label))?;
-
-    // Scan forward for "Resets ..." and a "X% used" value. Formats seen:
-    //   Old: bar line "████ 33% used" followed by "Resets ..."
-    //   New: "Resets ... N% used" on one line, or "Resets ..." alone (percent omitted for near-zero)
-    // Stop when we hit the next bucket header so values don't bleed across buckets.
-    let mut percent: Option<u8> = None;
-    let mut resets: Option<String> = None;
-
-    // Scan up to 8 lines or until the next bucket header — claude occasionally
-    // renders a transient "Loading usage data…" or extra blank between the
-    // header and the Resets line, so a tighter window misses them.
-    for line in lines.iter().skip(label_idx + 1).take(8) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with("Current ") {
-            break;
-        }
-        if let Some(rest) = trimmed.strip_prefix("Resets ") {
-            let (resets_part, inline_pct) = split_trailing_percent(rest);
-            if resets.is_none() {
-                resets = Some(resets_part.trim_end().to_string());
-            }
-            if percent.is_none() {
-                percent = inline_pct;
-            }
-            continue;
-        }
-        // Legacy bar line: "████ 33% used"
-        if percent.is_none() {
-            if let Some(cap) = trimmed.strip_suffix("% used") {
-                if let Some(num_str) = cap.split_whitespace().last() {
-                    percent = num_str.parse().ok();
-                }
-            }
-        }
-    }
-
-    Some(UsageBucket {
-        label: label.to_string(),
-        percent: percent.unwrap_or(0),
-        resets: resets?,
-    })
-}
-
-/// Split a string like "Apr 26 at 10am (America/Los_Angeles)        1% used"
-/// into ("Apr 26 at 10am (America/Los_Angeles)", Some(1)). Returns the full
-/// input and None if no trailing "N% used" is present.
-fn split_trailing_percent(s: &str) -> (&str, Option<u8>) {
-    let Some(pct_idx) = s.rfind("% used") else {
-        return (s, None);
-    };
-    let before = s[..pct_idx].trim_end();
-    let Some(num_start) = before.rfind(|c: char| c.is_whitespace()) else {
-        return (s, None);
-    };
-    let num_str = before[num_start..].trim();
-    match num_str.parse::<u8>() {
-        Ok(p) => (before[..num_start].trim_end(), Some(p)),
-        Err(_) => (s, None),
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::types::{UsageBucket, UsageData};
+
+    use super::super::parser::parse_usage_output;
+    use super::super::SharedUsageData;
     use super::*;
 
     const SAMPLE_OUTPUT: &str = r#"
@@ -369,121 +270,6 @@ mod tests {
 
   Esc to cancel
 "#;
-
-    #[test]
-    fn test_parse_session_bucket() {
-        let data = parse_usage_output(SAMPLE_OUTPUT);
-        let session = data.session.unwrap();
-        assert_eq!(session.label, "Current session");
-        assert_eq!(session.percent, 33);
-        assert_eq!(session.resets, "12pm (America/Los_Angeles)");
-    }
-
-    #[test]
-    fn test_parse_week_all_bucket() {
-        let data = parse_usage_output(SAMPLE_OUTPUT);
-        let week = data.week_all.unwrap();
-        assert_eq!(week.label, "Current week (all models)");
-        assert_eq!(week.percent, 40);
-        assert_eq!(week.resets, "Apr 23 at 12pm (America/Los_Angeles)");
-    }
-
-    #[test]
-    fn test_parse_week_sonnet_bucket() {
-        let data = parse_usage_output(SAMPLE_OUTPUT);
-        let sonnet = data.week_sonnet.unwrap();
-        assert_eq!(sonnet.label, "Current week (Sonnet only)");
-        assert_eq!(sonnet.percent, 7);
-        assert_eq!(sonnet.resets, "Apr 23 at 6pm (America/Los_Angeles)");
-    }
-
-    #[test]
-    fn test_parse_empty_output() {
-        let data = parse_usage_output("");
-        assert!(data.session.is_none());
-        assert!(data.week_all.is_none());
-        assert!(data.week_sonnet.is_none());
-    }
-
-    #[test]
-    fn test_parse_garbage_output() {
-        let data = parse_usage_output("some random text\nno usage data here");
-        assert!(data.session.is_none());
-        assert!(data.week_all.is_none());
-        assert!(data.week_sonnet.is_none());
-    }
-
-    // The /usage command format introduced in Claude Code 2.1.x: no bar line,
-    // and percent (when present) is appended to the "Resets ..." line.
-    const NEW_FORMAT_OUTPUT: &str = r#"
-   Status   Config   Usage   Stats
-
-  Current session
-  Resets 3pm (America/Los_Angeles)
-
-  Current week (all models)
-  Resets Apr 26 at 10am (America/Los_Angeles)
-
-  Current week (Sonnet only)
-  Resets Apr 26 at 10am (America/Los_Angeles)        1% used
-
-  Esc to cancel
-"#;
-
-    #[test]
-    fn test_parse_new_format_session_no_percent() {
-        let data = parse_usage_output(NEW_FORMAT_OUTPUT);
-        let session = data.session.expect("session bucket should be present");
-        assert_eq!(session.percent, 0);
-        assert_eq!(session.resets, "3pm (America/Los_Angeles)");
-    }
-
-    #[test]
-    fn test_parse_new_format_week_no_bleed() {
-        // Week (all) has no trailing percent; it must not pick up the "1% used"
-        // from the Sonnet line below.
-        let data = parse_usage_output(NEW_FORMAT_OUTPUT);
-        let week = data.week_all.expect("week_all bucket should be present");
-        assert_eq!(week.percent, 0);
-        assert_eq!(week.resets, "Apr 26 at 10am (America/Los_Angeles)");
-    }
-
-    #[test]
-    fn test_parse_new_format_sonnet_inline_percent() {
-        let data = parse_usage_output(NEW_FORMAT_OUTPUT);
-        let sonnet = data
-            .week_sonnet
-            .expect("week_sonnet bucket should be present");
-        assert_eq!(sonnet.percent, 1);
-        // Resets string must not contain the trailing "1% used"
-        assert_eq!(sonnet.resets, "Apr 26 at 10am (America/Los_Angeles)");
-    }
-
-    #[test]
-    fn test_split_trailing_percent() {
-        let (r, p) = split_trailing_percent("Apr 26 at 10am (America/Los_Angeles)        1% used");
-        assert_eq!(r, "Apr 26 at 10am (America/Los_Angeles)");
-        assert_eq!(p, Some(1));
-
-        let (r, p) = split_trailing_percent("3pm (America/Los_Angeles)");
-        assert_eq!(r, "3pm (America/Los_Angeles)");
-        assert_eq!(p, None);
-    }
-
-    #[test]
-    fn test_parse_partial_output() {
-        let partial = r#"
-  Current session
-  ████████████████▌                                  33% used
-  Resets 12pm (America/Los_Angeles)
-"#;
-        let data = parse_usage_output(partial);
-        assert!(data.session.is_some());
-        assert!(data.week_all.is_none());
-        assert!(data.week_sonnet.is_none());
-    }
-
-    // --- Stuck-state detection unit tests ---
 
     #[test]
     fn test_is_stuck_loading_without_bars() {
@@ -518,54 +304,6 @@ mod tests {
         let data = parse_usage_output(capture);
         let h = hash_usage_data(&data);
         assert!(!is_stuck(capture, h, None));
-    }
-
-    // Two stacked /usage renders in one capture: an older one that was dismissed
-    // mid-render (header but no Resets), then a fresh full render. The parser
-    // must use the newest render, not the first match.
-    #[test]
-    fn test_parse_uses_most_recent_render() {
-        let capture = r#"
-  Current session
-  Loading usage data…
-
-  ❯ /usage
-
-  Current session
-  ████████████████▌                                  33% used
-  Resets 12pm (America/Los_Angeles)
-
-  Current week (all models)
-  ████████████████████                               40% used
-  Resets Apr 23 at 12pm (America/Los_Angeles)
-
-  Current week (Sonnet only)
-  ███▌                                               7% used
-  Resets Apr 23 at 6pm (America/Los_Angeles)
-"#;
-        let data = parse_usage_output(capture);
-        let s = data.session.expect("should parse newest session render");
-        assert_eq!(s.percent, 33);
-        assert_eq!(s.resets, "12pm (America/Los_Angeles)");
-    }
-
-    // A transient "Loading…" line between header and Resets used to push Resets
-    // outside the 4-line scan window. The widened window must catch it.
-    #[test]
-    fn test_parse_tolerates_loading_line_above_resets() {
-        let capture = r#"
-  Current session
-  Loading usage data…
-
-  ████████████████▌                                  33% used
-  Resets 12pm (America/Los_Angeles)
-"#;
-        let data = parse_usage_output(capture);
-        let s = data
-            .session
-            .expect("session should parse with loading line");
-        assert_eq!(s.percent, 33);
-        assert_eq!(s.resets, "12pm (America/Los_Angeles)");
     }
 
     #[test]
