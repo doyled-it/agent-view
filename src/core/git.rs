@@ -279,6 +279,8 @@ pub fn delete_branch(repo_dir: &str, branch: &str, force: bool) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::process::Command as Cmd;
 
     #[test]
     fn test_validate_branch_name_valid() {
@@ -386,9 +388,6 @@ branch refs/heads/main";
         assert_eq!(wts.len(), 1);
         assert_eq!(wts[0].branch, "main");
     }
-
-    use std::fs;
-    use std::process::Command as Cmd;
 
     fn init_repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
