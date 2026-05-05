@@ -11,7 +11,8 @@ use crate::ui::theme::Theme;
 pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, theme: &Theme) {
     let has_path_completions = form.focused_field == 1 && form.completions.len() > 1;
     let has_branch_completions = form.focused_field == 2 && form.completions.len() > 1;
-    let has_completions = has_path_completions || has_branch_completions;
+    let has_base_completions = form.focused_field == 3 && form.completions.len() > 1;
+    let has_completions = has_path_completions || has_branch_completions || has_base_completions;
     let max_completion_rows: usize = 6;
     let overlay_width = 64u16.min(area.width.saturating_sub(4));
 
@@ -76,6 +77,11 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     // base label + input
     constraints.push(Constraint::Length(1));
     constraints.push(Constraint::Length(1));
+    // base completions (inline)
+    if has_base_completions {
+        constraints.push(Constraint::Length(1)); // hint
+        constraints.push(Constraint::Length(completion_rows as u16)); // grid
+    }
     // error row
     if form.error.is_some() {
         constraints.push(Constraint::Length(1));
@@ -278,6 +284,29 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         chunks[i],
     );
     i += 1;
+
+    // Base-ref completions (inline, directly after base input)
+    if has_base_completions {
+        render_completion_hint(
+            frame,
+            chunks[i],
+            form,
+            theme,
+            num_columns,
+            max_completion_rows,
+        );
+        i += 1;
+        render_completion_grid(
+            frame,
+            chunks[i],
+            form,
+            theme,
+            num_columns,
+            completion_rows,
+            max_completion_rows,
+        );
+        i += 1;
+    }
 
     if let Some(err) = &form.error {
         frame.render_widget(

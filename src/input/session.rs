@@ -157,8 +157,37 @@ pub fn handle_new_session_key(
                             }
                         }
                     }
+                    3 if form.worktree_new_branch => {
+                        // Base ref field: local-branch completion (only when
+                        // creating a new branch — no-op in attach mode).
+                        if !form.completions.is_empty() && form.completions.len() > 1 {
+                            let idx = match form.completion_index {
+                                Some(i) => (i + 1) % form.completions.len(),
+                                None => 0,
+                            };
+                            form.completion_index = Some(idx);
+                            form.worktree_base = form.completions[idx].clone();
+                        } else {
+                            let all = crate::core::git::list_local_branches(&form.project_path)
+                                .unwrap_or_default();
+                            let prefix = form.worktree_base.clone();
+                            let candidates: Vec<String> =
+                                all.into_iter().filter(|b| b.starts_with(&prefix)).collect();
+                            match candidates.len() {
+                                0 => {}
+                                1 => {
+                                    form.worktree_base = candidates.into_iter().next().unwrap();
+                                    form.clear_completions();
+                                }
+                                _ => {
+                                    form.completions = candidates;
+                                    form.completion_index = None;
+                                }
+                            }
+                        }
+                    }
                     _ => {
-                        // Fields 0 and 3: advance focus
+                        // Fields 0 (and 3 in attach mode): advance focus
                         form.focused_field = (form.focused_field + 1) % 4;
                         form.clear_completions();
                     }
