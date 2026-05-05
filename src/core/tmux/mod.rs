@@ -306,27 +306,6 @@ pub fn clear_history(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Get sessions that currently have an attached client
-#[allow(dead_code)]
-pub fn get_attached_sessions() -> std::collections::HashSet<String> {
-    let output = Command::new("tmux")
-        .args(["list-clients", "-F", "#{client_session}"])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout
-                .trim()
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect()
-        }
-        _ => std::collections::HashSet::new(),
-    }
-}
-
 static ANSI_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)")
         .unwrap()

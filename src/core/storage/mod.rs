@@ -37,13 +37,6 @@ impl Storage {
         Self::open(db_path.to_str().unwrap())
     }
 
-    #[allow(dead_code)]
-    pub fn close(self) -> SqlResult<()> {
-        self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
     pub fn conn(&self) -> &Connection {
         &self.conn
     }

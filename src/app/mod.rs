@@ -327,22 +327,6 @@ impl App {
             self.routine_selected_index = self.routine_list_rows.len() - 1;
         }
     }
-
-    #[allow(dead_code)]
-    pub fn selected_routine(&self) -> Option<&crate::types::Routine> {
-        match self.routine_list_rows.get(self.routine_selected_index) {
-            Some(RoutineListRow::Routine(r)) => Some(r),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn selected_run(&self) -> Option<&crate::types::RoutineRun> {
-        match self.routine_list_rows.get(self.routine_selected_index) {
-            Some(RoutineListRow::Run { run, .. }) => Some(run),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

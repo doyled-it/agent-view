@@ -413,7 +413,6 @@ impl StatusIndicator {
 pub struct StatusIncident {
     pub name: String,
     pub status: String,
-    #[allow(dead_code)] // reserved for future use
     pub impact: String,
 }
 

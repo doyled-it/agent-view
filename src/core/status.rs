@@ -7,8 +7,6 @@ use std::sync::LazyLock;
 /// Result of parsing tmux pane output for tool status
 #[derive(Debug, Clone, Default)]
 pub struct ToolStatus {
-    #[allow(dead_code)]
-    pub is_active: bool,
     pub is_waiting: bool,
     pub is_compacting: bool,
     pub is_busy: bool,

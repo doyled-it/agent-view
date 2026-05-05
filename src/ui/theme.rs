@@ -15,13 +15,9 @@ pub struct Theme {
     pub text_muted: Color,
     pub selected_item_text: Color,
     pub background: Color,
-    #[allow(dead_code)]
-    pub background_panel: Color,
     pub background_element: Color,
     pub border: Color,
     pub border_active: Color,
-    #[allow(dead_code)]
-    pub border_subtle: Color,
 }
 
 impl Theme {
@@ -39,11 +35,9 @@ impl Theme {
             text_muted: Color::Rgb(108, 112, 134),      // #6c7086
             selected_item_text: Color::Rgb(30, 30, 46), // #1e1e2e
             background: Color::Rgb(30, 30, 46),         // #1e1e2e
-            background_panel: Color::Rgb(49, 50, 68),   // #313244
             background_element: Color::Rgb(69, 71, 90), // #45475a
             border: Color::Rgb(69, 71, 90),             // #45475a
             border_active: Color::Rgb(203, 166, 247),   // #cba6f7
-            border_subtle: Color::Rgb(49, 50, 68),      // #313244
         }
     }
 
@@ -61,11 +55,9 @@ impl Theme {
             text_muted: Color::Rgb(156, 160, 176),         // #9ca0b0
             selected_item_text: Color::Rgb(239, 241, 245), // #eff1f5
             background: Color::Rgb(239, 241, 245),         // #eff1f5
-            background_panel: Color::Rgb(230, 233, 239),   // #e6e9ef
             background_element: Color::Rgb(204, 208, 218), // #ccd0da
             border: Color::Rgb(204, 208, 218),             // #ccd0da
             border_active: Color::Rgb(136, 57, 239),       // #8839ef
-            border_subtle: Color::Rgb(230, 233, 239),      // #e6e9ef
         }
     }
 
@@ -83,11 +75,9 @@ impl Theme {
             text_muted: Color::Rgb(86, 95, 137),        // #565f89
             selected_item_text: Color::Rgb(26, 27, 38), // #1a1b26
             background: Color::Rgb(26, 27, 38),         // #1a1b26
-            background_panel: Color::Rgb(36, 40, 59),   // #24283b
             background_element: Color::Rgb(55, 62, 98), // #373e62
             border: Color::Rgb(55, 62, 98),             // #373e62
             border_active: Color::Rgb(122, 162, 247),   // #7aa2f7
-            border_subtle: Color::Rgb(36, 40, 59),      // #24283b
         }
     }
 
@@ -105,11 +95,9 @@ impl Theme {
             text_muted: Color::Rgb(98, 114, 164),       // #6272a4
             selected_item_text: Color::Rgb(40, 42, 54), // #282a36
             background: Color::Rgb(40, 42, 54),         // #282a36
-            background_panel: Color::Rgb(68, 71, 90),   // #44475a
             background_element: Color::Rgb(68, 71, 90), // #44475a
             border: Color::Rgb(68, 71, 90),             // #44475a
             border_active: Color::Rgb(189, 147, 249),   // #bd93f9
-            border_subtle: Color::Rgb(68, 71, 90),      // #44475a
         }
     }
 
@@ -127,11 +115,9 @@ impl Theme {
             text_muted: Color::Rgb(146, 131, 116),      // #928374
             selected_item_text: Color::Rgb(40, 40, 40), // #282828
             background: Color::Rgb(40, 40, 40),         // #282828
-            background_panel: Color::Rgb(60, 56, 54),   // #3c3836
             background_element: Color::Rgb(80, 73, 69), // #504945
             border: Color::Rgb(80, 73, 69),             // #504945
             border_active: Color::Rgb(215, 153, 33),    // #d79921
-            border_subtle: Color::Rgb(60, 56, 54),      // #3c3836
         }
     }
 
@@ -149,11 +135,9 @@ impl Theme {
             text_muted: Color::Rgb(76, 86, 106),        // #4c566a
             selected_item_text: Color::Rgb(46, 52, 64), // #2e3440
             background: Color::Rgb(46, 52, 64),         // #2e3440
-            background_panel: Color::Rgb(59, 66, 82),   // #3b4252
             background_element: Color::Rgb(67, 76, 94), // #434c5e
             border: Color::Rgb(67, 76, 94),             // #434c5e
             border_active: Color::Rgb(136, 192, 208),   // #88c0d0
-            border_subtle: Color::Rgb(59, 66, 82),      // #3b4252
         }
     }
 
@@ -171,11 +155,9 @@ impl Theme {
             text_muted: Color::Rgb(88, 110, 117),      // #586e75
             selected_item_text: Color::Rgb(0, 43, 54), // #002b36
             background: Color::Rgb(0, 43, 54),         // #002b36
-            background_panel: Color::Rgb(7, 54, 66),   // #073642
             background_element: Color::Rgb(7, 54, 66), // #073642
             border: Color::Rgb(88, 110, 117),          // #586e75
             border_active: Color::Rgb(38, 139, 210),   // #268bd2
-            border_subtle: Color::Rgb(7, 54, 66),      // #073642
         }
     }
 
@@ -193,11 +175,9 @@ impl Theme {
             text_muted: Color::Rgb(110, 106, 134),      // #6e6a86  muted
             selected_item_text: Color::Rgb(25, 23, 36), // #191724  base
             background: Color::Rgb(25, 23, 36),         // #191724  base
-            background_panel: Color::Rgb(33, 32, 46),   // #21202e  surface
             background_element: Color::Rgb(38, 35, 58), // #26233a  overlay
             border: Color::Rgb(38, 35, 58),             // #26233a
             border_active: Color::Rgb(235, 188, 186),   // #ebbcba
-            border_subtle: Color::Rgb(33, 32, 46),      // #21202e
         }
     }
 
@@ -215,11 +195,9 @@ impl Theme {
             text_muted: Color::Rgb(114, 113, 105), // #727169  fuji grey
             selected_item_text: Color::Rgb(22, 22, 29), // #16161d  sumi ink
             background: Color::Rgb(22, 22, 29),    // #16161d  sumi ink
-            background_panel: Color::Rgb(30, 30, 41), // #1e1e29
             background_element: Color::Rgb(54, 54, 70), // #363646
             border: Color::Rgb(54, 54, 70),        // #363646
             border_active: Color::Rgb(220, 165, 97), // #dca561
-            border_subtle: Color::Rgb(30, 30, 41), // #1e1e29
         }
     }
 
@@ -237,11 +215,9 @@ impl Theme {
             text_muted: Color::Rgb(127, 132, 120),      // #7f8478  grey1
             selected_item_text: Color::Rgb(39, 46, 34), // #272e22  bg_dim
             background: Color::Rgb(45, 53, 38),         // #2d3526  bg0
-            background_panel: Color::Rgb(52, 60, 44),   // #343c2c  bg1
             background_element: Color::Rgb(62, 71, 53), // #3e4735  bg3
             border: Color::Rgb(62, 71, 53),             // #3e4735
             border_active: Color::Rgb(163, 190, 140),   // #a3be8c
-            border_subtle: Color::Rgb(52, 60, 44),      // #343c2c
         }
     }
 
@@ -259,11 +235,9 @@ impl Theme {
             text_muted: Color::Rgb(92, 99, 112),        // #5c6370  comment
             selected_item_text: Color::Rgb(40, 44, 52), // #282c34  bg
             background: Color::Rgb(40, 44, 52),         // #282c34  bg
-            background_panel: Color::Rgb(50, 56, 66),   // #323842
             background_element: Color::Rgb(62, 68, 81), // #3e4451
             border: Color::Rgb(62, 68, 81),             // #3e4451
             border_active: Color::Rgb(97, 175, 239),    // #61afef
-            border_subtle: Color::Rgb(50, 56, 66),      // #323842
         }
     }
 
@@ -281,11 +255,9 @@ impl Theme {
             text_muted: Color::Rgb(99, 99, 99),         // #636363  grey
             selected_item_text: Color::Rgb(8, 8, 8),    // #080808  bg
             background: Color::Rgb(8, 8, 8),            // #080808  bg
-            background_panel: Color::Rgb(28, 28, 28),   // #1c1c1c
             background_element: Color::Rgb(48, 48, 48), // #303030
             border: Color::Rgb(48, 48, 48),             // #303030
             border_active: Color::Rgb(128, 170, 255),   // #80aaff
-            border_subtle: Color::Rgb(28, 28, 28),      // #1c1c1c
         }
     }
 

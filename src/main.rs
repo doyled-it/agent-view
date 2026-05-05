@@ -1,6 +1,5 @@
 mod app;
 mod core;
-mod event;
 mod input;
 mod poller;
 mod types;
