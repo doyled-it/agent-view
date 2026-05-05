@@ -145,10 +145,12 @@ pub fn execute_command_action(
                 if !session.worktree_path.is_empty() {
                     let title = session.title.clone();
                     let id = session.id.clone();
+                    let wt_path = session.worktree_path.clone();
+                    let branch = session.worktree_branch.clone();
                     app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
                         message: format!(
-                            "Finish '{}'? Removes worktree and (if merged) branch.",
-                            title
+                            "Finish '{}'? Removes worktree {} and (if merged into main/master) branch {}.",
+                            title, wt_path, branch
                         ),
                         action: crate::app::ConfirmAction::FinishSession(id),
                     });

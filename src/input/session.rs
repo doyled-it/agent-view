@@ -269,10 +269,6 @@ pub fn handle_confirm_key(
                                 app.toast_expire = Some(
                                     std::time::Instant::now() + std::time::Duration::from_secs(5),
                                 );
-                                if let Ok(sessions) = storage.load_sessions() {
-                                    app.sessions = sessions;
-                                    app.rebuild_list_rows();
-                                }
                             }
                             Err(e) => {
                                 app.toast_message = Some(format!("Finish failed: {}", e));
