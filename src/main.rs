@@ -409,10 +409,8 @@ fn run_tui(
                             let display_title = format!("[{}] {}", group_name, new_s.title);
                             app.push_activity(crate::types::ActivityEvent {
                                 session_title: display_title,
-                                old_status: old_s.status,
                                 new_status: new_s.status,
                                 timestamp: chrono::Utc::now().timestamp_millis(),
-                                message: None,
                             });
                         }
                     }

@@ -332,43 +332,8 @@ pub struct SessionCreateOptions {
 #[derive(Debug, Clone)]
 pub struct ActivityEvent {
     pub session_title: String,
-    #[allow(dead_code)]
-    pub old_status: SessionStatus,
     pub new_status: SessionStatus,
     pub timestamp: i64,
-    #[allow(dead_code)]
-    pub message: Option<String>,
-}
-
-impl ActivityEvent {
-    #[allow(dead_code)]
-    pub fn format_line(&self) -> String {
-        let now = chrono::Utc::now().timestamp_millis();
-        let ago_ms = now - self.timestamp;
-        let ago = if ago_ms < 60_000 {
-            "just now".to_string()
-        } else if ago_ms < 3_600_000 {
-            format!("{}m ago", ago_ms / 60_000)
-        } else {
-            format!("{}h ago", ago_ms / 3_600_000)
-        };
-
-        match &self.message {
-            Some(msg) => format!(
-                "{:<10} {} -> {} \"{}\"",
-                ago,
-                self.session_title,
-                self.new_status.as_str(),
-                msg
-            ),
-            None => format!(
-                "{:<10} {} -> {}",
-                ago,
-                self.session_title,
-                self.new_status.as_str()
-            ),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -469,21 +434,6 @@ mod tests {
     #[test]
     fn test_tool_unknown_defaults_to_shell() {
         assert_eq!(Tool::from_str("unknown"), Tool::Shell);
-    }
-
-    #[test]
-    fn test_activity_event_format() {
-        let event = ActivityEvent {
-            session_title: "BIS".to_string(),
-            old_status: SessionStatus::Running,
-            new_status: SessionStatus::Paused,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            message: Some("Asked a question".to_string()),
-        };
-        let line = event.format_line();
-        assert!(line.contains("BIS"));
-        assert!(line.contains("paused"));
-        assert!(line.contains("Asked a question"));
     }
 
     #[test]
