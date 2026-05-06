@@ -1,10 +1,11 @@
+use super::error::{TmuxError, TmuxResult};
 use std::io::Write;
 use std::process::Command;
 
 /// Attach to a tmux session synchronously (blocks until detach).
 /// Sets up Ctrl+Q to detach, Ctrl+K for command palette signal, Ctrl+T for terminal split.
 /// Returns true if command palette was requested.
-pub fn attach_session_sync(session_name: &str) -> Result<bool, String> {
+pub fn attach_session_sync(session_name: &str) -> TmuxResult<bool> {
     let signal_file = get_signal_file_path();
 
     // Clear any existing signal
@@ -113,12 +114,12 @@ pub fn attach_session_sync(session_name: &str) -> Result<bool, String> {
     let _ = std::io::stdout().flush();
 
     match result {
-        Ok(status) if !status.success() => Err(
-            "tmux attach failed: this is usually caused by a tmux version mismatch. \
+        Ok(status) if !status.success() => Err(TmuxError::AttachFailed(
+            "this is usually caused by a tmux version mismatch. \
                  Run 'tmux kill-server' in a terminal to fix this."
                 .to_string(),
-        ),
-        Err(e) => Err(format!("Failed to attach: {}", e)),
+        )),
+        Err(e) => Err(TmuxError::Io(e)),
         Ok(_) => {
             // Check if command palette was requested
             let was_requested = std::fs::metadata(&signal_file).is_ok();

@@ -1,10 +1,11 @@
+use super::error::{TmuxError, TmuxResult};
 use std::io::Write;
 use std::process::Command;
 
 /// Attach to a tmux session for routine inspection.
 /// Sets up Ctrl+Q to detach, Ctrl+P to promote (signal + detach).
 /// Returns true if the user pressed Ctrl+P (promote), false for normal detach.
-pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> Result<bool, String> {
+pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> TmuxResult<bool> {
     let promote_signal = get_promote_signal_path(run_id);
 
     // Clear any existing signal
@@ -121,8 +122,10 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> Result<b
     let _ = std::io::stdout().flush();
 
     match result {
-        Ok(status) if !status.success() => Err("tmux attach failed".to_string()),
-        Err(e) => Err(format!("Failed to attach: {}", e)),
+        Ok(status) if !status.success() => {
+            Err(TmuxError::AttachFailed("tmux attach failed".to_string()))
+        }
+        Err(e) => Err(TmuxError::Io(e)),
         Ok(_) => {
             let was_promoted = std::fs::metadata(&promote_signal).is_ok();
             let _ = std::fs::remove_file(&promote_signal);
