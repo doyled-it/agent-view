@@ -9,9 +9,6 @@ use crate::types::Routine;
 pub enum SchedulerError {
     #[error("scheduler command failed: {0}")]
     CommandFailed(String),
-    #[allow(dead_code)]
-    #[error("not implemented: {0}")]
-    NotImplemented(String),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 }

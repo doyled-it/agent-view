@@ -13,14 +13,14 @@ impl LinuxScheduler {
 
 impl Scheduler for LinuxScheduler {
     fn install(&self, _routine: &Routine) -> SchedulerResult<()> {
-        Err(SchedulerError::NotImplemented(
-            "Linux systemd timer scheduling is not yet implemented. Routines are currently macOS-only.".to_string(),
+        Err(SchedulerError::CommandFailed(
+            "linux scheduler not yet implemented: routines are currently macOS-only".to_string(),
         ))
     }
 
     fn uninstall(&self, _routine_id: &str) -> SchedulerResult<()> {
-        Err(SchedulerError::NotImplemented(
-            "Linux systemd timer scheduling is not yet implemented.".to_string(),
+        Err(SchedulerError::CommandFailed(
+            "linux scheduler not yet implemented".to_string(),
         ))
     }
 
