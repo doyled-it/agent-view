@@ -21,7 +21,8 @@ pub(super) fn render_activity_feed(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, area);
 
     let events: Vec<_> = app
-        .activity_feed
+        .activity
+        .feed
         .iter()
         .take(inner.height as usize)
         .map(|event| (format_activity_age(event.timestamp), event))

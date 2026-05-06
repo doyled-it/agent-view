@@ -72,10 +72,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.rebuild_list_rows();
 
     // Load routines
-    app.routines = storage.load_routines().unwrap_or_default();
-    for routine in &app.routines {
+    app.routine_state.routines = storage.load_routines().unwrap_or_default();
+    for routine in &app.routine_state.routines {
         if let Ok(runs) = storage.load_routine_runs(&routine.id) {
-            app.routine_runs_cache.insert(routine.id.clone(), runs);
+            app.routine_state
+                .runs_cache
+                .insert(routine.id.clone(), runs);
         }
     }
     app.rebuild_routine_list_rows();
@@ -84,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let scheduler = crate::core::scheduler::platform_scheduler();
         let mut stale_count = 0;
-        for routine in &app.routines {
+        for routine in &app.routine_state.routines {
             if routine.enabled && !scheduler.is_installed(&routine.id) {
                 // Re-install missing job
                 let _ = scheduler.install(routine);
@@ -100,15 +102,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         if stale_count > 0 {
-            app.toast_message = Some(format!(
+            app.toast.message = Some(format!(
                 "Re-registered {} routine(s) with updated binary path",
                 stale_count
             ));
-            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
         }
 
         // Mark crashed runs (finished_at IS NULL but tmux session gone)
-        for routine in &app.routines {
+        for routine in &app.routine_state.routines {
             if let Ok(runs) = storage.load_routine_runs(&routine.id) {
                 for run in &runs {
                     if run.finished_at.is_none() {
@@ -208,11 +210,11 @@ fn run_tui(
 
     // Spawn usage monitor
     let (usage_shared, _usage_thread) = crate::core::usage::spawn_monitor();
-    app.usage_shared = Some(usage_shared);
+    app.usage_state.shared = Some(usage_shared);
 
     // Spawn status-page monitor
     let (status_shared, _status_thread) = crate::core::status_page::spawn_monitor();
-    app.status_shared = Some(status_shared);
+    app.status_state.shared = Some(status_shared);
 
     // Handle --attach: immediately attach to the session
     if let Some(session_id) = app.attach_session.take() {
@@ -361,7 +363,7 @@ fn run_tui(
                         }
                         crate::app::Overlay::RoutineWarning => match key.code {
                             crossterm::event::KeyCode::Enter => {
-                                app.routine_tab_warning_shown = true;
+                                app.routine_state.tab_warning_shown = true;
                                 app.overlay = crate::app::Overlay::None;
                             }
                             crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Tab => {
@@ -421,10 +423,12 @@ fn run_tui(
                 app.rebuild_list_rows();
 
                 // Reload routines
-                app.routines = storage.load_routines().unwrap_or_default();
-                for routine in &app.routines {
+                app.routine_state.routines = storage.load_routines().unwrap_or_default();
+                for routine in &app.routine_state.routines {
                     if let Ok(runs) = storage.load_routine_runs(&routine.id) {
-                        app.routine_runs_cache.insert(routine.id.clone(), runs);
+                        app.routine_state
+                            .runs_cache
+                            .insert(routine.id.clone(), runs);
                     }
                 }
                 app.rebuild_routine_list_rows();
@@ -432,10 +436,10 @@ fn run_tui(
         }
 
         // Clear expired toasts
-        if let Some(expire) = app.toast_expire {
+        if let Some(expire) = app.toast.expire {
             if expire < Instant::now() {
-                app.toast_message = None;
-                app.toast_expire = None;
+                app.toast.message = None;
+                app.toast.expire = None;
             }
         }
 
@@ -450,21 +454,21 @@ fn run_tui(
             app.theme = crate::ui::theme::Theme::from_name(&new_config.theme);
             app.theme_name = new_config.theme;
             app.detail_mode = crate::app::DetailPanelMode::from_str(&new_config.detail_panel_mode);
-            app.toast_message = Some("Config reloaded".to_string());
-            app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
+            app.toast.message = Some("Config reloaded".to_string());
+            app.toast.expire = Some(Instant::now() + std::time::Duration::from_secs(2));
         }
 
         // Update usage data from monitor thread
-        if let Some(ref shared) = app.usage_shared {
+        if let Some(ref shared) = app.usage_state.shared {
             if let Ok(guard) = shared.lock() {
-                app.usage_data = guard.clone();
+                app.usage_state.data = guard.clone();
             }
         }
 
         // Update status-page data from monitor thread
-        if let Some(ref shared) = app.status_shared {
+        if let Some(ref shared) = app.status_state.shared {
             if let Ok(guard) = shared.lock() {
-                app.status_data = guard.clone();
+                app.status_state.data = guard.clone();
             }
         }
 
@@ -477,14 +481,15 @@ fn run_tui(
                         let tmux_empty = session.tmux_session.is_empty();
                         let status = session.status;
                         let session_changed =
-                            app.preview_last_session.as_deref() != Some(session_id.as_str());
+                            app.preview.last_session.as_deref() != Some(session_id.as_str());
                         let time_elapsed = app
-                            .preview_last_capture
+                            .preview
+                            .last_capture
                             .map(|t| t.elapsed() >= std::time::Duration::from_millis(200))
                             .unwrap_or(true);
                         if session_changed {
-                            app.preview_last_session = Some(session_id);
-                            app.preview_content.clear();
+                            app.preview.last_session = Some(session_id);
+                            app.preview.content.clear();
                         }
                         (session_changed || time_elapsed)
                             && !tmux_empty
@@ -499,26 +504,32 @@ fn run_tui(
                             let tmux_name = session.tmux_session.clone();
                             match crate::core::tmux::capture_pane(&tmux_name, Some(-50), true) {
                                 Ok(content) => {
-                                    app.preview_content = content;
+                                    app.preview.content = content;
                                 }
                                 Err(_) => {
-                                    app.preview_content.clear();
+                                    app.preview.content.clear();
                                 }
                             }
-                            app.preview_last_capture = Some(std::time::Instant::now());
+                            app.preview.last_capture = Some(std::time::Instant::now());
                         }
                     }
                 }
                 crate::app::ActiveTab::Routines => {
                     let should_capture = app
-                        .preview_last_capture
+                        .preview
+                        .last_capture
                         .map(|t| t.elapsed() >= std::time::Duration::from_millis(500))
                         .unwrap_or(true);
 
                     if should_capture {
-                        let content = match app.routine_list_rows.get(app.routine_selected_index) {
+                        let content = match app
+                            .routine_state
+                            .list_rows
+                            .get(app.routine_state.selected_index)
+                        {
                             Some(crate::app::RoutineListRow::Routine(routine)) => app
-                                .routine_runs_cache
+                                .routine_state
+                                .runs_cache
                                 .get(&routine.id)
                                 .and_then(|runs| runs.first())
                                 .and_then(|run| {
@@ -567,14 +578,14 @@ fn run_tui(
                             }
                             _ => String::new(),
                         };
-                        app.preview_content = content;
-                        app.preview_last_capture = Some(std::time::Instant::now());
+                        app.preview.content = content;
+                        app.preview.last_capture = Some(std::time::Instant::now());
                     }
                 }
             }
-        } else if !app.preview_content.is_empty() {
-            app.preview_content.clear();
-            app.preview_last_session = None;
+        } else if !app.preview.content.is_empty() {
+            app.preview.content.clear();
+            app.preview.last_session = None;
         }
 
         // Sleep briefly to avoid busy-spinning when idle

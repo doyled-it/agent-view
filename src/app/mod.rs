@@ -1,8 +1,5 @@
 //! Application state and event dispatch
 
-use std::collections::HashSet;
-use std::collections::VecDeque;
-
 use crate::core::groups::ListRow;
 use crate::types::{Group, Session};
 use crate::ui::theme::Theme;
@@ -12,6 +9,7 @@ mod detail_panel;
 mod forms;
 mod overlay;
 mod schedule_freq;
+mod state;
 
 pub use command_palette::{CommandAction, CommandPalette};
 pub use detail_panel::DetailPanelMode;
@@ -21,6 +19,13 @@ pub use forms::{
 };
 pub use overlay::Overlay;
 pub use schedule_freq::ScheduleFrequency;
+pub use state::ActivityState;
+pub use state::BulkSelection;
+pub use state::PreviewState;
+pub use state::RoutineState;
+pub use state::StatusPageState;
+pub use state::ToastState;
+pub use state::UsageState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -53,27 +58,17 @@ pub struct App {
     pub theme: Theme,
     pub theme_name: String,
     pub search_query: Option<String>,
-    pub toast_message: Option<String>,
-    pub toast_expire: Option<std::time::Instant>,
+    pub toast: ToastState,
     pub sort_mode: crate::types::SortMode,
-    pub activity_feed: VecDeque<crate::types::ActivityEvent>,
-    pub show_activity_feed: bool,
-    pub bulk_selected: HashSet<String>,
+    pub activity: ActivityState,
+    pub bulk: BulkSelection,
     pub config_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub detail_mode: DetailPanelMode,
-    pub preview_content: String,
-    pub preview_last_session: Option<String>,
-    pub preview_last_capture: Option<std::time::Instant>,
+    pub preview: PreviewState,
     pub active_tab: ActiveTab,
-    pub routines: Vec<crate::types::Routine>,
-    pub routine_runs_cache: std::collections::HashMap<String, Vec<crate::types::RoutineRun>>,
-    pub routine_list_rows: Vec<RoutineListRow>,
-    pub routine_selected_index: usize,
-    pub routine_tab_warning_shown: bool,
-    pub usage_data: Option<crate::types::UsageData>,
-    pub usage_shared: Option<crate::core::usage::SharedUsageData>,
-    pub status_data: Option<crate::types::StatusPageData>,
-    pub status_shared: Option<crate::core::status_page::SharedStatusData>,
+    pub routine_state: RoutineState,
+    pub usage_state: UsageState,
+    pub status_state: StatusPageState,
 }
 
 impl App {
@@ -94,53 +89,43 @@ impl App {
                 "dark".to_string()
             },
             search_query: None,
-            toast_message: None,
-            toast_expire: None,
+            toast: ToastState::new(),
             sort_mode: crate::types::SortMode::StatusPriority,
-            activity_feed: VecDeque::new(),
-            show_activity_feed: true,
-            bulk_selected: HashSet::new(),
+            activity: ActivityState::new(),
+            bulk: BulkSelection::new(),
             config_changed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             detail_mode: DetailPanelMode::Metadata,
-            preview_content: String::new(),
-            preview_last_session: None,
-            preview_last_capture: None,
+            preview: PreviewState::new(),
             active_tab: ActiveTab::Sessions,
-            routines: Vec::new(),
-            routine_runs_cache: std::collections::HashMap::new(),
-            routine_list_rows: Vec::new(),
-            routine_selected_index: 0,
-            routine_tab_warning_shown: false,
-            usage_data: None,
-            usage_shared: None,
-            status_data: None,
-            status_shared: None,
+            routine_state: RoutineState::new(),
+            usage_state: UsageState::new(),
+            status_state: StatusPageState::new(),
         }
     }
 
     pub fn push_activity(&mut self, event: crate::types::ActivityEvent) {
-        self.activity_feed.push_front(event);
-        if self.activity_feed.len() > 100 {
-            self.activity_feed.pop_back();
+        self.activity.feed.push_front(event);
+        if self.activity.feed.len() > 100 {
+            self.activity.feed.pop_back();
         }
     }
 
     pub fn toggle_bulk_select(&mut self, session_id: &str) {
-        if self.bulk_selected.contains(session_id) {
-            self.bulk_selected.remove(session_id);
+        if self.bulk.selected.contains(session_id) {
+            self.bulk.selected.remove(session_id);
         } else {
-            self.bulk_selected.insert(session_id.to_string());
+            self.bulk.selected.insert(session_id.to_string());
         }
     }
 
     pub fn clear_bulk_selection(&mut self) {
-        self.bulk_selected.clear();
+        self.bulk.selected.clear();
     }
 
     pub fn select_all_visible(&mut self) {
         for row in &self.list_rows {
             if let crate::core::groups::ListRow::Session(s) = row {
-                self.bulk_selected.insert(s.id.clone());
+                self.bulk.selected.insert(s.id.clone());
             }
         }
     }
@@ -215,7 +200,8 @@ impl App {
             _ => return Vec::new(),
         };
 
-        self.routine_list_rows
+        self.routine_state
+            .list_rows
             .iter()
             .enumerate()
             .filter_map(|(i, row)| match row {
@@ -241,7 +227,7 @@ impl App {
     pub fn toggle_tab(&mut self) {
         self.active_tab = match self.active_tab {
             ActiveTab::Sessions => {
-                if !self.routine_tab_warning_shown {
+                if !self.routine_state.tab_warning_shown {
                     self.overlay = Overlay::RoutineWarning;
                 }
                 ActiveTab::Routines
@@ -257,7 +243,7 @@ impl App {
         // Group routines by group_path
         let mut groups_map: std::collections::HashMap<String, Vec<&crate::types::Routine>> =
             std::collections::HashMap::new();
-        for routine in &self.routines {
+        for routine in &self.routine_state.routines {
             groups_map
                 .entry(routine.group_path.clone())
                 .or_default()
@@ -303,7 +289,7 @@ impl App {
 
                     // If routine is expanded, add its runs
                     if routine.expanded {
-                        if let Some(runs) = self.routine_runs_cache.get(&routine.id) {
+                        if let Some(runs) = self.routine_state.runs_cache.get(&routine.id) {
                             for run in runs {
                                 rows.push(RoutineListRow::Run {
                                     run: Box::new(run.clone()),
@@ -316,15 +302,15 @@ impl App {
             }
         }
 
-        self.routine_list_rows = rows;
+        self.routine_state.list_rows = rows;
         self.clamp_routine_selection();
     }
 
     pub fn clamp_routine_selection(&mut self) {
-        if self.routine_list_rows.is_empty() {
-            self.routine_selected_index = 0;
-        } else if self.routine_selected_index >= self.routine_list_rows.len() {
-            self.routine_selected_index = self.routine_list_rows.len() - 1;
+        if self.routine_state.list_rows.is_empty() {
+            self.routine_state.selected_index = 0;
+        } else if self.routine_state.selected_index >= self.routine_state.list_rows.len() {
+            self.routine_state.selected_index = self.routine_state.list_rows.len() - 1;
         }
     }
 }
@@ -431,9 +417,9 @@ mod tests {
     fn test_toggle_bulk_selection() {
         let mut app = App::new(false);
         app.toggle_bulk_select("s1");
-        assert!(app.bulk_selected.contains("s1"));
+        assert!(app.bulk.selected.contains("s1"));
         app.toggle_bulk_select("s1");
-        assert!(!app.bulk_selected.contains("s1"));
+        assert!(!app.bulk.selected.contains("s1"));
     }
 
     #[test]
@@ -442,7 +428,7 @@ mod tests {
         app.toggle_bulk_select("s1");
         app.toggle_bulk_select("s2");
         app.clear_bulk_selection();
-        assert!(app.bulk_selected.is_empty());
+        assert!(app.bulk.selected.is_empty());
     }
 
     #[test]
@@ -707,7 +693,7 @@ mod tests {
         let mut app = app_with_sessions(sessions);
         app.select_all_visible();
         // At least the sessions should be selected
-        assert!(app.bulk_selected.contains("s1"));
-        assert!(app.bulk_selected.contains("s2"));
+        assert!(app.bulk.selected.contains("s1"));
+        assert!(app.bulk.selected.contains("s2"));
     }
 }

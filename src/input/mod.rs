@@ -145,8 +145,8 @@ pub fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('s')) => {
-            if !app.bulk_selected.is_empty() {
-                let count = app.bulk_selected.len();
+            if !app.bulk.selected.is_empty() {
+                let count = app.bulk.selected.len();
                 app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
                     message: format!("Stop {} selected sessions?", count),
                     action: crate::app::ConfirmAction::BulkStop,
@@ -162,8 +162,8 @@ pub fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('d')) => {
-            if !app.bulk_selected.is_empty() {
-                let count = app.bulk_selected.len();
+            if !app.bulk.selected.is_empty() {
+                let count = app.bulk.selected.len();
                 app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
                     message: format!("Delete {} selected sessions?", count),
                     action: crate::app::ConfirmAction::BulkDelete,
@@ -193,7 +193,7 @@ pub fn handle_main_key(
         (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
             app.select_all_visible();
         }
-        (KeyModifiers::NONE, KeyCode::Esc) if !app.bulk_selected.is_empty() => {
+        (KeyModifiers::NONE, KeyCode::Esc) if !app.bulk.selected.is_empty() => {
             app.clear_bulk_selection();
         }
         (KeyModifiers::NONE, KeyCode::Char('r')) => {
@@ -226,8 +226,8 @@ pub fn handle_main_key(
                 } else {
                     format!("Notifications off: {}", title)
                 };
-                app.toast_message = Some(msg);
-                app.toast_expire =
+                app.toast.message = Some(msg);
+                app.toast.expire =
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
         }
@@ -252,13 +252,13 @@ pub fn handle_main_key(
                     let id = session.id.clone();
                     match crate::input::export::export_session_log(&tmux_name, &title, &id) {
                         Ok(path) => {
-                            app.toast_message = Some(format!("Exported to {}", path));
+                            app.toast.message = Some(format!("Exported to {}", path));
                         }
                         Err(e) => {
-                            app.toast_message = Some(format!("Export failed: {}", e));
+                            app.toast.message = Some(format!("Export failed: {}", e));
                         }
                     }
-                    app.toast_expire =
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                 }
             }
@@ -295,8 +295,8 @@ pub fn handle_main_key(
             app.sort_mode = app.sort_mode.next();
             app.rebuild_list_rows();
             let label = app.sort_mode.label();
-            app.toast_message = Some(format!("Sort: {}", label));
-            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            app.toast.message = Some(format!("Sort: {}", label));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         }
         (KeyModifiers::NONE, KeyCode::Char('p')) => {
             if let Some(session) = app.selected_session() {
@@ -314,8 +314,8 @@ pub fn handle_main_key(
                 } else {
                     format!("Unpinned: {}", title)
                 };
-                app.toast_message = Some(msg);
-                app.toast_expire =
+                app.toast.message = Some(msg);
+                app.toast.expire =
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
         }
@@ -384,15 +384,15 @@ pub fn handle_main_key(
             app.config_changed
                 .store(false, std::sync::atomic::Ordering::Relaxed);
             // Clear preview state on mode change
-            app.preview_content.clear();
-            app.preview_last_session = None;
-            app.preview_last_capture = None;
+            app.preview.content.clear();
+            app.preview.last_session = None;
+            app.preview.last_capture = None;
             // Toast
-            app.toast_message = Some(format!("Panel: {}", app.detail_mode.label()));
-            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            app.toast.message = Some(format!("Panel: {}", app.detail_mode.label()));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         }
         (KeyModifiers::NONE, KeyCode::Char('a')) => {
-            app.show_activity_feed = !app.show_activity_feed;
+            app.activity.show_feed = !app.activity.show_feed;
         }
         (KeyModifiers::NONE, KeyCode::Char('?')) => {
             app.overlay = crate::app::Overlay::Help;

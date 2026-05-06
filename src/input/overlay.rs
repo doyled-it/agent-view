@@ -207,13 +207,13 @@ pub fn execute_command_action(
                     let id = session.id.clone();
                     match crate::input::export::export_session_log(&tmux_name, &title, &id) {
                         Ok(path) => {
-                            app.toast_message = Some(format!("Exported to {}", path));
-                            app.toast_expire =
+                            app.toast.message = Some(format!("Exported to {}", path));
+                            app.toast.expire =
                                 Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                         }
                         Err(e) => {
-                            app.toast_message = Some(format!("Export failed: {}", e));
-                            app.toast_expire =
+                            app.toast.message = Some(format!("Export failed: {}", e));
+                            app.toast.expire =
                                 Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                         }
                     }
@@ -224,8 +224,8 @@ pub fn execute_command_action(
             app.sort_mode = app.sort_mode.next();
             app.rebuild_list_rows();
             let label = app.sort_mode.label();
-            app.toast_message = Some(format!("Sort: {}", label));
-            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            app.toast.message = Some(format!("Sort: {}", label));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         }
         CommandAction::PinSession => {
             if let Some(session) = app.selected_session() {
@@ -243,8 +243,8 @@ pub fn execute_command_action(
                 } else {
                     format!("Unpinned: {}", title)
                 };
-                app.toast_message = Some(msg);
-                app.toast_expire =
+                app.toast.message = Some(msg);
+                app.toast.expire =
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
         }
@@ -261,11 +261,11 @@ pub fn execute_command_action(
             let _ = crate::core::config::save_config(&config);
             app.config_changed
                 .store(false, std::sync::atomic::Ordering::Relaxed);
-            app.preview_content.clear();
-            app.preview_last_session = None;
-            app.preview_last_capture = None;
-            app.toast_message = Some(format!("Panel: {}", app.detail_mode.label()));
-            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            app.preview.content.clear();
+            app.preview.last_session = None;
+            app.preview.last_capture = None;
+            app.toast.message = Some(format!("Panel: {}", app.detail_mode.label()));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         }
         CommandAction::NewRoutine => {
             app.active_tab = crate::app::ActiveTab::Routines;
@@ -274,29 +274,36 @@ pub fn execute_command_action(
         CommandAction::ToggleRoutine => {
             app.active_tab = crate::app::ActiveTab::Routines;
             if let Some(crate::app::RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 let new_enabled = !routine.enabled;
                 let _ = storage.set_routine_enabled(&routine.id, new_enabled);
                 let scheduler = crate::core::scheduler::platform_scheduler();
                 if new_enabled {
-                    if let Some(r) = app.routines.iter().find(|r| r.id == routine.id) {
+                    if let Some(r) = app
+                        .routine_state
+                        .routines
+                        .iter()
+                        .find(|r| r.id == routine.id)
+                    {
                         let _ = scheduler.install(r);
                     }
                 } else {
                     let _ = scheduler.uninstall(&routine.id);
                 }
-                app.routines = storage.load_routines().unwrap_or_default();
+                app.routine_state.routines = storage.load_routines().unwrap_or_default();
                 app.rebuild_routine_list_rows();
             }
         }
         CommandAction::DeleteRoutine => {
             app.active_tab = crate::app::ActiveTab::Routines;
             if let Some(crate::app::RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
@@ -332,8 +339,8 @@ pub fn handle_theme_select_key(
                     .store(false, std::sync::atomic::Ordering::Relaxed);
                 app.theme_name = chosen.clone();
                 app.overlay = crate::app::Overlay::None;
-                app.toast_message = Some(format!("Theme: {}", chosen));
-                app.toast_expire =
+                app.toast.message = Some(format!("Theme: {}", chosen));
+                app.toast.expire =
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
             }
             KeyCode::Up | KeyCode::Char('k') => {
