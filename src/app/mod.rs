@@ -22,6 +22,7 @@ pub use forms::{
 };
 pub use overlay::Overlay;
 pub use schedule_freq::ScheduleFrequency;
+pub use state::PreviewState;
 pub use state::ToastState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,9 +63,7 @@ pub struct App {
     pub bulk_selected: HashSet<String>,
     pub config_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub detail_mode: DetailPanelMode,
-    pub preview_content: String,
-    pub preview_last_session: Option<String>,
-    pub preview_last_capture: Option<std::time::Instant>,
+    pub preview: PreviewState,
     pub active_tab: ActiveTab,
     pub routines: Vec<crate::types::Routine>,
     pub routine_runs_cache: std::collections::HashMap<String, Vec<crate::types::RoutineRun>>,
@@ -102,9 +101,7 @@ impl App {
             bulk_selected: HashSet::new(),
             config_changed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             detail_mode: DetailPanelMode::Metadata,
-            preview_content: String::new(),
-            preview_last_session: None,
-            preview_last_capture: None,
+            preview: PreviewState::new(),
             active_tab: ActiveTab::Sessions,
             routines: Vec::new(),
             routine_runs_cache: std::collections::HashMap::new(),

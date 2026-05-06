@@ -121,7 +121,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         session,
                         &app.theme,
                         app.detail_mode,
-                        &app.preview_content,
+                        &app.preview.content,
                     );
                 }
             }
@@ -134,7 +134,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                             routine,
                             &app.theme,
                             app.detail_mode,
-                            &app.preview_content,
+                            &app.preview.content,
                         );
                     }
                     Some(crate::app::RoutineListRow::Run { run, routine_name }) => {
@@ -145,7 +145,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                             routine_name,
                             &app.theme,
                             app.detail_mode,
-                            &app.preview_content,
+                            &app.preview.content,
                         );
                     }
                     _ => {}

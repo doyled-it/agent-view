@@ -477,14 +477,15 @@ fn run_tui(
                         let tmux_empty = session.tmux_session.is_empty();
                         let status = session.status;
                         let session_changed =
-                            app.preview_last_session.as_deref() != Some(session_id.as_str());
+                            app.preview.last_session.as_deref() != Some(session_id.as_str());
                         let time_elapsed = app
-                            .preview_last_capture
+                            .preview
+                            .last_capture
                             .map(|t| t.elapsed() >= std::time::Duration::from_millis(200))
                             .unwrap_or(true);
                         if session_changed {
-                            app.preview_last_session = Some(session_id);
-                            app.preview_content.clear();
+                            app.preview.last_session = Some(session_id);
+                            app.preview.content.clear();
                         }
                         (session_changed || time_elapsed)
                             && !tmux_empty
@@ -499,19 +500,20 @@ fn run_tui(
                             let tmux_name = session.tmux_session.clone();
                             match crate::core::tmux::capture_pane(&tmux_name, Some(-50), true) {
                                 Ok(content) => {
-                                    app.preview_content = content;
+                                    app.preview.content = content;
                                 }
                                 Err(_) => {
-                                    app.preview_content.clear();
+                                    app.preview.content.clear();
                                 }
                             }
-                            app.preview_last_capture = Some(std::time::Instant::now());
+                            app.preview.last_capture = Some(std::time::Instant::now());
                         }
                     }
                 }
                 crate::app::ActiveTab::Routines => {
                     let should_capture = app
-                        .preview_last_capture
+                        .preview
+                        .last_capture
                         .map(|t| t.elapsed() >= std::time::Duration::from_millis(500))
                         .unwrap_or(true);
 
@@ -567,14 +569,14 @@ fn run_tui(
                             }
                             _ => String::new(),
                         };
-                        app.preview_content = content;
-                        app.preview_last_capture = Some(std::time::Instant::now());
+                        app.preview.content = content;
+                        app.preview.last_capture = Some(std::time::Instant::now());
                     }
                 }
             }
-        } else if !app.preview_content.is_empty() {
-            app.preview_content.clear();
-            app.preview_last_session = None;
+        } else if !app.preview.content.is_empty() {
+            app.preview.content.clear();
+            app.preview.last_session = None;
         }
 
         // Sleep briefly to avoid busy-spinning when idle

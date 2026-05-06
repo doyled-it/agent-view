@@ -384,9 +384,9 @@ pub fn handle_main_key(
             app.config_changed
                 .store(false, std::sync::atomic::Ordering::Relaxed);
             // Clear preview state on mode change
-            app.preview_content.clear();
-            app.preview_last_session = None;
-            app.preview_last_capture = None;
+            app.preview.content.clear();
+            app.preview.last_session = None;
+            app.preview.last_capture = None;
             // Toast
             app.toast.message = Some(format!("Panel: {}", app.detail_mode.label()));
             app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
