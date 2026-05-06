@@ -392,7 +392,7 @@ pub fn handle_main_key(
             app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         }
         (KeyModifiers::NONE, KeyCode::Char('a')) => {
-            app.show_activity_feed = !app.show_activity_feed;
+            app.activity.show_feed = !app.activity.show_feed;
         }
         (KeyModifiers::NONE, KeyCode::Char('?')) => {
             app.overlay = crate::app::Overlay::Help;

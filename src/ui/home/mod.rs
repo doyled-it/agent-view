@@ -39,10 +39,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         };
 
     // Layout: header, body, activity feed, usage pane, footer
-    let show_feed = app.show_activity_feed && !app.activity_feed.is_empty();
+    let show_feed = app.activity.show_feed && !app.activity.feed.is_empty();
     let feed_height = if show_feed {
         // 1 for border + 1 per event, capped at 8 lines total
-        let events = app.activity_feed.len().min(7) as u16;
+        let events = app.activity.feed.len().min(7) as u16;
         events + 1
     } else {
         0

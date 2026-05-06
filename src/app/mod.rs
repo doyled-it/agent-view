@@ -1,7 +1,5 @@
 //! Application state and event dispatch
 
-use std::collections::VecDeque;
-
 use crate::core::groups::ListRow;
 use crate::types::{Group, Session};
 use crate::ui::theme::Theme;
@@ -21,6 +19,7 @@ pub use forms::{
 };
 pub use overlay::Overlay;
 pub use schedule_freq::ScheduleFrequency;
+pub use state::ActivityState;
 pub use state::BulkSelection;
 pub use state::PreviewState;
 pub use state::ToastState;
@@ -58,8 +57,7 @@ pub struct App {
     pub search_query: Option<String>,
     pub toast: ToastState,
     pub sort_mode: crate::types::SortMode,
-    pub activity_feed: VecDeque<crate::types::ActivityEvent>,
-    pub show_activity_feed: bool,
+    pub activity: ActivityState,
     pub bulk: BulkSelection,
     pub config_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub detail_mode: DetailPanelMode,
@@ -96,8 +94,7 @@ impl App {
             search_query: None,
             toast: ToastState::new(),
             sort_mode: crate::types::SortMode::StatusPriority,
-            activity_feed: VecDeque::new(),
-            show_activity_feed: true,
+            activity: ActivityState::new(),
             bulk: BulkSelection::new(),
             config_changed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             detail_mode: DetailPanelMode::Metadata,
@@ -116,9 +113,9 @@ impl App {
     }
 
     pub fn push_activity(&mut self, event: crate::types::ActivityEvent) {
-        self.activity_feed.push_front(event);
-        if self.activity_feed.len() > 100 {
-            self.activity_feed.pop_back();
+        self.activity.feed.push_front(event);
+        if self.activity.feed.len() > 100 {
+            self.activity.feed.pop_back();
         }
     }
 
