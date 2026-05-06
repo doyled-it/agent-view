@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.6.0] - 2026-05-06
+
+### Changed
+
+- refactor(app): group App fields into focused substructs (#43) (@doyled-it)
+
 ## [1.5.5] - 2026-05-01
 
 ### Changed
