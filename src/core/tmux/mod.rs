@@ -326,7 +326,7 @@ pub fn clear_history(name: &str) -> TmuxResult<()> {
 
 static ANSI_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)")
-        .unwrap()
+        .expect("static regex must compile")
 });
 
 /// Strip ANSI escape sequences from terminal output
