@@ -29,89 +29,97 @@ const SPINNER_CHARS: &[&str] = &[
 // ("...esc to interrupt...") cannot false-positive.
 static CLAUDE_FOOTER_BUSY_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"(?i)ctrl\+c to interrupt").unwrap(),
-        Regex::new(r"(?i)esc to interrupt").unwrap(),
-        Regex::new(r"(?i)\u{2026}.*tokens").unwrap(),
+        Regex::new(r"(?i)ctrl\+c to interrupt").expect("static regex must compile"),
+        Regex::new(r"(?i)esc to interrupt").expect("static regex must compile"),
+        Regex::new(r"(?i)\u{2026}.*tokens").expect("static regex must compile"),
     ]
 });
 
 // Claude Code waiting indicators — needs user input
 static CLAUDE_WAITING_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"(?i)Do you want to proceed\?").unwrap(),
-        Regex::new(r"(?i)\d\.\s*Yes\b").unwrap(),
-        Regex::new(r"(?i)Esc to cancel.*Tab to amend").unwrap(),
-        Regex::new(r"(?i)Enter to select.*to navigate").unwrap(),
-        Regex::new(r"(?i)\(Y/n\)").unwrap(),
-        Regex::new(r"(?i)Continue\?").unwrap(),
-        Regex::new(r"(?i)Approve this plan\?").unwrap(),
-        Regex::new(r"(?i)\[Y/n\]").unwrap(),
-        Regex::new(r"(?i)\[y/N\]").unwrap(),
-        Regex::new(r"(?i)Yes,? allow once").unwrap(),
-        Regex::new(r"(?i)Allow always").unwrap(),
-        Regex::new(r"(?i)No,? and tell Claude").unwrap(),
+        Regex::new(r"(?i)Do you want to proceed\?").expect("static regex must compile"),
+        Regex::new(r"(?i)\d\.\s*Yes\b").expect("static regex must compile"),
+        Regex::new(r"(?i)Esc to cancel.*Tab to amend").expect("static regex must compile"),
+        Regex::new(r"(?i)Enter to select.*to navigate").expect("static regex must compile"),
+        Regex::new(r"(?i)\(Y/n\)").expect("static regex must compile"),
+        Regex::new(r"(?i)Continue\?").expect("static regex must compile"),
+        Regex::new(r"(?i)Approve this plan\?").expect("static regex must compile"),
+        Regex::new(r"(?i)\[Y/n\]").expect("static regex must compile"),
+        Regex::new(r"(?i)\[y/N\]").expect("static regex must compile"),
+        Regex::new(r"(?i)Yes,? allow once").expect("static regex must compile"),
+        Regex::new(r"(?i)Allow always").expect("static regex must compile"),
+        Regex::new(r"(?i)No,? and tell Claude").expect("static regex must compile"),
     ]
 });
 
 // Claude exited patterns (shell returned)
 static CLAUDE_EXITED_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"(?i)Resume this session with:").unwrap(),
-        Regex::new(r"(?i)claude --resume").unwrap(),
-        Regex::new(r"(?i)Press Ctrl-C again to exit").unwrap(),
+        Regex::new(r"(?i)Resume this session with:").expect("static regex must compile"),
+        Regex::new(r"(?i)claude --resume").expect("static regex must compile"),
+        Regex::new(r"(?i)Press Ctrl-C again to exit").expect("static regex must compile"),
     ]
 });
 
 // Claude compacting patterns
 static CLAUDE_COMPACTING_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"(?i)compacting conversation").unwrap(),
-        Regex::new(r"(?i)summarizing conversation").unwrap(),
-        Regex::new(r"(?i)context window.*(compact|compress)").unwrap(),
+        Regex::new(r"(?i)compacting conversation").expect("static regex must compile"),
+        Regex::new(r"(?i)summarizing conversation").expect("static regex must compile"),
+        Regex::new(r"(?i)context window.*(compact|compress)").expect("static regex must compile"),
     ]
 });
 
 // Error patterns
 static ERROR_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"(?i)error:").unwrap(),
-        Regex::new(r"(?i)failed:").unwrap(),
-        Regex::new(r"(?i)exception:").unwrap(),
-        Regex::new(r"(?i)traceback").unwrap(),
-        Regex::new(r"(?i)panic:").unwrap(),
+        Regex::new(r"(?i)error:").expect("static regex must compile"),
+        Regex::new(r"(?i)failed:").expect("static regex must compile"),
+        Regex::new(r"(?i)exception:").expect("static regex must compile"),
+        Regex::new(r"(?i)traceback").expect("static regex must compile"),
+        Regex::new(r"(?i)panic:").expect("static regex must compile"),
     ]
 });
 
 // Idle prompt pattern (used only for question detection scan guard)
-static IDLE_PROMPT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\u{276f}").unwrap());
+static IDLE_PROMPT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\u{276f}").expect("static regex must compile"));
 
 /// Match "claude --resume <session-id>" to extract the session ID
-static CLAUDE_SESSION_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"claude\s+--resume\s+([\w-]+)").unwrap());
+static CLAUDE_SESSION_ID_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"claude\s+--resume\s+([\w-]+)").expect("static regex must compile")
+});
 
 // Question detection
-static QUESTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\?\s*$").unwrap());
+static QUESTION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\?\s*$").expect("static regex must compile"));
 
 // Claude Code "N monitor(s)" footer indicator. The status bar uses U+00B7
 // middle-dot separators around each item, e.g. `· 1 monitor ·`.
-static MONITOR_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\u{00b7}\s*\d+\s+monitors?\s*\u{00b7}").unwrap());
+static MONITOR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\u{00b7}\s*\d+\s+monitors?\s*\u{00b7}").expect("static regex must compile")
+});
 
 // Non-content line patterns (for question scanning)
-static SEPARATOR_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\u{2500}\u{2501}\u{2550}]{10,}").unwrap());
-static COMPANION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Thistle").unwrap());
+static SEPARATOR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[\u{2500}\u{2501}\u{2550}]{10,}").expect("static regex must compile")
+});
+static COMPANION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Thistle").expect("static regex must compile"));
 static ART_LINE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\.\-\-\.$|^\\|^\\_|^~+$").unwrap());
+    LazyLock::new(|| Regex::new(r"^\.\-\-\.$|^\\|^\\_|^~+$").expect("static regex must compile"));
 static SPINNER_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^[\u{273b}\u{273d}\u{2736}\u{2722}\u{280b}\u{2819}\u{2839}\u{2838}\u{283c}\u{2834}\u{2826}\u{2827}\u{2807}\u{280f}\u{00b7}]",
     )
-    .unwrap()
+    .expect("static regex must compile")
 });
-static USER_INPUT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\u{276f}").unwrap());
-static SHORTCUTS_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\u{23f5}\u{23f5}|^\? for shortcuts").unwrap());
+static USER_INPUT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\u{276f}").expect("static regex must compile"));
+static SHORTCUTS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\u{23f5}\u{23f5}|^\? for shortcuts").expect("static regex must compile")
+});
 
 /// Check if text contains spinner characters
 fn has_spinner(text: &str) -> bool {
