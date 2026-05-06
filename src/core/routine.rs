@@ -2,25 +2,39 @@
 
 use crate::core::logger;
 use crate::core::storage::Storage;
+use crate::core::tmux::TmuxError;
 use crate::types::{RoutineRun, RoutineStep, RunStatus};
+
+#[derive(thiserror::Error, Debug)]
+pub enum RoutineError {
+    #[error("storage error: {0}")]
+    Storage(String),
+    #[error("routine not found: {0}")]
+    NotFound(String),
+    #[error("tmux error: {0}")]
+    Tmux(#[from] TmuxError),
+}
+
+pub type RoutineResult<T> = Result<T, RoutineError>;
 
 /// Execute a routine by ID. Called by the `exec-routine` CLI subcommand.
 /// This is a blocking function that runs all steps sequentially.
-pub fn exec_routine(routine_id: &str) -> Result<(), String> {
-    let storage = Storage::open_default().map_err(|e| format!("Failed to open storage: {}", e))?;
+pub fn exec_routine(routine_id: &str) -> RoutineResult<()> {
+    let storage = Storage::open_default()
+        .map_err(|e| RoutineError::Storage(format!("Failed to open storage: {}", e)))?;
     storage
         .migrate()
-        .map_err(|e| format!("Migration failed: {}", e))?;
+        .map_err(|e| RoutineError::Storage(format!("Migration failed: {}", e)))?;
 
     let routine = storage
         .get_routine(routine_id)
-        .map_err(|e| format!("DB error: {}", e))?
-        .ok_or_else(|| format!("Routine '{}' not found", routine_id))?;
+        .map_err(|e| RoutineError::Storage(format!("DB error: {}", e)))?
+        .ok_or_else(|| RoutineError::NotFound(format!("Routine '{}' not found", routine_id)))?;
 
     // Concurrency guard
     if storage
         .has_active_run(routine_id)
-        .map_err(|e| format!("DB error: {}", e))?
+        .map_err(|e| RoutineError::Storage(format!("DB error: {}", e)))?
     {
         logger::log_diagnostic(&format!(
             "Routine '{}' already has an active run, skipping",
@@ -52,7 +66,7 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
     };
     storage
         .save_routine_run(&run)
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| RoutineError::Storage(format!("DB error: {}", e)))?;
 
     let timeout = std::time::Duration::from_secs(routine.step_timeout_secs as u64);
     let mut final_status = RunStatus::Completed;
