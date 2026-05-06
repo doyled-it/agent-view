@@ -1,11 +1,23 @@
 //! Platform abstraction for system job scheduling
 
+use std::io;
+
 #[allow(unused_imports)]
 use crate::types::Routine;
 
+#[derive(thiserror::Error, Debug)]
+pub enum SchedulerError {
+    #[error("scheduler command failed: {0}")]
+    CommandFailed(String),
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
+}
+
+pub type SchedulerResult<T> = Result<T, SchedulerError>;
+
 pub trait Scheduler {
-    fn install(&self, routine: &Routine) -> Result<(), String>;
-    fn uninstall(&self, routine_id: &str) -> Result<(), String>;
+    fn install(&self, routine: &Routine) -> SchedulerResult<()>;
+    fn uninstall(&self, routine_id: &str) -> SchedulerResult<()>;
     fn is_installed(&self, routine_id: &str) -> bool;
     fn has_stale_binary_path(&self, routine_id: &str) -> bool;
 }
