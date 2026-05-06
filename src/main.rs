@@ -100,11 +100,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         if stale_count > 0 {
-            app.toast_message = Some(format!(
+            app.toast.message = Some(format!(
                 "Re-registered {} routine(s) with updated binary path",
                 stale_count
             ));
-            app.toast_expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
         }
 
         // Mark crashed runs (finished_at IS NULL but tmux session gone)
@@ -432,10 +432,10 @@ fn run_tui(
         }
 
         // Clear expired toasts
-        if let Some(expire) = app.toast_expire {
+        if let Some(expire) = app.toast.expire {
             if expire < Instant::now() {
-                app.toast_message = None;
-                app.toast_expire = None;
+                app.toast.message = None;
+                app.toast.expire = None;
             }
         }
 
@@ -450,8 +450,8 @@ fn run_tui(
             app.theme = crate::ui::theme::Theme::from_name(&new_config.theme);
             app.theme_name = new_config.theme;
             app.detail_mode = crate::app::DetailPanelMode::from_str(&new_config.detail_panel_mode);
-            app.toast_message = Some("Config reloaded".to_string());
-            app.toast_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
+            app.toast.message = Some("Config reloaded".to_string());
+            app.toast.expire = Some(Instant::now() + std::time::Duration::from_secs(2));
         }
 
         // Update usage data from monitor thread

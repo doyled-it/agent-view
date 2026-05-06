@@ -304,8 +304,8 @@ pub fn handle_move_key(
                             app.rebuild_routine_list_rows();
                         }
                     }
-                    app.toast_message = Some(format!("Moved to {}", name));
-                    app.toast_expire =
+                    app.toast.message = Some(format!("Moved to {}", name));
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
                 }
                 app.overlay = crate::app::Overlay::None;

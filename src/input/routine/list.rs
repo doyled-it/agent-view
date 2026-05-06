@@ -215,8 +215,8 @@ pub fn handle_routine_list_key(
                     app.rebuild_routine_list_rows();
                     storage.touch().ok();
 
-                    app.toast_message = Some(format!("Promoted to session: {}", session_title));
-                    app.toast_expire =
+                    app.toast.message = Some(format!("Promoted to session: {}", session_title));
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                 }
             }
@@ -302,9 +302,9 @@ pub fn handle_routine_list_key(
                         Some(&routine.working_dir),
                         None,
                     ) {
-                        app.toast_message =
+                        app.toast.message =
                             Some(format!("Failed to create inspect session: {}", e));
-                        app.toast_expire =
+                        app.toast.expire =
                             Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         return;
                     }
@@ -340,9 +340,9 @@ pub fn handle_routine_list_key(
                             app.rebuild_routine_list_rows();
                             storage.touch().ok();
 
-                            app.toast_message =
+                            app.toast.message =
                                 Some(format!("Promoted to session: {}", session_title));
-                            app.toast_expire =
+                            app.toast.expire =
                                 Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         }
                         Ok(false) => {
@@ -351,8 +351,8 @@ pub fn handle_routine_list_key(
                         }
                         Err(e) => {
                             let _ = kill_session(&tmux_name);
-                            app.toast_message = Some(format!("Inspect failed: {}", e));
-                            app.toast_expire =
+                            app.toast.message = Some(format!("Inspect failed: {}", e));
+                            app.toast.expire =
                                 Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         }
                     }

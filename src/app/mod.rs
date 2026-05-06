@@ -12,6 +12,7 @@ mod detail_panel;
 mod forms;
 mod overlay;
 mod schedule_freq;
+mod state;
 
 pub use command_palette::{CommandAction, CommandPalette};
 pub use detail_panel::DetailPanelMode;
@@ -21,6 +22,7 @@ pub use forms::{
 };
 pub use overlay::Overlay;
 pub use schedule_freq::ScheduleFrequency;
+pub use state::ToastState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -53,8 +55,7 @@ pub struct App {
     pub theme: Theme,
     pub theme_name: String,
     pub search_query: Option<String>,
-    pub toast_message: Option<String>,
-    pub toast_expire: Option<std::time::Instant>,
+    pub toast: ToastState,
     pub sort_mode: crate::types::SortMode,
     pub activity_feed: VecDeque<crate::types::ActivityEvent>,
     pub show_activity_feed: bool,
@@ -94,8 +95,7 @@ impl App {
                 "dark".to_string()
             },
             search_query: None,
-            toast_message: None,
-            toast_expire: None,
+            toast: ToastState::new(),
             sort_mode: crate::types::SortMode::StatusPriority,
             activity_feed: VecDeque::new(),
             show_activity_feed: true,

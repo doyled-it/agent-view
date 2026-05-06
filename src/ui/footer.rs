@@ -8,9 +8,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
     // Show toast if active and not expired
-    if let Some(ref msg) = app.toast_message {
+    if let Some(ref msg) = app.toast.message {
         if app
-            .toast_expire
+            .toast
+            .expire
             .is_some_and(|t| t > std::time::Instant::now())
         {
             let toast = Line::from(Span::styled(
