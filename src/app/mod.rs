@@ -22,6 +22,7 @@ pub use schedule_freq::ScheduleFrequency;
 pub use state::ActivityState;
 pub use state::BulkSelection;
 pub use state::PreviewState;
+pub use state::RoutineState;
 pub use state::StatusPageState;
 pub use state::ToastState;
 pub use state::UsageState;
@@ -65,11 +66,7 @@ pub struct App {
     pub detail_mode: DetailPanelMode,
     pub preview: PreviewState,
     pub active_tab: ActiveTab,
-    pub routines: Vec<crate::types::Routine>,
-    pub routine_runs_cache: std::collections::HashMap<String, Vec<crate::types::RoutineRun>>,
-    pub routine_list_rows: Vec<RoutineListRow>,
-    pub routine_selected_index: usize,
-    pub routine_tab_warning_shown: bool,
+    pub routine_state: RoutineState,
     pub usage_state: UsageState,
     pub status_state: StatusPageState,
 }
@@ -100,11 +97,7 @@ impl App {
             detail_mode: DetailPanelMode::Metadata,
             preview: PreviewState::new(),
             active_tab: ActiveTab::Sessions,
-            routines: Vec::new(),
-            routine_runs_cache: std::collections::HashMap::new(),
-            routine_list_rows: Vec::new(),
-            routine_selected_index: 0,
-            routine_tab_warning_shown: false,
+            routine_state: RoutineState::new(),
             usage_state: UsageState::new(),
             status_state: StatusPageState::new(),
         }
@@ -207,7 +200,8 @@ impl App {
             _ => return Vec::new(),
         };
 
-        self.routine_list_rows
+        self.routine_state
+            .list_rows
             .iter()
             .enumerate()
             .filter_map(|(i, row)| match row {
@@ -233,7 +227,7 @@ impl App {
     pub fn toggle_tab(&mut self) {
         self.active_tab = match self.active_tab {
             ActiveTab::Sessions => {
-                if !self.routine_tab_warning_shown {
+                if !self.routine_state.tab_warning_shown {
                     self.overlay = Overlay::RoutineWarning;
                 }
                 ActiveTab::Routines
@@ -249,7 +243,7 @@ impl App {
         // Group routines by group_path
         let mut groups_map: std::collections::HashMap<String, Vec<&crate::types::Routine>> =
             std::collections::HashMap::new();
-        for routine in &self.routines {
+        for routine in &self.routine_state.routines {
             groups_map
                 .entry(routine.group_path.clone())
                 .or_default()
@@ -295,7 +289,7 @@ impl App {
 
                     // If routine is expanded, add its runs
                     if routine.expanded {
-                        if let Some(runs) = self.routine_runs_cache.get(&routine.id) {
+                        if let Some(runs) = self.routine_state.runs_cache.get(&routine.id) {
                             for run in runs {
                                 rows.push(RoutineListRow::Run {
                                     run: Box::new(run.clone()),
@@ -308,15 +302,15 @@ impl App {
             }
         }
 
-        self.routine_list_rows = rows;
+        self.routine_state.list_rows = rows;
         self.clamp_routine_selection();
     }
 
     pub fn clamp_routine_selection(&mut self) {
-        if self.routine_list_rows.is_empty() {
-            self.routine_selected_index = 0;
-        } else if self.routine_selected_index >= self.routine_list_rows.len() {
-            self.routine_selected_index = self.routine_list_rows.len() - 1;
+        if self.routine_state.list_rows.is_empty() {
+            self.routine_state.selected_index = 0;
+        } else if self.routine_state.selected_index >= self.routine_state.list_rows.len() {
+            self.routine_state.selected_index = self.routine_state.list_rows.len() - 1;
         }
     }
 }

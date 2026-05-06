@@ -72,10 +72,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.rebuild_list_rows();
 
     // Load routines
-    app.routines = storage.load_routines().unwrap_or_default();
-    for routine in &app.routines {
+    app.routine_state.routines = storage.load_routines().unwrap_or_default();
+    for routine in &app.routine_state.routines {
         if let Ok(runs) = storage.load_routine_runs(&routine.id) {
-            app.routine_runs_cache.insert(routine.id.clone(), runs);
+            app.routine_state
+                .runs_cache
+                .insert(routine.id.clone(), runs);
         }
     }
     app.rebuild_routine_list_rows();
@@ -84,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let scheduler = crate::core::scheduler::platform_scheduler();
         let mut stale_count = 0;
-        for routine in &app.routines {
+        for routine in &app.routine_state.routines {
             if routine.enabled && !scheduler.is_installed(&routine.id) {
                 // Re-install missing job
                 let _ = scheduler.install(routine);
@@ -108,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Mark crashed runs (finished_at IS NULL but tmux session gone)
-        for routine in &app.routines {
+        for routine in &app.routine_state.routines {
             if let Ok(runs) = storage.load_routine_runs(&routine.id) {
                 for run in &runs {
                     if run.finished_at.is_none() {
@@ -361,7 +363,7 @@ fn run_tui(
                         }
                         crate::app::Overlay::RoutineWarning => match key.code {
                             crossterm::event::KeyCode::Enter => {
-                                app.routine_tab_warning_shown = true;
+                                app.routine_state.tab_warning_shown = true;
                                 app.overlay = crate::app::Overlay::None;
                             }
                             crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Tab => {
@@ -421,10 +423,12 @@ fn run_tui(
                 app.rebuild_list_rows();
 
                 // Reload routines
-                app.routines = storage.load_routines().unwrap_or_default();
-                for routine in &app.routines {
+                app.routine_state.routines = storage.load_routines().unwrap_or_default();
+                for routine in &app.routine_state.routines {
                     if let Ok(runs) = storage.load_routine_runs(&routine.id) {
-                        app.routine_runs_cache.insert(routine.id.clone(), runs);
+                        app.routine_state
+                            .runs_cache
+                            .insert(routine.id.clone(), runs);
                     }
                 }
                 app.rebuild_routine_list_rows();
@@ -518,9 +522,14 @@ fn run_tui(
                         .unwrap_or(true);
 
                     if should_capture {
-                        let content = match app.routine_list_rows.get(app.routine_selected_index) {
+                        let content = match app
+                            .routine_state
+                            .list_rows
+                            .get(app.routine_state.selected_index)
+                        {
                             Some(crate::app::RoutineListRow::Routine(routine)) => app
-                                .routine_runs_cache
+                                .routine_state
+                                .runs_cache
                                 .get(&routine.id)
                                 .and_then(|runs| runs.first())
                                 .and_then(|run| {

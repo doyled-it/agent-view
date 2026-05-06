@@ -274,29 +274,36 @@ pub fn execute_command_action(
         CommandAction::ToggleRoutine => {
             app.active_tab = crate::app::ActiveTab::Routines;
             if let Some(crate::app::RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 let new_enabled = !routine.enabled;
                 let _ = storage.set_routine_enabled(&routine.id, new_enabled);
                 let scheduler = crate::core::scheduler::platform_scheduler();
                 if new_enabled {
-                    if let Some(r) = app.routines.iter().find(|r| r.id == routine.id) {
+                    if let Some(r) = app
+                        .routine_state
+                        .routines
+                        .iter()
+                        .find(|r| r.id == routine.id)
+                    {
                         let _ = scheduler.install(r);
                     }
                 } else {
                     let _ = scheduler.uninstall(&routine.id);
                 }
-                app.routines = storage.load_routines().unwrap_or_default();
+                app.routine_state.routines = storage.load_routines().unwrap_or_default();
                 app.rebuild_routine_list_rows();
             }
         }
         CommandAction::DeleteRoutine => {
             app.active_tab = crate::app::ActiveTab::Routines;
             if let Some(crate::app::RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {

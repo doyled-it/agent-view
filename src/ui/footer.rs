@@ -50,7 +50,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             }
             crate::app::ActiveTab::Routines => {
                 let on_run = matches!(
-                    app.routine_list_rows.get(app.routine_selected_index),
+                    app.routine_state
+                        .list_rows
+                        .get(app.routine_state.selected_index),
                     Some(crate::app::RoutineListRow::Run { .. })
                 );
                 if on_run {

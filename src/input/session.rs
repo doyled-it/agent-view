@@ -187,8 +187,8 @@ pub fn handle_confirm_key(
                         let scheduler = crate::core::scheduler::platform_scheduler();
                         let _ = scheduler.uninstall(id);
                         let _ = storage.delete_routine(id);
-                        app.routines = storage.load_routines().unwrap_or_default();
-                        app.routine_runs_cache.remove(id);
+                        app.routine_state.routines = storage.load_routines().unwrap_or_default();
+                        app.routine_state.runs_cache.remove(id);
                         app.rebuild_routine_list_rows();
                         storage.touch().ok();
                     }
@@ -242,7 +242,8 @@ pub fn handle_rename_key(
                         }
                         crate::app::RenameTarget::Routine => {
                             let _ = storage.rename_routine(&form.target_id, &new_name);
-                            app.routines = storage.load_routines().unwrap_or_default();
+                            app.routine_state.routines =
+                                storage.load_routines().unwrap_or_default();
                             app.rebuild_routine_list_rows();
                             storage.touch().ok();
                         }
@@ -300,7 +301,8 @@ pub fn handle_move_key(
                         }
                         crate::app::ActiveTab::Routines => {
                             let _ = storage.move_routine_to_group(&form.session_id.clone(), path);
-                            app.routines = storage.load_routines().unwrap_or_default();
+                            app.routine_state.routines =
+                                storage.load_routines().unwrap_or_default();
                             app.rebuild_routine_list_rows();
                         }
                     }

@@ -127,7 +127,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                 }
             }
             crate::app::ActiveTab::Routines => {
-                match app.routine_list_rows.get(app.routine_selected_index) {
+                match app
+                    .routine_state
+                    .list_rows
+                    .get(app.routine_state.selected_index)
+                {
                     Some(crate::app::RoutineListRow::Routine(routine)) => {
                         crate::ui::detail::render_routine_detail(
                             frame,
