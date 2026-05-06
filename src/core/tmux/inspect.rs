@@ -122,9 +122,7 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> TmuxResu
     let _ = std::io::stdout().flush();
 
     match result {
-        Ok(status) if !status.success() => {
-            Err(TmuxError::AttachFailed("tmux attach failed".to_string()))
-        }
+        Ok(status) if !status.success() => Err(TmuxError::AttachFailed),
         Err(e) => Err(TmuxError::Io(e)),
         Ok(_) => {
             let was_promoted = std::fs::metadata(&promote_signal).is_ok();

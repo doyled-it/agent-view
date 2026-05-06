@@ -6,8 +6,10 @@ pub enum TmuxError {
     CommandFailed(String),
     #[error("tmux capture failed")]
     CaptureFailed,
+    #[error("tmux attach failed")]
+    AttachFailed,
     #[error("tmux attach failed: {0}")]
-    AttachFailed(String),
+    AttachFailedReason(String),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 }

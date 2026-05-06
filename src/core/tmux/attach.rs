@@ -114,7 +114,7 @@ pub fn attach_session_sync(session_name: &str) -> TmuxResult<bool> {
     let _ = std::io::stdout().flush();
 
     match result {
-        Ok(status) if !status.success() => Err(TmuxError::AttachFailed(
+        Ok(status) if !status.success() => Err(TmuxError::AttachFailedReason(
             "this is usually caused by a tmux version mismatch. \
                  Run 'tmux kill-server' in a terminal to fix this."
                 .to_string(),
