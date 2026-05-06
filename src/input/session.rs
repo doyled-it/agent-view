@@ -159,7 +159,7 @@ pub fn handle_confirm_key(
                         let _ = session_ops.stop_session(storage, id);
                     }
                     crate::app::ConfirmAction::BulkDelete => {
-                        let ids: Vec<String> = app.bulk_selected.iter().cloned().collect();
+                        let ids: Vec<String> = app.bulk.selected.iter().cloned().collect();
                         let mut cache = crate::core::tmux::SessionCache::new();
                         for id in &ids {
                             let _ = session_ops.delete_session(storage, &mut cache, id);
@@ -167,7 +167,7 @@ pub fn handle_confirm_key(
                         app.clear_bulk_selection();
                     }
                     crate::app::ConfirmAction::BulkStop => {
-                        let ids: Vec<String> = app.bulk_selected.iter().cloned().collect();
+                        let ids: Vec<String> = app.bulk.selected.iter().cloned().collect();
                         for id in &ids {
                             let _ = session_ops.stop_session(storage, id);
                         }

@@ -145,8 +145,8 @@ pub fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('s')) => {
-            if !app.bulk_selected.is_empty() {
-                let count = app.bulk_selected.len();
+            if !app.bulk.selected.is_empty() {
+                let count = app.bulk.selected.len();
                 app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
                     message: format!("Stop {} selected sessions?", count),
                     action: crate::app::ConfirmAction::BulkStop,
@@ -162,8 +162,8 @@ pub fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('d')) => {
-            if !app.bulk_selected.is_empty() {
-                let count = app.bulk_selected.len();
+            if !app.bulk.selected.is_empty() {
+                let count = app.bulk.selected.len();
                 app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
                     message: format!("Delete {} selected sessions?", count),
                     action: crate::app::ConfirmAction::BulkDelete,
@@ -193,7 +193,7 @@ pub fn handle_main_key(
         (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
             app.select_all_visible();
         }
-        (KeyModifiers::NONE, KeyCode::Esc) if !app.bulk_selected.is_empty() => {
+        (KeyModifiers::NONE, KeyCode::Esc) if !app.bulk.selected.is_empty() => {
             app.clear_bulk_selection();
         }
         (KeyModifiers::NONE, KeyCode::Char('r')) => {

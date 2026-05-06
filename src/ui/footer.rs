@@ -26,7 +26,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let hints: Vec<(&str, &str)> = match &app.overlay {
         Overlay::None => match app.active_tab {
             crate::app::ActiveTab::Sessions => {
-                if !app.bulk_selected.is_empty() {
+                if !app.bulk.selected.is_empty() {
                     vec![
                         ("Space", "toggle"),
                         ("d", "delete all"),
