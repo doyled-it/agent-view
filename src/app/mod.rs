@@ -22,6 +22,7 @@ pub use schedule_freq::ScheduleFrequency;
 pub use state::ActivityState;
 pub use state::BulkSelection;
 pub use state::PreviewState;
+pub use state::StatusPageState;
 pub use state::ToastState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,8 +71,7 @@ pub struct App {
     pub routine_tab_warning_shown: bool,
     pub usage_data: Option<crate::types::UsageData>,
     pub usage_shared: Option<crate::core::usage::SharedUsageData>,
-    pub status_data: Option<crate::types::StatusPageData>,
-    pub status_shared: Option<crate::core::status_page::SharedStatusData>,
+    pub status_state: StatusPageState,
 }
 
 impl App {
@@ -107,8 +107,7 @@ impl App {
             routine_tab_warning_shown: false,
             usage_data: None,
             usage_shared: None,
-            status_data: None,
-            status_shared: None,
+            status_state: StatusPageState::new(),
         }
     }
 

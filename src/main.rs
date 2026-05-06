@@ -212,7 +212,7 @@ fn run_tui(
 
     // Spawn status-page monitor
     let (status_shared, _status_thread) = crate::core::status_page::spawn_monitor();
-    app.status_shared = Some(status_shared);
+    app.status_state.shared = Some(status_shared);
 
     // Handle --attach: immediately attach to the session
     if let Some(session_id) = app.attach_session.take() {
@@ -462,9 +462,9 @@ fn run_tui(
         }
 
         // Update status-page data from monitor thread
-        if let Some(ref shared) = app.status_shared {
+        if let Some(ref shared) = app.status_state.shared {
             if let Ok(guard) = shared.lock() {
-                app.status_data = guard.clone();
+                app.status_state.data = guard.clone();
             }
         }
 
