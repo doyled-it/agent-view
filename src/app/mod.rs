@@ -24,6 +24,7 @@ pub use state::BulkSelection;
 pub use state::PreviewState;
 pub use state::StatusPageState;
 pub use state::ToastState;
+pub use state::UsageState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -69,8 +70,7 @@ pub struct App {
     pub routine_list_rows: Vec<RoutineListRow>,
     pub routine_selected_index: usize,
     pub routine_tab_warning_shown: bool,
-    pub usage_data: Option<crate::types::UsageData>,
-    pub usage_shared: Option<crate::core::usage::SharedUsageData>,
+    pub usage_state: UsageState,
     pub status_state: StatusPageState,
 }
 
@@ -105,8 +105,7 @@ impl App {
             routine_list_rows: Vec::new(),
             routine_selected_index: 0,
             routine_tab_warning_shown: false,
-            usage_data: None,
-            usage_shared: None,
+            usage_state: UsageState::new(),
             status_state: StatusPageState::new(),
         }
     }

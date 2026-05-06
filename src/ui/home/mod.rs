@@ -47,7 +47,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         0
     };
-    let has_usage = app.usage_data.is_some();
+    let has_usage = app.usage_state.data.is_some();
     let usage_height = if has_usage { 4u16 } else { 0 }; // 1 border + 3 rows
     let status_incidents = app
         .status_state

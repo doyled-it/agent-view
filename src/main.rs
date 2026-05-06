@@ -208,7 +208,7 @@ fn run_tui(
 
     // Spawn usage monitor
     let (usage_shared, _usage_thread) = crate::core::usage::spawn_monitor();
-    app.usage_shared = Some(usage_shared);
+    app.usage_state.shared = Some(usage_shared);
 
     // Spawn status-page monitor
     let (status_shared, _status_thread) = crate::core::status_page::spawn_monitor();
@@ -455,9 +455,9 @@ fn run_tui(
         }
 
         // Update usage data from monitor thread
-        if let Some(ref shared) = app.usage_shared {
+        if let Some(ref shared) = app.usage_state.shared {
             if let Ok(guard) = shared.lock() {
-                app.usage_data = guard.clone();
+                app.usage_state.data = guard.clone();
             }
         }
 
