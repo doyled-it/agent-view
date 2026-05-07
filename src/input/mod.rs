@@ -195,9 +195,9 @@ pub fn handle_main_key(
                         action: crate::app::ConfirmAction::FinishSession(session.id.clone()),
                     });
                 } else {
-                    app.toast_message =
+                    app.toast.message =
                         Some("Session has no worktree — use 'd' to delete".to_string());
-                    app.toast_expire =
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                 }
             }

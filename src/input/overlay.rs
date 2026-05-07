@@ -155,9 +155,9 @@ pub fn execute_command_action(
                         action: crate::app::ConfirmAction::FinishSession(id),
                     });
                 } else {
-                    app.toast_message =
+                    app.toast.message =
                         Some("Session has no worktree — use 'd' to delete".to_string());
-                    app.toast_expire =
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                 }
             }
@@ -346,15 +346,15 @@ pub fn execute_command_action(
                 })
                 .unwrap_or_default();
             if repo.is_empty() {
-                app.toast_message = Some("Select a session in the target repo first".to_string());
-                app.toast_expire =
+                app.toast.message = Some("Select a session in the target repo first".to_string());
+                app.toast.expire =
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                 return Ok(());
             }
             match session_ops.find_orphan_worktrees(storage, &repo) {
                 Ok(orphans) if orphans.is_empty() => {
-                    app.toast_message = Some("No orphan worktrees".to_string());
-                    app.toast_expire =
+                    app.toast.message = Some("No orphan worktrees".to_string());
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                 }
                 Ok(orphans) => {
@@ -376,13 +376,13 @@ pub fn execute_command_action(
                             failed.join("; ")
                         )
                     };
-                    app.toast_message = Some(msg);
-                    app.toast_expire =
+                    app.toast.message = Some(msg);
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(8));
                 }
                 Err(e) => {
-                    app.toast_message = Some(format!("Sweep failed: {}", e));
-                    app.toast_expire =
+                    app.toast.message = Some(format!("Sweep failed: {}", e));
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
                 }
             }

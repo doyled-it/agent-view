@@ -270,11 +270,7 @@ impl SessionOps {
     }
 
     /// Force-remove an orphan worktree.
-    pub fn remove_orphan_worktree(
-        &self,
-        repo_dir: &str,
-        worktree_path: &str,
-    ) -> SessionResult<()> {
+    pub fn remove_orphan_worktree(&self, repo_dir: &str, worktree_path: &str) -> SessionResult<()> {
         crate::core::git::remove_worktree(repo_dir, worktree_path, true)?;
         Ok(())
     }
