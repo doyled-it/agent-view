@@ -39,7 +39,7 @@ pub(super) fn handle_schedule_input(form: &mut NewRoutineForm, key: KeyEvent) {
                 }
             }
             KeyCode::Char(c) if c.is_ascii_digit() => {
-                let digit = c.to_digit(10).unwrap() as u8;
+                let digit = c.to_digit(10).expect("matched is_ascii_digit guard") as u8;
                 form.minute = ((form.minute * 10 + digit) % 60).min(59);
             }
             KeyCode::Char(' ') if form.frequency == ScheduleFrequency::Weekly => {

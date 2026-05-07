@@ -3,7 +3,7 @@
 
 use rusqlite::{Connection, Result as SqlResult};
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 mod groups;
 mod meta;
@@ -17,12 +17,12 @@ pub struct Storage {
 }
 
 impl Storage {
-    pub fn open(db_path: &str) -> SqlResult<Self> {
-        let path = PathBuf::from(db_path);
+    pub fn open(db_path: impl AsRef<Path>) -> SqlResult<Self> {
+        let path = db_path.as_ref();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).ok();
         }
-        let conn = Connection::open(db_path)?;
+        let conn = Connection::open(path)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA busy_timeout = 5000;
@@ -33,17 +33,9 @@ impl Storage {
 
     pub fn open_default() -> SqlResult<Self> {
         let home = dirs::home_dir().expect("Cannot determine home directory");
-        let db_path = home.join(".agent-orchestrator").join("state.db");
-        Self::open(db_path.to_str().unwrap())
+        Self::open(home.join(".agent-orchestrator").join("state.db"))
     }
 
-    #[allow(dead_code)]
-    pub fn close(self) -> SqlResult<()> {
-        self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
     pub fn conn(&self) -> &Connection {
         &self.conn
     }
@@ -72,7 +64,7 @@ pub(crate) mod test_helpers {
     pub fn test_storage() -> (Storage, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.db");
-        let storage = Storage::open(db_path.to_str().unwrap()).unwrap();
+        let storage = Storage::open(&db_path).unwrap();
         storage.migrate().unwrap();
         (storage, dir)
     }

@@ -1,30 +1,45 @@
 //! Routine execution logic — runs steps sequentially in a tmux session
 
+use crate::core::logger;
 use crate::core::storage::Storage;
+use crate::core::tmux::TmuxError;
 use crate::types::{RoutineRun, RoutineStep, RunStatus};
+
+#[derive(thiserror::Error, Debug)]
+pub enum RoutineError {
+    #[error("storage error: {0}")]
+    Storage(String),
+    #[error("routine not found: {0}")]
+    NotFound(String),
+    #[error("tmux error: {0}")]
+    Tmux(#[from] TmuxError),
+}
+
+pub type RoutineResult<T> = Result<T, RoutineError>;
 
 /// Execute a routine by ID. Called by the `exec-routine` CLI subcommand.
 /// This is a blocking function that runs all steps sequentially.
-pub fn exec_routine(routine_id: &str) -> Result<(), String> {
-    let storage = Storage::open_default().map_err(|e| format!("Failed to open storage: {}", e))?;
+pub fn exec_routine(routine_id: &str) -> RoutineResult<()> {
+    let storage = Storage::open_default()
+        .map_err(|e| RoutineError::Storage(format!("Failed to open storage: {}", e)))?;
     storage
         .migrate()
-        .map_err(|e| format!("Migration failed: {}", e))?;
+        .map_err(|e| RoutineError::Storage(format!("Migration failed: {}", e)))?;
 
     let routine = storage
         .get_routine(routine_id)
-        .map_err(|e| format!("DB error: {}", e))?
-        .ok_or_else(|| format!("Routine '{}' not found", routine_id))?;
+        .map_err(|e| RoutineError::Storage(format!("DB error: {}", e)))?
+        .ok_or_else(|| RoutineError::NotFound(format!("Routine '{}' not found", routine_id)))?;
 
     // Concurrency guard
     if storage
         .has_active_run(routine_id)
-        .map_err(|e| format!("DB error: {}", e))?
+        .map_err(|e| RoutineError::Storage(format!("DB error: {}", e)))?
     {
-        eprintln!(
+        logger::log_diagnostic(&format!(
             "Routine '{}' already has an active run, skipping",
             routine.name
-        );
+        ));
         return Ok(());
     }
 
@@ -51,7 +66,7 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
     };
     storage
         .save_routine_run(&run)
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| RoutineError::Storage(format!("DB error: {}", e)))?;
 
     let timeout = std::time::Duration::from_secs(routine.step_timeout_secs as u64);
     let mut final_status = RunStatus::Completed;
@@ -70,7 +85,7 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
 
         // Send command to tmux
         if let Err(e) = crate::core::tmux::send_keys(&tmux_name, &command) {
-            eprintln!("Failed to send keys for step {}: {}", i + 1, e);
+            logger::log_diagnostic(&format!("Failed to send keys for step {}: {}", i + 1, e));
             final_status = RunStatus::Failed;
             break;
         }
@@ -99,14 +114,14 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
             std::thread::sleep(std::time::Duration::from_millis(500));
 
             if start.elapsed() > timeout {
-                eprintln!("Step {} timed out", i + 1);
+                logger::log_diagnostic(&format!("Step {} timed out", i + 1));
                 final_status = RunStatus::TimedOut;
                 break;
             }
 
             // Check if tmux session still exists
             if !crate::core::tmux::session_exists(&tmux_name) {
-                eprintln!("tmux session died during step {}", i + 1);
+                logger::log_diagnostic(&format!("tmux session died during step {}", i + 1));
                 final_status = RunStatus::Crashed;
                 break;
             }
@@ -135,7 +150,7 @@ pub fn exec_routine(routine_id: &str) -> Result<(), String> {
                     }
 
                     if parsed.has_error {
-                        eprintln!("Step {} encountered an error", i + 1);
+                        logger::log_diagnostic(&format!("Step {} encountered an error", i + 1));
                         final_status = RunStatus::Failed;
                         break;
                     }

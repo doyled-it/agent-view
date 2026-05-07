@@ -62,14 +62,10 @@ impl StatusProcessor {
     ) -> SessionStatus {
         // Error hysteresis: require sustained error before showing
         if raw_status == SessionStatus::Error {
-            if !self.error_start_time.contains_key(session_id) {
-                self.error_start_time
-                    .insert(session_id.to_string(), Instant::now());
-            }
             let error_duration = self
                 .error_start_time
-                .get(session_id)
-                .unwrap()
+                .entry(session_id.to_string())
+                .or_insert_with(Instant::now)
                 .elapsed()
                 .as_millis();
             if error_duration < MIN_ERROR_DURATION_MS {

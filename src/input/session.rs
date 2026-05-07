@@ -78,8 +78,8 @@ pub fn handle_new_session_key(
                 match session_ops.create_session(storage, &mut cache, options) {
                     Ok((_, warn)) => {
                         if let Some(msg) = warn {
-                            app.toast_message = Some(msg);
-                            app.toast_expire =
+                            app.toast.message = Some(msg);
+                            app.toast.expire =
                                 Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
                         }
                         if let Ok(sessions) = storage.load_sessions() {
@@ -93,7 +93,11 @@ pub fn handle_new_session_key(
                         app.overlay = crate::app::Overlay::None;
                     }
                     Err(e) => {
-                        form.error = Some(e);
+                        crate::core::logger::log_diagnostic(&format!(
+                            "Failed to create session: {}",
+                            e
+                        ));
+                        form.error = Some(e.to_string());
                     }
                 }
             }
@@ -276,7 +280,7 @@ pub fn handle_confirm_key(
                         let _ = session_ops.stop_session(storage, id);
                     }
                     crate::app::ConfirmAction::BulkDelete => {
-                        let ids: Vec<String> = app.bulk_selected.iter().cloned().collect();
+                        let ids: Vec<String> = app.bulk.selected.iter().cloned().collect();
                         let mut cache = crate::core::tmux::SessionCache::new();
                         for id in &ids {
                             let _ = session_ops.delete_session(storage, &mut cache, id);
@@ -284,7 +288,7 @@ pub fn handle_confirm_key(
                         app.clear_bulk_selection();
                     }
                     crate::app::ConfirmAction::BulkStop => {
-                        let ids: Vec<String> = app.bulk_selected.iter().cloned().collect();
+                        let ids: Vec<String> = app.bulk.selected.iter().cloned().collect();
                         for id in &ids {
                             let _ = session_ops.stop_session(storage, id);
                         }
@@ -304,8 +308,8 @@ pub fn handle_confirm_key(
                         let scheduler = crate::core::scheduler::platform_scheduler();
                         let _ = scheduler.uninstall(id);
                         let _ = storage.delete_routine(id);
-                        app.routines = storage.load_routines().unwrap_or_default();
-                        app.routine_runs_cache.remove(id);
+                        app.routine_state.routines = storage.load_routines().unwrap_or_default();
+                        app.routine_state.runs_cache.remove(id);
                         app.rebuild_routine_list_rows();
                         storage.touch().ok();
                     }
@@ -325,14 +329,14 @@ pub fn handle_confirm_key(
                                     (true, false, false) => "Worktree removed",
                                     _ => "Session finished",
                                 };
-                                app.toast_message = Some(msg.to_string());
-                                app.toast_expire = Some(
+                                app.toast.message = Some(msg.to_string());
+                                app.toast.expire = Some(
                                     std::time::Instant::now() + std::time::Duration::from_secs(5),
                                 );
                             }
                             Err(e) => {
-                                app.toast_message = Some(format!("Finish failed: {}", e));
-                                app.toast_expire = Some(
+                                app.toast.message = Some(format!("Finish failed: {}", e));
+                                app.toast.expire = Some(
                                     std::time::Instant::now() + std::time::Duration::from_secs(6),
                                 );
                             }
@@ -388,7 +392,8 @@ pub fn handle_rename_key(
                         }
                         crate::app::RenameTarget::Routine => {
                             let _ = storage.rename_routine(&form.target_id, &new_name);
-                            app.routines = storage.load_routines().unwrap_or_default();
+                            app.routine_state.routines =
+                                storage.load_routines().unwrap_or_default();
                             app.rebuild_routine_list_rows();
                             storage.touch().ok();
                         }
@@ -446,12 +451,13 @@ pub fn handle_move_key(
                         }
                         crate::app::ActiveTab::Routines => {
                             let _ = storage.move_routine_to_group(&form.session_id.clone(), path);
-                            app.routines = storage.load_routines().unwrap_or_default();
+                            app.routine_state.routines =
+                                storage.load_routines().unwrap_or_default();
                             app.rebuild_routine_list_rows();
                         }
                     }
-                    app.toast_message = Some(format!("Moved to {}", name));
-                    app.toast_expire =
+                    app.toast.message = Some(format!("Moved to {}", name));
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
                 }
                 app.overlay = crate::app::Overlay::None;

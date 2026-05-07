@@ -39,22 +39,23 @@ pub fn render(frame: &mut Frame, app: &App) {
         };
 
     // Layout: header, body, activity feed, usage pane, footer
-    let show_feed = app.show_activity_feed && !app.activity_feed.is_empty();
+    let show_feed = app.activity.show_feed && !app.activity.feed.is_empty();
     let feed_height = if show_feed {
         // 1 for border + 1 per event, capped at 8 lines total
-        let events = app.activity_feed.len().min(7) as u16;
+        let events = app.activity.feed.len().min(7) as u16;
         events + 1
     } else {
         0
     };
-    let has_usage = app.usage_data.is_some();
+    let has_usage = app.usage_state.data.is_some();
     let usage_height = if has_usage { 4u16 } else { 0 }; // 1 border + 3 rows
     let status_incidents = app
-        .status_data
+        .status_state
+        .data
         .as_ref()
         .map(|s| s.incidents.len())
         .unwrap_or(0);
-    let status_height = if app.status_data.is_some() {
+    let status_height = if app.status_state.data.is_some() {
         // 1 border + 1 description + min(incidents, 3)
         2u16 + (status_incidents.min(3) as u16)
     } else {
@@ -86,7 +87,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     if has_usage {
         usage_pane::render_usage_pane(frame, chunks[3], app);
     }
-    if app.status_data.is_some() {
+    if app.status_state.data.is_some() {
         status_pane::render_status_pane(frame, chunks[4], app);
     }
     if let Some(ref query) = app.search_query {
@@ -121,12 +122,16 @@ pub fn render(frame: &mut Frame, app: &App) {
                         session,
                         &app.theme,
                         app.detail_mode,
-                        &app.preview_content,
+                        &app.preview.content,
                     );
                 }
             }
             crate::app::ActiveTab::Routines => {
-                match app.routine_list_rows.get(app.routine_selected_index) {
+                match app
+                    .routine_state
+                    .list_rows
+                    .get(app.routine_state.selected_index)
+                {
                     Some(crate::app::RoutineListRow::Routine(routine)) => {
                         crate::ui::detail::render_routine_detail(
                             frame,
@@ -134,7 +139,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                             routine,
                             &app.theme,
                             app.detail_mode,
-                            &app.preview_content,
+                            &app.preview.content,
                         );
                     }
                     Some(crate::app::RoutineListRow::Run { run, routine_name }) => {
@@ -145,7 +150,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                             routine_name,
                             &app.theme,
                             app.detail_mode,
-                            &app.preview_content,
+                            &app.preview.content,
                         );
                     }
                     _ => {}

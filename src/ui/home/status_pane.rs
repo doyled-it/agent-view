@@ -21,7 +21,7 @@ pub(super) fn render_status_pane(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (icon, color, description) = match app.status_data {
+    let (icon, color, description) = match app.status_state.data {
         Some(ref s) => {
             let color = match s.indicator {
                 StatusIndicator::None => theme.success,
@@ -43,7 +43,7 @@ pub(super) fn render_status_pane(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(description.to_string(), Style::default().fg(theme.text)),
     ])];
 
-    if let Some(ref s) = app.status_data {
+    if let Some(ref s) = app.status_state.data {
         let max_incidents = inner.height.saturating_sub(1) as usize;
         for inc in s.incidents.iter().take(max_incidents) {
             lines.push(Line::from(vec![

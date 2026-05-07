@@ -1,13 +1,16 @@
 //! Tmux subprocess wrapper for session management
 
 mod attach;
+mod error;
 mod inspect;
 
 pub use attach::attach_session_sync;
+pub use error::{TmuxError, TmuxResult};
 pub use inspect::attach_inspect_session_sync;
 
 use std::collections::HashMap;
 use std::process::Command;
+use std::sync::LazyLock;
 use std::time::Instant;
 
 pub const SESSION_PREFIX: &str = "agentorch_";
@@ -154,17 +157,20 @@ pub fn create_session(
     command: Option<&str>,
     cwd: Option<&str>,
     env: Option<&HashMap<String, String>>,
-) -> Result<(), String> {
+) -> TmuxResult<()> {
     let cwd = cwd.unwrap_or("/tmp");
 
     // Step 1: Create detached session
     let status = Command::new("tmux")
         .args(["new-session", "-d", "-s", name, "-c", cwd])
         .status()
-        .map_err(|e| format!("Failed to spawn tmux: {}", e))?;
+        .map_err(|e| TmuxError::CommandFailed(format!("Failed to spawn tmux: {}", e)))?;
 
     if !status.success() {
-        return Err(format!("tmux new-session failed with status {}", status));
+        return Err(TmuxError::CommandFailed(format!(
+            "tmux new-session failed with status {}",
+            status
+        )));
     }
 
     // Step 2: Set environment variables
@@ -192,7 +198,7 @@ pub fn create_session(
 }
 
 /// Kill a tmux session
-pub fn kill_session(name: &str) -> Result<(), String> {
+pub fn kill_session(name: &str) -> TmuxResult<()> {
     let _ = Command::new("tmux")
         .args(["kill-session", "-t", name])
         .output();
@@ -200,7 +206,7 @@ pub fn kill_session(name: &str) -> Result<(), String> {
 }
 
 /// Send keys to a tmux session (followed by Enter)
-pub fn send_keys(name: &str, keys: &str) -> Result<(), String> {
+pub fn send_keys(name: &str, keys: &str) -> TmuxResult<()> {
     let escaped = keys
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
@@ -209,24 +215,30 @@ pub fn send_keys(name: &str, keys: &str) -> Result<(), String> {
     let status = Command::new("tmux")
         .args(["send-keys", "-t", name, &escaped, "Enter"])
         .status()
-        .map_err(|e| format!("Failed to send keys: {}", e))?;
+        .map_err(|e| TmuxError::CommandFailed(format!("Failed to send keys: {}", e)))?;
 
     if !status.success() {
-        return Err(format!("tmux send-keys failed with status {}", status));
+        return Err(TmuxError::CommandFailed(format!(
+            "tmux send-keys failed with status {}",
+            status
+        )));
     }
     Ok(())
 }
 
 /// Send raw key names to a tmux session without appending Enter.
 /// Use for special keys like "Right", "Left", "Escape", etc.
-pub fn send_keys_raw(name: &str, keys: &str) -> Result<(), String> {
+pub fn send_keys_raw(name: &str, keys: &str) -> TmuxResult<()> {
     let status = Command::new("tmux")
         .args(["send-keys", "-t", name, keys])
         .status()
-        .map_err(|e| format!("Failed to send keys: {}", e))?;
+        .map_err(|e| TmuxError::CommandFailed(format!("Failed to send keys: {}", e)))?;
 
     if !status.success() {
-        return Err(format!("tmux send-keys failed with status {}", status));
+        return Err(TmuxError::CommandFailed(format!(
+            "tmux send-keys failed with status {}",
+            status
+        )));
     }
     Ok(())
 }
@@ -234,14 +246,14 @@ pub fn send_keys_raw(name: &str, keys: &str) -> Result<(), String> {
 /// Capture pane content from a tmux session
 /// Capture pane content from a tmux session.
 /// If `escape` is true, ANSI escape sequences are preserved (-e flag).
-pub fn capture_pane(name: &str, start_line: Option<i32>, escape: bool) -> Result<String, String> {
+pub fn capture_pane(name: &str, start_line: Option<i32>, escape: bool) -> TmuxResult<String> {
     capture_pane_inner(name, start_line, escape, false)
 }
 
 /// Like `capture_pane` but passes `-J` so tmux joins lines that wrap at the
 /// pane width back into single logical lines. Use this when downstream parsing
 /// relies on suffix matches (e.g. "X% used") that would be split by wrap.
-pub fn capture_pane_joined(name: &str, start_line: Option<i32>) -> Result<String, String> {
+pub fn capture_pane_joined(name: &str, start_line: Option<i32>) -> TmuxResult<String> {
     capture_pane_inner(name, start_line, false, true)
 }
 
@@ -250,7 +262,7 @@ fn capture_pane_inner(
     start_line: Option<i32>,
     escape: bool,
     join_wrapped: bool,
-) -> Result<String, String> {
+) -> TmuxResult<String> {
     let mut args = vec!["capture-pane", "-t", name, "-p"];
     let start_str;
 
@@ -270,10 +282,10 @@ fn capture_pane_inner(
     let output = Command::new("tmux")
         .args(&args)
         .output()
-        .map_err(|e| format!("Failed to capture pane: {}", e))?;
+        .map_err(|e| TmuxError::CommandFailed(format!("Failed to capture pane: {}", e)))?;
 
     if !output.status.success() {
-        return Err("capture-pane failed".to_string());
+        return Err(TmuxError::CaptureFailed);
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -281,59 +293,44 @@ fn capture_pane_inner(
 
 /// Force a tmux window to a fixed size (useful for detached sessions whose
 /// pane width would otherwise default to ~80 cols and wrap content).
-pub fn resize_window(name: &str, width: u32, height: u32) -> Result<(), String> {
+pub fn resize_window(name: &str, width: u32, height: u32) -> TmuxResult<()> {
     let w = width.to_string();
     let h = height.to_string();
     let status = Command::new("tmux")
         .args(["resize-window", "-t", name, "-x", &w, "-y", &h])
         .status()
-        .map_err(|e| format!("Failed to resize-window: {}", e))?;
+        .map_err(|e| TmuxError::CommandFailed(format!("Failed to resize-window: {}", e)))?;
     if !status.success() {
-        return Err(format!("tmux resize-window failed with status {}", status));
+        return Err(TmuxError::CommandFailed(format!(
+            "tmux resize-window failed with status {}",
+            status
+        )));
     }
     Ok(())
 }
 
 /// Clear the scrollback history for a session's pane.
-pub fn clear_history(name: &str) -> Result<(), String> {
+pub fn clear_history(name: &str) -> TmuxResult<()> {
     let status = Command::new("tmux")
         .args(["clear-history", "-t", name])
         .status()
-        .map_err(|e| format!("Failed to clear-history: {}", e))?;
+        .map_err(|e| TmuxError::CommandFailed(format!("Failed to clear-history: {}", e)))?;
     if !status.success() {
-        return Err(format!("tmux clear-history failed with status {}", status));
+        return Err(TmuxError::CommandFailed(format!(
+            "tmux clear-history failed with status {}",
+            status
+        )));
     }
     Ok(())
 }
 
-/// Get sessions that currently have an attached client
-#[allow(dead_code)]
-pub fn get_attached_sessions() -> std::collections::HashSet<String> {
-    let output = Command::new("tmux")
-        .args(["list-clients", "-F", "#{client_session}"])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout
-                .trim()
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect()
-        }
-        _ => std::collections::HashSet::new(),
-    }
-}
+static ANSI_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)")
+        .expect("static regex must compile")
+});
 
 /// Strip ANSI escape sequences from terminal output
 pub fn strip_ansi(text: &str) -> String {
-    lazy_static::lazy_static! {
-        static ref ANSI_RE: regex::Regex = regex::Regex::new(
-            r"(\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\)"
-        ).unwrap();
-    }
     ANSI_RE.replace_all(text, "").to_string()
 }
 

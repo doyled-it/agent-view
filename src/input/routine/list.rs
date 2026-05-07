@@ -25,27 +25,28 @@ pub fn handle_routine_list_key(
     match (key.modifiers, key.code) {
         // Navigation
         (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
-            if app.routine_selected_index > 0 {
-                app.routine_selected_index -= 1;
-            } else if !app.routine_list_rows.is_empty() {
-                app.routine_selected_index = app.routine_list_rows.len() - 1;
+            if app.routine_state.selected_index > 0 {
+                app.routine_state.selected_index -= 1;
+            } else if !app.routine_state.list_rows.is_empty() {
+                app.routine_state.selected_index = app.routine_state.list_rows.len() - 1;
             }
         }
         (KeyModifiers::NONE, KeyCode::Down) | (KeyModifiers::NONE, KeyCode::Char('j'))
-            if !app.routine_list_rows.is_empty() =>
+            if !app.routine_state.list_rows.is_empty() =>
         {
-            if app.routine_selected_index < app.routine_list_rows.len() - 1 {
-                app.routine_selected_index += 1;
+            if app.routine_state.selected_index < app.routine_state.list_rows.len() - 1 {
+                app.routine_state.selected_index += 1;
             } else {
-                app.routine_selected_index = 0;
+                app.routine_state.selected_index = 0;
             }
         }
 
         // Enter: expand/collapse routine to show runs, or toggle group
         (KeyModifiers::NONE, KeyCode::Enter) => {
             match app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 Some(RoutineListRow::Group { group, .. }) => {
@@ -57,11 +58,18 @@ pub fn handle_routine_list_key(
                 }
                 Some(RoutineListRow::Routine(routine)) => {
                     let routine_id = routine.id.clone();
-                    if let Some(r) = app.routines.iter_mut().find(|r| r.id == routine_id) {
+                    if let Some(r) = app
+                        .routine_state
+                        .routines
+                        .iter_mut()
+                        .find(|r| r.id == routine_id)
+                    {
                         r.expanded = !r.expanded;
-                        if r.expanded && !app.routine_runs_cache.contains_key(&routine_id) {
+                        if r.expanded && !app.routine_state.runs_cache.contains_key(&routine_id) {
                             if let Ok(runs) = storage.load_routine_runs(&routine_id) {
-                                app.routine_runs_cache.insert(routine_id.clone(), runs);
+                                app.routine_state
+                                    .runs_cache
+                                    .insert(routine_id.clone(), runs);
                             }
                         }
                     }
@@ -74,8 +82,9 @@ pub fn handle_routine_list_key(
         // Space: toggle enabled/disabled
         (KeyModifiers::NONE, KeyCode::Char(' ')) => {
             if let Some(RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 let new_enabled = !routine.enabled;
@@ -83,14 +92,19 @@ pub fn handle_routine_list_key(
 
                 let scheduler = platform_scheduler();
                 if new_enabled {
-                    if let Some(r) = app.routines.iter().find(|r| r.id == routine.id) {
+                    if let Some(r) = app
+                        .routine_state
+                        .routines
+                        .iter()
+                        .find(|r| r.id == routine.id)
+                    {
                         let _ = scheduler.install(r);
                     }
                 } else {
                     let _ = scheduler.uninstall(&routine.id);
                 }
 
-                app.routines = storage.load_routines().unwrap_or_default();
+                app.routine_state.routines = storage.load_routines().unwrap_or_default();
                 app.rebuild_routine_list_rows();
                 storage.touch().ok();
             }
@@ -99,8 +113,9 @@ pub fn handle_routine_list_key(
         // d: delete routine or run
         (KeyModifiers::NONE, KeyCode::Char('d')) => {
             match app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 Some(RoutineListRow::Routine(routine)) => {
@@ -115,7 +130,9 @@ pub fn handle_routine_list_key(
                         let _ = std::fs::remove_file(log_path);
                     }
                     if let Ok(runs) = storage.load_routine_runs(&run.routine_id) {
-                        app.routine_runs_cache.insert(run.routine_id.clone(), runs);
+                        app.routine_state
+                            .runs_cache
+                            .insert(run.routine_id.clone(), runs);
                     }
                     app.rebuild_routine_list_rows();
                     storage.touch().ok();
@@ -127,8 +144,9 @@ pub fn handle_routine_list_key(
         // e: edit routine
         (KeyModifiers::NONE, KeyCode::Char('e')) => {
             if let Some(RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 app.overlay = Overlay::NewRoutine(NewRoutineForm::from_routine(&routine));
@@ -138,13 +156,14 @@ pub fn handle_routine_list_key(
         // p: pin/unpin routine
         (KeyModifiers::NONE, KeyCode::Char('p')) => {
             if let Some(RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 let new_pinned = !routine.pinned;
                 let _ = storage.set_routine_pinned(&routine.id, new_pinned);
-                app.routines = storage.load_routines().unwrap_or_default();
+                app.routine_state.routines = storage.load_routines().unwrap_or_default();
                 app.rebuild_routine_list_rows();
                 storage.touch().ok();
             }
@@ -153,11 +172,13 @@ pub fn handle_routine_list_key(
         // P: promote run to session
         (KeyModifiers::SHIFT, KeyCode::Char('P')) => {
             if let Some(RoutineListRow::Run { run, .. }) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 if let Some(routine) = app
+                    .routine_state
                     .routines
                     .iter()
                     .find(|r| r.id == run.routine_id)
@@ -210,13 +231,15 @@ pub fn handle_routine_list_key(
                     app.sessions = storage.load_sessions().unwrap_or_default();
                     app.rebuild_list_rows();
                     if let Ok(runs) = storage.load_routine_runs(&run.routine_id) {
-                        app.routine_runs_cache.insert(run.routine_id.clone(), runs);
+                        app.routine_state
+                            .runs_cache
+                            .insert(run.routine_id.clone(), runs);
                     }
                     app.rebuild_routine_list_rows();
                     storage.touch().ok();
 
-                    app.toast_message = Some(format!("Promoted to session: {}", session_title));
-                    app.toast_expire =
+                    app.toast.message = Some(format!("Promoted to session: {}", session_title));
+                    app.toast.expire =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                 }
             }
@@ -225,8 +248,9 @@ pub fn handle_routine_list_key(
         // m: move routine to group
         (KeyModifiers::NONE, KeyCode::Char('m')) => {
             if let Some(RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 let groups: Vec<(String, String)> = app
@@ -248,8 +272,9 @@ pub fn handle_routine_list_key(
         // R: rename routine
         (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
             if let Some(RoutineListRow::Routine(routine)) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 app.overlay = Overlay::Rename(RenameForm {
@@ -263,11 +288,13 @@ pub fn handle_routine_list_key(
         // r: resume/inspect a run
         (KeyModifiers::NONE, KeyCode::Char('r')) => {
             if let Some(RoutineListRow::Run { run, .. }) = app
-                .routine_list_rows
-                .get(app.routine_selected_index)
+                .routine_state
+                .list_rows
+                .get(app.routine_state.selected_index)
                 .cloned()
             {
                 if let Some(routine) = app
+                    .routine_state
                     .routines
                     .iter()
                     .find(|r| r.id == run.routine_id)
@@ -302,9 +329,9 @@ pub fn handle_routine_list_key(
                         Some(&routine.working_dir),
                         None,
                     ) {
-                        app.toast_message =
+                        app.toast.message =
                             Some(format!("Failed to create inspect session: {}", e));
-                        app.toast_expire =
+                        app.toast.expire =
                             Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         return;
                     }
@@ -335,14 +362,16 @@ pub fn handle_routine_list_key(
                             app.sessions = storage.load_sessions().unwrap_or_default();
                             app.rebuild_list_rows();
                             if let Ok(runs) = storage.load_routine_runs(&run.routine_id) {
-                                app.routine_runs_cache.insert(run.routine_id.clone(), runs);
+                                app.routine_state
+                                    .runs_cache
+                                    .insert(run.routine_id.clone(), runs);
                             }
                             app.rebuild_routine_list_rows();
                             storage.touch().ok();
 
-                            app.toast_message =
+                            app.toast.message =
                                 Some(format!("Promoted to session: {}", session_title));
-                            app.toast_expire =
+                            app.toast.expire =
                                 Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         }
                         Ok(false) => {
@@ -351,8 +380,8 @@ pub fn handle_routine_list_key(
                         }
                         Err(e) => {
                             let _ = kill_session(&tmux_name);
-                            app.toast_message = Some(format!("Inspect failed: {}", e));
-                            app.toast_expire =
+                            app.toast.message = Some(format!("Inspect failed: {}", e));
+                            app.toast.expire =
                                 Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
                         }
                     }

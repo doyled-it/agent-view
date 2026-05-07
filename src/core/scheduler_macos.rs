@@ -1,6 +1,6 @@
 //! macOS LaunchAgent scheduler implementation
 
-use crate::core::scheduler::Scheduler;
+use crate::core::scheduler::{Scheduler, SchedulerError, SchedulerResult};
 use crate::types::Routine;
 use std::path::PathBuf;
 
@@ -142,16 +142,18 @@ impl MacosScheduler {
 }
 
 impl Scheduler for MacosScheduler {
-    fn install(&self, routine: &Routine) -> Result<(), String> {
+    fn install(&self, routine: &Routine) -> SchedulerResult<()> {
         let plist_path = Self::plist_path(&routine.id);
         let log_dir = Self::log_dir(&routine.id);
 
         if let Some(parent) = plist_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create LaunchAgents dir: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                SchedulerError::CommandFailed(format!("Failed to create LaunchAgents dir: {}", e))
+            })?;
         }
-        std::fs::create_dir_all(&log_dir)
-            .map_err(|e| format!("Failed to create log dir: {}", e))?;
+        std::fs::create_dir_all(&log_dir).map_err(|e| {
+            SchedulerError::CommandFailed(format!("Failed to create log dir: {}", e))
+        })?;
 
         if plist_path.exists() {
             let _ = std::process::Command::new("launchctl")
@@ -161,29 +163,35 @@ impl Scheduler for MacosScheduler {
 
         let plist_content = self.generate_plist(routine);
         std::fs::write(&plist_path, &plist_content)
-            .map_err(|e| format!("Failed to write plist: {}", e))?;
+            .map_err(|e| SchedulerError::CommandFailed(format!("Failed to write plist: {}", e)))?;
 
         let output = std::process::Command::new("launchctl")
             .args(["load", plist_path.to_str().unwrap_or_default()])
             .output()
-            .map_err(|e| format!("Failed to run launchctl load: {}", e))?;
+            .map_err(|e| {
+                SchedulerError::CommandFailed(format!("Failed to run launchctl load: {}", e))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("launchctl load failed: {}", stderr));
+            return Err(SchedulerError::CommandFailed(format!(
+                "launchctl load failed: {}",
+                stderr
+            )));
         }
 
         Ok(())
     }
 
-    fn uninstall(&self, routine_id: &str) -> Result<(), String> {
+    fn uninstall(&self, routine_id: &str) -> SchedulerResult<()> {
         let plist_path = Self::plist_path(routine_id);
         if plist_path.exists() {
             let _ = std::process::Command::new("launchctl")
                 .args(["unload", plist_path.to_str().unwrap_or_default()])
                 .output();
-            std::fs::remove_file(&plist_path)
-                .map_err(|e| format!("Failed to remove plist: {}", e))?;
+            std::fs::remove_file(&plist_path).map_err(|e| {
+                SchedulerError::CommandFailed(format!("Failed to remove plist: {}", e))
+            })?;
         }
         Ok(())
     }

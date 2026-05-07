@@ -1,11 +1,11 @@
 //! Token counting from Claude Code output
 
-use lazy_static::lazy_static;
 use regex::Regex;
+use std::sync::LazyLock;
 
-lazy_static! {
-    static ref TOKEN_PATTERN: Regex = Regex::new(r"(\d+(?:\.\d+)?)\s*([kKmM])?\s*tokens?").unwrap();
-}
+static TOKEN_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(\d+(?:\.\d+)?)\s*([kKmM])?\s*tokens?").expect("static regex must compile")
+});
 
 pub fn parse_token_count(text: &str) -> Option<i64> {
     let caps = TOKEN_PATTERN.captures(text)?;

@@ -1,6 +1,6 @@
 [package]
 name = "agent-view"
-version = "1.5.5"
+version = "1.6.0"
 edition = "2021"
 description = "Terminal UI for managing AI coding agent sessions"
 
@@ -16,12 +16,12 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
-lazy_static = "1"
 libc = "0.2"
 notify = "7"
 ansi-to-tui = "8"
 ratatui-core = "0.1"
 croner = "2"
+thiserror = "2"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 
 [dev-dependencies]

@@ -2,8 +2,23 @@
 
 #![allow(dead_code)]
 
+use std::io;
 use std::path::Path;
 use std::process::Command;
+
+#[derive(thiserror::Error, Debug)]
+pub enum GitError {
+    #[error("not a git repository")]
+    NotARepo,
+    #[error("invalid branch name: {0}")]
+    InvalidBranch(String),
+    #[error("git command failed: {0}")]
+    CommandFailed(String),
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
+}
+
+pub type GitResult<T> = Result<T, GitError>;
 
 /// Represents a git worktree entry
 #[derive(Debug, Clone, PartialEq)]
@@ -24,14 +39,14 @@ pub fn is_git_repo(dir: &str) -> bool {
 }
 
 /// Get the repository root
-pub fn get_repo_root(dir: &str) -> Result<String, String> {
+pub fn get_repo_root(dir: &str) -> GitResult<String> {
     let output = Command::new("git")
         .args(["-C", dir, "rev-parse", "--show-toplevel"])
         .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
+        .map_err(GitError::Io)?;
 
     if !output.status.success() {
-        return Err("Not a git repository".to_string());
+        return Err(GitError::NotARepo);
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -102,12 +117,12 @@ pub fn create_worktree(
     repo_dir: &str,
     branch: &str,
     base_branch: Option<&str>,
-) -> Result<String, String> {
+) -> GitResult<String> {
     if let Some(err) = validate_branch_name(branch) {
-        return Err(format!("Invalid branch name: {}", err));
+        return Err(GitError::InvalidBranch(err));
     }
     if !is_git_repo(repo_dir) {
-        return Err("Not a git repository".to_string());
+        return Err(GitError::NotARepo);
     }
 
     let wt_path = generate_worktree_path(repo_dir, branch);
@@ -117,7 +132,7 @@ pub fn create_worktree(
         Command::new("git")
             .args(["-C", repo_dir, "worktree", "add", &wt_path, branch])
             .output()
-            .map_err(|e| format!("Failed to run git: {}", e))?
+            .map_err(GitError::Io)?
     } else {
         // Create a new branch, optionally from a base
         let base = base_branch.unwrap_or("HEAD");
@@ -126,31 +141,37 @@ pub fn create_worktree(
                 "-C", repo_dir, "worktree", "add", "-b", branch, &wt_path, base,
             ])
             .output()
-            .map_err(|e| format!("Failed to run git: {}", e))?
+            .map_err(GitError::Io)?
     };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to create worktree: {}", stderr));
+        return Err(GitError::CommandFailed(format!(
+            "Failed to create worktree: {}",
+            stderr
+        )));
     }
 
     Ok(wt_path)
 }
 
 /// List all worktrees for the repository at repo_dir
-pub fn list_worktrees(repo_dir: &str) -> Result<Vec<Worktree>, String> {
+pub fn list_worktrees(repo_dir: &str) -> GitResult<Vec<Worktree>> {
     if !is_git_repo(repo_dir) {
-        return Err("Not a git repository".to_string());
+        return Err(GitError::NotARepo);
     }
 
     let output = Command::new("git")
         .args(["-C", repo_dir, "worktree", "list", "--porcelain"])
         .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
+        .map_err(GitError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to list worktrees: {}", stderr));
+        return Err(GitError::CommandFailed(format!(
+            "Failed to list worktrees: {}",
+            stderr
+        )));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

@@ -8,9 +8,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
     // Show toast if active and not expired
-    if let Some(ref msg) = app.toast_message {
+    if let Some(ref msg) = app.toast.message {
         if app
-            .toast_expire
+            .toast
+            .expire
             .is_some_and(|t| t > std::time::Instant::now())
         {
             let toast = Line::from(Span::styled(
@@ -25,7 +26,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let hints: Vec<(&str, &str)> = match &app.overlay {
         Overlay::None => match app.active_tab {
             crate::app::ActiveTab::Sessions => {
-                if !app.bulk_selected.is_empty() {
+                if !app.bulk.selected.is_empty() {
                     vec![
                         ("Space", "toggle"),
                         ("d", "delete all"),
@@ -49,7 +50,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             }
             crate::app::ActiveTab::Routines => {
                 let on_run = matches!(
-                    app.routine_list_rows.get(app.routine_selected_index),
+                    app.routine_state
+                        .list_rows
+                        .get(app.routine_state.selected_index),
                     Some(crate::app::RoutineListRow::Run { .. })
                 );
                 if on_run {

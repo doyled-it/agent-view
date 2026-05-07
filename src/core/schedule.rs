@@ -56,11 +56,6 @@ pub fn build_hourly(minute: u8) -> String {
     format!("{} * * * *", minute)
 }
 
-#[allow(dead_code)]
-pub fn build_every_n_hours(n: u8, _start_hour: u8, start_minute: u8) -> String {
-    format!("{} */{} * * *", start_minute, n)
-}
-
 pub fn build_daily(hour: u8, minute: u8) -> String {
     format!("{} {} * * *", minute, hour)
 }
@@ -76,14 +71,6 @@ pub fn build_monthly_by_day(day: u8, hour: u8, minute: u8) -> String {
 
 pub fn build_yearly(month: u8, day: u8, hour: u8, minute: u8) -> String {
     format!("{} {} {} {} *", minute, hour, day, month)
-}
-
-#[allow(dead_code)]
-pub fn validate_cron(expr: &str) -> Result<(), String> {
-    Cron::new(expr)
-        .parse()
-        .map(|_| ())
-        .map_err(|e| format!("Invalid cron expression: {}", e))
 }
 
 pub fn next_run(expr: &str) -> Option<i64> {
@@ -224,18 +211,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_cron_valid() {
-        assert!(validate_cron("0 9 * * *").is_ok());
-        assert!(validate_cron("30 */2 * * 1-5").is_ok());
-    }
-
-    #[test]
-    fn test_validate_cron_invalid() {
-        assert!(validate_cron("not valid").is_err());
-        assert!(validate_cron("").is_err());
-    }
-
-    #[test]
     fn test_human_readable_daily() {
         let desc = human_readable("0 9 * * *");
         assert!(desc.contains("9:00"));
@@ -251,11 +226,5 @@ mod tests {
     fn test_human_readable_invalid_returns_raw() {
         let desc = human_readable("bad cron");
         assert_eq!(desc, "bad cron");
-    }
-
-    #[test]
-    fn test_every_n_hours() {
-        let cron = build_every_n_hours(2, 0, 0);
-        assert_eq!(cron, "0 */2 * * *");
     }
 }

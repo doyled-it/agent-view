@@ -112,7 +112,7 @@ pub fn handle_new_routine_key(app: &mut App, key: KeyEvent, storage: &Storage) {
             }
 
             // Reload and close
-            app.routines = storage.load_routines().unwrap_or_default();
+            app.routine_state.routines = storage.load_routines().unwrap_or_default();
             app.rebuild_routine_list_rows();
             app.overlay = Overlay::None;
             storage.touch().ok();

@@ -13,7 +13,7 @@ use crate::ui::theme::Theme;
 pub(super) fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
-    let usage = match app.usage_data {
+    let usage = match app.usage_state.data {
         Some(ref u) => u,
         None => return,
     };

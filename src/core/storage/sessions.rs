@@ -268,16 +268,6 @@ impl Storage {
         Ok(())
     }
 
-    /// Set the acknowledged flag
-    #[allow(dead_code)]
-    pub fn set_acknowledged(&self, id: &str, ack: bool) -> SqlResult<()> {
-        self.conn.execute(
-            "UPDATE sessions SET acknowledged = ?1 WHERE id = ?2",
-            params![ack as i32, id],
-        )?;
-        Ok(())
-    }
-
     /// Append a status entry to status_history (capped at 50 entries)
     pub fn update_status_history(
         &self,

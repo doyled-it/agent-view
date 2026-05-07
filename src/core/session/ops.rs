@@ -2,11 +2,25 @@ use std::collections::HashMap;
 
 use crate::core::storage::Storage;
 use crate::core::tmux;
-use crate::core::tmux::SessionCache;
+use crate::core::tmux::{SessionCache, TmuxError};
 use crate::types::{Session, SessionCreateOptions, SessionStatus, StatusHistoryEntry, Tool};
 
 use super::crash::build_restart_command;
 use super::generate_title;
+
+#[derive(thiserror::Error, Debug)]
+pub enum SessionError {
+    #[error("storage error: {0}")]
+    Storage(String),
+    #[error("session not found")]
+    NotFound,
+    #[error("tmux error: {0}")]
+    Tmux(#[from] TmuxError),
+    #[error("worktree error: {0}")]
+    Worktree(#[from] crate::core::git::GitError),
+}
+
+pub type SessionResult<T> = Result<T, SessionError>;
 
 /// Session lifecycle operations (create, stop, delete, restart).
 /// Stateless — lives on the main thread.
@@ -21,7 +35,7 @@ impl SessionOps {
         storage: &Storage,
         cache: &mut SessionCache,
         options: SessionCreateOptions,
-    ) -> Result<(Session, Option<String>), String> {
+    ) -> SessionResult<(Session, Option<String>)> {
         let title = options.title.unwrap_or_else(generate_title);
         let id = uuid::Uuid::new_v4().to_string();
         let tmux_name = tmux::generate_session_name(&title);
@@ -116,18 +130,18 @@ impl SessionOps {
 
         storage
             .save_session(&session)
-            .map_err(|e| format!("Failed to save session: {}", e))?;
+            .map_err(|e| SessionError::Storage(format!("Failed to save session: {}", e)))?;
         storage.touch().ok();
 
         Ok((session, hook_warning))
     }
 
     /// Stop a session (kill tmux but keep the record)
-    pub fn stop_session(&self, storage: &Storage, session_id: &str) -> Result<(), String> {
+    pub fn stop_session(&self, storage: &Storage, session_id: &str) -> SessionResult<()> {
         let session = storage
             .get_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?
-            .ok_or_else(|| "Session not found".to_string())?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?
+            .ok_or(SessionError::NotFound)?;
 
         if !session.tmux_session.is_empty() {
             tmux::kill_session(&session.tmux_session)?;
@@ -135,7 +149,7 @@ impl SessionOps {
 
         storage
             .write_status(session_id, SessionStatus::Stopped, session.tool)
-            .map_err(|e| format!("DB error: {}", e))?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
         storage.touch().ok();
 
         Ok(())
@@ -147,10 +161,10 @@ impl SessionOps {
         storage: &Storage,
         cache: &mut SessionCache,
         session_id: &str,
-    ) -> Result<(), String> {
+    ) -> SessionResult<()> {
         let session = storage
             .get_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
 
         if let Some(session) = session {
             if !session.tmux_session.is_empty() {
@@ -161,7 +175,7 @@ impl SessionOps {
 
         storage
             .delete_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
         storage.touch().ok();
 
         Ok(())
@@ -173,11 +187,11 @@ impl SessionOps {
         storage: &Storage,
         cache: &mut SessionCache,
         session_id: &str,
-    ) -> Result<Session, String> {
+    ) -> SessionResult<Session> {
         let mut session = storage
             .get_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?
-            .ok_or_else(|| "Session not found".to_string())?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?
+            .ok_or(SessionError::NotFound)?;
 
         if !session.tmux_session.is_empty() {
             if tmux::session_exists(&session.tmux_session) {
@@ -216,10 +230,10 @@ impl SessionOps {
 
         storage
             .save_session(&session)
-            .map_err(|e| format!("DB error: {}", e))?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
         storage
             .increment_restart_count(session_id)
-            .map_err(|e| format!("DB error: {}", e))?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
         storage.touch().ok();
 
         Ok(session)
@@ -231,11 +245,11 @@ impl SessionOps {
         &self,
         storage: &Storage,
         repo_dir: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> SessionResult<Vec<String>> {
         let worktrees = crate::core::git::list_worktrees(repo_dir)?;
         let sessions = storage
             .load_sessions()
-            .map_err(|e| format!("DB error: {}", e))?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
         let known: std::collections::HashSet<String> = sessions
             .iter()
             .map(|s| s.worktree_path.clone())
@@ -260,8 +274,9 @@ impl SessionOps {
         &self,
         repo_dir: &str,
         worktree_path: &str,
-    ) -> Result<(), String> {
-        crate::core::git::remove_worktree(repo_dir, worktree_path, true)
+    ) -> SessionResult<()> {
+        crate::core::git::remove_worktree(repo_dir, worktree_path, true)?;
+        Ok(())
     }
 
     /// Finish a session: kill tmux, remove the worktree (force, to nuke any
@@ -274,11 +289,11 @@ impl SessionOps {
         cache: &mut SessionCache,
         session_id: &str,
         delete_branch: bool,
-    ) -> Result<FinishOutcome, String> {
+    ) -> SessionResult<FinishOutcome> {
         let session = storage
             .get_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?
-            .ok_or_else(|| "Session not found".to_string())?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?
+            .ok_or(SessionError::NotFound)?;
 
         if !session.tmux_session.is_empty() && tmux::session_exists(&session.tmux_session) {
             tmux::kill_session(&session.tmux_session)?;
@@ -325,7 +340,7 @@ impl SessionOps {
 
         storage
             .delete_session(session_id)
-            .map_err(|e| format!("DB error: {}", e))?;
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
         storage.touch().ok();
 
         Ok(outcome)

@@ -8,7 +8,7 @@ use ratatui::widgets::*;
 pub fn render_routine_list(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
-    if app.routine_list_rows.is_empty() {
+    if app.routine_state.list_rows.is_empty() {
         let msg = Paragraph::new("No routines. Press 'n' to create one.")
             .style(Style::default().fg(theme.text_muted))
             .alignment(Alignment::Center);
@@ -19,11 +19,12 @@ pub fn render_routine_list(frame: &mut Frame, area: Rect, app: &App) {
     let search_matches = app.routine_search_matches();
 
     let items: Vec<ListItem> = app
-        .routine_list_rows
+        .routine_state
+        .list_rows
         .iter()
         .enumerate()
         .map(|(i, row)| {
-            let is_selected = i == app.routine_selected_index;
+            let is_selected = i == app.routine_state.selected_index;
             let is_search_match = !search_matches.is_empty() && search_matches.contains(&i);
             match row {
                 RoutineListRow::Group {
