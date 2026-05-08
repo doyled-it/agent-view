@@ -1,8 +1,6 @@
 //! Claude Code runner. Detection logic ported from the former
 //! `src/core/status.rs` (TypeScript tmux.ts patterns).
 
-#![allow(dead_code)]
-
 use super::{Runner, ToolStatus};
 use regex::Regex;
 use std::sync::LazyLock;

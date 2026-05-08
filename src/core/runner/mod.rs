@@ -2,8 +2,6 @@
 //! (launch command, status detection, session-id extraction, restart command).
 //! See `docs/superpowers/specs/2026-05-08-pluggable-runner-trait-design.md`.
 
-#![allow(dead_code)]
-
 pub mod claude;
 pub mod fallback;
 
@@ -27,6 +25,7 @@ pub struct ToolStatus {
 }
 
 pub trait Runner: Send + Sync {
+    #[allow(dead_code)] // part of the public Runner API surface; used by tests and reserved for future runners
     fn name(&self) -> &'static str;
     fn launch_command(&self) -> &'static str;
     fn parse_status(&self, pane_content: &str) -> ToolStatus;

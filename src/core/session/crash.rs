@@ -1,5 +1,5 @@
 use crate::core::tmux;
-use crate::types::{Session, SessionStatus, Tool};
+use crate::types::{Session, SessionStatus};
 
 /// Detect sessions whose tmux sessions no longer exist.
 /// Returns IDs of sessions that should be marked as Crashed.
@@ -18,21 +18,6 @@ pub fn detect_crashed_statuses(sessions: &[Session]) -> Vec<String> {
         })
         .map(|s| s.id.clone())
         .collect()
-}
-
-/// Build the command to use when restarting a session.
-/// For Claude: uses --resume <id> if we captured the session ID, otherwise --continue.
-/// For other tools: re-runs the original command.
-pub(super) fn build_restart_command(tool: Tool, original_command: &str, tool_data: &str) -> String {
-    if tool == Tool::Claude {
-        if let Ok(data) = serde_json::from_str::<serde_json::Value>(tool_data) {
-            if let Some(session_id) = data.get("claude_session_id").and_then(|v| v.as_str()) {
-                return format!("claude --resume {}", session_id);
-            }
-        }
-        return "claude --continue".to_string();
-    }
-    original_command.to_string()
 }
 
 #[cfg(test)]
@@ -91,26 +76,5 @@ mod tests {
 
         let crashed = detect_crashed_statuses(&[session]);
         assert!(crashed.is_empty());
-    }
-
-    #[test]
-    fn test_build_restart_command_claude_with_session_id() {
-        let tool_data = r#"{"claude_session_id": "abc123"}"#;
-        let cmd = build_restart_command(Tool::Claude, "claude", tool_data);
-        assert_eq!(cmd, "claude --resume abc123");
-    }
-
-    #[test]
-    fn test_build_restart_command_claude_without_session_id() {
-        let tool_data = "{}";
-        let cmd = build_restart_command(Tool::Claude, "claude", tool_data);
-        assert_eq!(cmd, "claude --continue");
-    }
-
-    #[test]
-    fn test_build_restart_command_non_claude() {
-        let tool_data = "{}";
-        let cmd = build_restart_command(Tool::Gemini, "gemini", tool_data);
-        assert_eq!(cmd, "gemini");
     }
 }

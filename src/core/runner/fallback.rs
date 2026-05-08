@@ -1,11 +1,11 @@
 //! Stub runner for `Tool` variants without a dedicated impl yet.
 //! Each follow-up runner issue replaces one variant with a real impl.
 
-#![allow(dead_code)]
-
 use super::{Runner, ToolStatus};
 
 pub struct FallbackRunner {
+    #[allow(dead_code)]
+    // exposed via Runner::name(); used by tests and reserved for future runners
     name: &'static str,
     launch: &'static str,
 }
