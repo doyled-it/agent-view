@@ -76,3 +76,128 @@ pub fn resolve_session_status(parsed: &ToolStatus, is_active: bool) -> crate::ty
         SessionStatus::Idle
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{SessionStatus, Tool};
+
+    #[test]
+    fn test_runner_for_claude() {
+        assert_eq!(runner_for(Tool::Claude).name(), "claude");
+        assert_eq!(runner_for(Tool::Claude).launch_command(), "claude");
+    }
+
+    #[test]
+    fn test_fallback_launch_commands_match_tool_command() {
+        // Bit-for-bit parity check against the launch commands
+        // `Tool::command()` returned on main before this refactor.
+        assert_eq!(runner_for(Tool::Codex).launch_command(), "codex");
+        assert_eq!(runner_for(Tool::Opencode).launch_command(), "opencode");
+        assert_eq!(runner_for(Tool::Gemini).launch_command(), "gemini");
+        assert_eq!(runner_for(Tool::Custom).launch_command(), "bash");
+        assert_eq!(runner_for(Tool::Shell).launch_command(), "bash");
+    }
+
+    #[test]
+    fn test_fallback_parse_status_returns_default() {
+        for tool in [
+            Tool::Codex,
+            Tool::Opencode,
+            Tool::Gemini,
+            Tool::Custom,
+            Tool::Shell,
+        ] {
+            let s = runner_for(tool).parse_status("ctrl+c to interrupt");
+            assert!(
+                !s.is_busy,
+                "fallback runner should not detect Claude patterns ({:?})",
+                tool
+            );
+            assert!(!s.has_idle_prompt);
+        }
+    }
+
+    #[test]
+    fn test_fallback_extract_session_id_returns_none() {
+        for tool in [
+            Tool::Codex,
+            Tool::Opencode,
+            Tool::Gemini,
+            Tool::Custom,
+            Tool::Shell,
+        ] {
+            assert_eq!(
+                runner_for(tool).extract_session_id("claude --resume xyz"),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn test_fallback_restart_command_returns_original() {
+        for tool in [
+            Tool::Codex,
+            Tool::Opencode,
+            Tool::Gemini,
+            Tool::Custom,
+            Tool::Shell,
+        ] {
+            assert_eq!(
+                runner_for(tool).restart_command("foo --bar", "{}"),
+                "foo --bar"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_monitoring_overrides_paused() {
+        let parsed = ToolStatus {
+            has_idle_prompt: true,
+            has_question: true,
+            is_monitoring: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_session_status(&parsed, false),
+            SessionStatus::Monitoring
+        );
+    }
+
+    #[test]
+    fn test_resolve_paused_without_monitor() {
+        let parsed = ToolStatus {
+            has_idle_prompt: true,
+            has_question: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_session_status(&parsed, false),
+            SessionStatus::Paused
+        );
+    }
+
+    #[test]
+    fn test_resolve_draft_overrides_monitoring() {
+        let parsed = ToolStatus {
+            has_idle_prompt: true,
+            has_draft: true,
+            is_monitoring: true,
+            ..Default::default()
+        };
+        assert_eq!(resolve_session_status(&parsed, false), SessionStatus::Draft);
+    }
+
+    #[test]
+    fn test_resolve_running_overrides_monitoring() {
+        let parsed = ToolStatus {
+            is_busy: true,
+            is_monitoring: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_session_status(&parsed, false),
+            SessionStatus::Running
+        );
+    }
+}
