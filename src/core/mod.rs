@@ -7,6 +7,7 @@ pub mod logger;
 pub mod notify;
 pub mod path_complete;
 pub mod routine;
+pub mod runner;
 pub mod schedule;
 pub mod scheduler;
 #[cfg(target_os = "linux")]
