@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
-use crate::core::{logger, status, tmux};
+use crate::core::{logger, tmux};
 use crate::types::UsageData;
 
 use super::parser::parse_usage_output;
@@ -52,7 +52,8 @@ fn init_meta_session() -> Result<String, &'static str> {
                 trust_accepted = true;
                 continue;
             }
-            let s = status::parse_tool_status(&output, Some("claude"));
+            let s =
+                crate::core::runner::runner_for(crate::types::Tool::Claude).parse_status(&output);
             if s.has_idle_prompt {
                 break;
             }

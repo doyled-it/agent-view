@@ -1,6 +1,8 @@
 //! Claude Code status detection via regex pattern matching
 //! Ports the exact patterns from the TypeScript tmux.ts
 
+#![allow(dead_code)]
+
 use regex::Regex;
 use std::sync::LazyLock;
 
