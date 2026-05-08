@@ -36,6 +36,8 @@ pub enum CommandAction {
     NewRoutine,
     ToggleRoutine,
     DeleteRoutine,
+    FinishSession,
+    SweepOrphanWorktrees,
 }
 
 impl CommandPalette {
@@ -60,6 +62,16 @@ impl CommandPalette {
                 label: "Delete Session".to_string(),
                 key_hint: "d".to_string(),
                 action: CommandAction::DeleteSession,
+            },
+            CommandItem {
+                label: "Finish Session (remove worktree)".to_string(),
+                key_hint: "f".to_string(),
+                action: CommandAction::FinishSession,
+            },
+            CommandItem {
+                label: "Sweep Orphan Worktrees".to_string(),
+                key_hint: String::new(),
+                action: CommandAction::SweepOrphanWorktrees,
             },
             CommandItem {
                 label: "Rename".to_string(),

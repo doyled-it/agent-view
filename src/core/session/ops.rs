@@ -16,6 +16,8 @@ pub enum SessionError {
     NotFound,
     #[error("tmux error: {0}")]
     Tmux(#[from] TmuxError),
+    #[error("worktree error: {0}")]
+    Worktree(#[from] crate::core::git::GitError),
 }
 
 pub type SessionResult<T> = Result<T, SessionError>;
@@ -25,13 +27,15 @@ pub type SessionResult<T> = Result<T, SessionError>;
 pub struct SessionOps;
 
 impl SessionOps {
-    /// Create a new session (creates tmux session and saves to storage)
+    /// Create a new session (creates tmux session and saves to storage).
+    /// Returns (session, optional non-fatal warning) — currently warnings
+    /// only originate from the worktree-setup hook.
     pub fn create_session(
         &self,
         storage: &Storage,
         cache: &mut SessionCache,
         options: SessionCreateOptions,
-    ) -> SessionResult<Session> {
+    ) -> SessionResult<(Session, Option<String>)> {
         let title = options.title.unwrap_or_else(generate_title);
         let id = uuid::Uuid::new_v4().to_string();
         let tmux_name = tmux::generate_session_name(&title);
@@ -41,15 +45,51 @@ impl SessionOps {
 
         let now = chrono::Utc::now().timestamp_millis();
 
+        // Resolve worktree, if requested. The tmux session uses the worktree
+        // as its working directory; worktree_repo retains the original repo
+        // path so cleanup later knows where to invoke `git worktree remove`.
+        let (working_dir, worktree_path, worktree_repo, worktree_branch) =
+            if let Some(wt) = options.worktree.as_ref() {
+                let path = crate::core::git::create_worktree(
+                    &options.project_path,
+                    &wt.branch,
+                    wt.base.as_deref(),
+                )?;
+                (
+                    path.clone(),
+                    path,
+                    options.project_path.clone(),
+                    wt.branch.clone(),
+                )
+            } else {
+                (
+                    options.project_path.clone(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                )
+            };
+
+        // Run the optional post-create hook (non-fatal).
+        let hook_warning = if options.worktree.is_some() {
+            match crate::core::session::hooks::run_worktree_setup_hook(
+                &options.project_path,
+                &working_dir,
+            ) {
+                Ok(()) => None,
+                Err(e) => Some(format!("worktree-setup.sh failed: {}", e)),
+            }
+        } else {
+            None
+        };
+
         let mut env = HashMap::new();
         env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), id.clone());
 
-        tmux::create_session(
-            &tmux_name,
-            Some(&command),
-            Some(&options.project_path),
-            Some(&env),
-        )?;
+        // NOTE: if tmux::create_session fails here, a freshly created worktree
+        // at `working_dir` is leaked on disk. Task 8's orphan sweep is the
+        // recovery path; no inline rollback to keep the failure message simple.
+        tmux::create_session(&tmux_name, Some(&command), Some(&working_dir), Some(&env))?;
 
         cache.register(&tmux_name);
 
@@ -69,9 +109,9 @@ impl SessionOps {
             created_at: now,
             last_accessed: now,
             parent_session_id: String::new(),
-            worktree_path: String::new(),
-            worktree_repo: String::new(),
-            worktree_branch: String::new(),
+            worktree_path,
+            worktree_repo,
+            worktree_branch,
             tool_data: "{}".to_string(),
             acknowledged: false,
             notify: false,
@@ -93,7 +133,7 @@ impl SessionOps {
             .map_err(|e| SessionError::Storage(format!("Failed to save session: {}", e)))?;
         storage.touch().ok();
 
-        Ok(session)
+        Ok((session, hook_warning))
     }
 
     /// Stop a session (kill tmux but keep the record)
@@ -197,5 +237,249 @@ impl SessionOps {
         storage.touch().ok();
 
         Ok(session)
+    }
+
+    /// Return worktree paths under `repo_dir` that have no matching session
+    /// record. Excludes the primary worktree (the repo itself).
+    pub fn find_orphan_worktrees(
+        &self,
+        storage: &Storage,
+        repo_dir: &str,
+    ) -> SessionResult<Vec<String>> {
+        let worktrees = crate::core::git::list_worktrees(repo_dir)?;
+        let sessions = storage
+            .load_sessions()
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
+        let known: std::collections::HashSet<String> = sessions
+            .iter()
+            .map(|s| s.worktree_path.clone())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        let canonical_repo = std::fs::canonicalize(repo_dir)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| repo_dir.to_string());
+
+        Ok(worktrees
+            .into_iter()
+            .filter(|w| !w.bare)
+            .map(|w| w.path)
+            .filter(|p| *p != canonical_repo && p != repo_dir)
+            .filter(|p| !known.contains(p))
+            .collect())
+    }
+
+    /// Force-remove an orphan worktree.
+    pub fn remove_orphan_worktree(&self, repo_dir: &str, worktree_path: &str) -> SessionResult<()> {
+        crate::core::git::remove_worktree(repo_dir, worktree_path, true)?;
+        Ok(())
+    }
+
+    /// Finish a session: kill tmux, remove the worktree (force, to nuke any
+    /// uncommitted scratch), and optionally delete the branch when it has
+    /// been merged into the repository's default upstream (`main` or
+    /// `master`). Always deletes the session record.
+    pub fn finish_session(
+        &self,
+        storage: &Storage,
+        cache: &mut SessionCache,
+        session_id: &str,
+        delete_branch: bool,
+    ) -> SessionResult<FinishOutcome> {
+        let session = storage
+            .get_session(session_id)
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?
+            .ok_or(SessionError::NotFound)?;
+
+        if !session.tmux_session.is_empty() && tmux::session_exists(&session.tmux_session) {
+            tmux::kill_session(&session.tmux_session)?;
+            cache.remove(&session.tmux_session);
+        }
+
+        let mut outcome = FinishOutcome {
+            worktree_removed: false,
+            branch_deleted: false,
+            branch_skipped_unmerged: false,
+        };
+
+        if !session.worktree_path.is_empty() && !session.worktree_repo.is_empty() {
+            crate::core::git::remove_worktree(
+                &session.worktree_repo,
+                &session.worktree_path,
+                /*force=*/ true,
+            )?;
+            outcome.worktree_removed = true;
+
+            if delete_branch && !session.worktree_branch.is_empty() {
+                if let Some(upstream) =
+                    crate::core::git::default_upstream_branch(&session.worktree_repo)
+                {
+                    let merged = crate::core::git::is_branch_merged(
+                        &session.worktree_repo,
+                        &session.worktree_branch,
+                        &upstream,
+                    )
+                    .unwrap_or(false);
+                    if merged {
+                        crate::core::git::delete_branch(
+                            &session.worktree_repo,
+                            &session.worktree_branch,
+                            false,
+                        )?;
+                        outcome.branch_deleted = true;
+                    } else {
+                        outcome.branch_skipped_unmerged = true;
+                    }
+                }
+            }
+        }
+
+        storage
+            .delete_session(session_id)
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
+        storage.touch().ok();
+
+        Ok(outcome)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FinishOutcome {
+    pub worktree_removed: bool,
+    pub branch_deleted: bool,
+    pub branch_skipped_unmerged: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::tmux::SessionCache;
+    use crate::types::{SessionCreateOptions, Tool, WorktreeCreateOptions};
+    use std::process::Command as Cmd;
+
+    fn init_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "init", "-q", "-b", "main"])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "config", "user.email", "t@t"])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "config", "user.name", "t"])
+            .status()
+            .unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hi").unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "add", "."])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "commit", "-qm", "init"])
+            .status()
+            .unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_find_orphan_worktrees_returns_unknown_paths() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap().to_string();
+        let _ = crate::core::git::create_worktree(&path, "orphan-1", None).unwrap();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+
+        let orphans = SessionOps.find_orphan_worktrees(&storage, &path).unwrap();
+        // Main repo worktree is excluded; orphan-1 has no session row → orphan.
+        assert!(orphans.iter().any(|w| w.contains("orphan-1")));
+        assert!(!orphans.iter().any(|w| w == &path));
+    }
+
+    #[test]
+    #[ignore = "creates a real tmux session — run locally with `cargo test -- --ignored`"]
+    fn test_create_session_with_worktree_populates_fields_and_uses_wt_path() {
+        let repo = init_repo();
+        let repo_path = repo.path().to_str().unwrap().to_string();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (session, _warn) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                SessionCreateOptions {
+                    title: Some("wt-test".to_string()),
+                    project_path: repo_path.clone(),
+                    group_path: None,
+                    tool: Tool::Shell,
+                    command: Some("sleep 1".to_string()),
+                    worktree: Some(WorktreeCreateOptions {
+                        branch: "wt-feature".to_string(),
+                        new_branch: true,
+                        base: None,
+                    }),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(session.worktree_repo, repo_path);
+        assert_eq!(session.worktree_branch, "wt-feature");
+        assert!(session.worktree_path.contains(".worktrees"));
+        assert!(session.worktree_path.contains("wt-feature"));
+        assert!(std::path::Path::new(&session.worktree_path).exists());
+
+        // Cleanup tmux + worktree
+        let _ = crate::core::tmux::kill_session(&session.tmux_session);
+        let _ = crate::core::git::remove_worktree(&repo_path, &session.worktree_path, true);
+    }
+
+    #[test]
+    #[ignore = "creates real tmux + git worktree"]
+    fn test_finish_session_removes_worktree_and_branch() {
+        let repo = init_repo();
+        let repo_path = repo.path().to_str().unwrap().to_string();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (session, _) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                SessionCreateOptions {
+                    title: Some("finish-test".to_string()),
+                    project_path: repo_path.clone(),
+                    group_path: None,
+                    tool: Tool::Shell,
+                    command: Some("sleep 5".to_string()),
+                    worktree: Some(WorktreeCreateOptions {
+                        branch: "merged-branch".to_string(),
+                        new_branch: true,
+                        base: None,
+                    }),
+                },
+            )
+            .unwrap();
+
+        let outcome = ops
+            .finish_session(
+                &storage,
+                &mut cache,
+                &session.id,
+                /*delete_branch=*/ true,
+            )
+            .unwrap();
+
+        assert!(outcome.worktree_removed);
+        assert!(outcome.branch_deleted);
+        assert!(!outcome.branch_skipped_unmerged);
+        assert!(!std::path::Path::new(&session.worktree_path).exists());
+        assert!(!crate::core::git::branch_exists(
+            &repo_path,
+            "merged-branch"
+        ));
     }
 }

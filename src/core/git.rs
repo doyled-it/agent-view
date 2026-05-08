@@ -226,9 +226,112 @@ fn parse_worktree_list(output: &str) -> Vec<Worktree> {
     worktrees
 }
 
+/// Determine the local "upstream" branch to compare against for merge checks.
+/// Tries `main` then `master`. Returns None if neither exists.
+pub fn default_upstream_branch(repo_dir: &str) -> Option<String> {
+    for candidate in ["main", "master"] {
+        if branch_exists(repo_dir, candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+/// Is `branch` an ancestor of `upstream` (i.e. fully merged)?
+pub fn is_branch_merged(repo_dir: &str, branch: &str, upstream: &str) -> GitResult<bool> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            repo_dir,
+            "merge-base",
+            "--is-ancestor",
+            branch,
+            upstream,
+        ])
+        .output()
+        .map_err(GitError::Io)?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(GitError::CommandFailed(format!(
+            "git merge-base failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))),
+    }
+}
+
+/// Remove a worktree directory. `force` adds `--force` to allow removal
+/// when the worktree has untracked or modified files.
+pub fn remove_worktree(repo_dir: &str, worktree_path: &str, force: bool) -> GitResult<()> {
+    let mut args = vec!["-C", repo_dir, "worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    args.push(worktree_path);
+    let output = Command::new("git")
+        .args(&args)
+        .output()
+        .map_err(GitError::Io)?;
+    if !output.status.success() {
+        return Err(GitError::CommandFailed(format!(
+            "Failed to remove worktree: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(())
+}
+
+/// Delete a local branch. `force` uses `-D` instead of `-d`.
+pub fn delete_branch(repo_dir: &str, branch: &str, force: bool) -> GitResult<()> {
+    let flag = if force { "-D" } else { "-d" };
+    let output = Command::new("git")
+        .args(["-C", repo_dir, "branch", flag, branch])
+        .output()
+        .map_err(GitError::Io)?;
+    if !output.status.success() {
+        return Err(GitError::CommandFailed(format!(
+            "Failed to delete branch: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(())
+}
+
+/// List local branch names for completion. Returns an empty Vec if `repo_dir`
+/// is not a git repository or the command fails.
+pub fn list_local_branches(repo_dir: &str) -> GitResult<Vec<String>> {
+    if !is_git_repo(repo_dir) {
+        return Ok(Vec::new());
+    }
+    let output = Command::new("git")
+        .args([
+            "-C",
+            repo_dir,
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/",
+        ])
+        .output()
+        .map_err(GitError::Io)?;
+    if !output.status.success() {
+        return Err(GitError::CommandFailed(format!(
+            "Failed to list branches: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::process::Command as Cmd;
 
     #[test]
     fn test_validate_branch_name_valid() {
@@ -335,5 +438,115 @@ branch refs/heads/main";
         let wts = parse_worktree_list(output);
         assert_eq!(wts.len(), 1);
         assert_eq!(wts[0].branch, "main");
+    }
+
+    fn init_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "init", "-q", "-b", "main"])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "config", "user.email", "t@t"])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "config", "user.name", "t"])
+            .status()
+            .unwrap();
+        fs::write(dir.path().join("a.txt"), "hi").unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "add", "."])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "commit", "-qm", "init"])
+            .status()
+            .unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_default_upstream_branch_returns_main() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        assert_eq!(default_upstream_branch(path).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn test_is_branch_merged_true_for_same_commit() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "branch", "feature"])
+            .status()
+            .unwrap();
+        assert!(is_branch_merged(path, "feature", "main").unwrap());
+    }
+
+    #[test]
+    fn test_is_branch_merged_false_for_diverged() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "checkout", "-qb", "feature"])
+            .status()
+            .unwrap();
+        fs::write(dir.path().join("b.txt"), "x").unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "add", "."])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "commit", "-qm", "feat"])
+            .status()
+            .unwrap();
+        assert!(!is_branch_merged(path, "feature", "main").unwrap());
+    }
+
+    #[test]
+    fn test_create_and_remove_worktree() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        let wt = create_worktree(path, "feature/x", None).unwrap();
+        assert!(std::path::Path::new(&wt).exists());
+        remove_worktree(path, &wt, false).unwrap();
+        assert!(!std::path::Path::new(&wt).exists());
+    }
+
+    #[test]
+    fn test_delete_branch_after_remove_worktree() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        let wt = create_worktree(path, "deletable", None).unwrap();
+        remove_worktree(path, &wt, false).unwrap();
+        delete_branch(path, "deletable", false).unwrap();
+        assert!(!branch_exists(path, "deletable"));
+    }
+
+    #[test]
+    fn test_list_local_branches() {
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "branch", "feature-a"])
+            .status()
+            .unwrap();
+        Cmd::new("git")
+            .args(["-C", path, "branch", "feature-b"])
+            .status()
+            .unwrap();
+        let branches = list_local_branches(path).unwrap();
+        assert!(branches.contains(&"main".to_string()));
+        assert!(branches.contains(&"feature-a".to_string()));
+        assert!(branches.contains(&"feature-b".to_string()));
+    }
+
+    #[test]
+    fn test_list_local_branches_non_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let branches = list_local_branches(dir.path().to_str().unwrap()).unwrap();
+        assert!(branches.is_empty());
     }
 }

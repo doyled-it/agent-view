@@ -184,6 +184,24 @@ pub fn handle_main_key(
                 }
             }
         }
+        (KeyModifiers::NONE, KeyCode::Char('f')) => {
+            if let Some(session) = app.selected_session() {
+                if !session.worktree_path.is_empty() {
+                    app.overlay = crate::app::Overlay::Confirm(crate::app::ConfirmDialog {
+                        message: format!(
+                            "Finish '{}'? Removes worktree {} and (if merged into main/master) branch {}.",
+                            session.title, session.worktree_path, session.worktree_branch
+                        ),
+                        action: crate::app::ConfirmAction::FinishSession(session.id.clone()),
+                    });
+                } else {
+                    app.toast.message =
+                        Some("Session has no worktree — use 'd' to delete".to_string());
+                    app.toast.expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                }
+            }
+        }
         (KeyModifiers::NONE, KeyCode::Char(' ')) => {
             if let Some(session) = app.selected_session() {
                 let id = session.id.clone();

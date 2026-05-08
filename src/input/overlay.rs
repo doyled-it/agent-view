@@ -140,6 +140,28 @@ pub fn execute_command_action(
                 });
             }
         }
+        CommandAction::FinishSession => {
+            if let Some(session) = app.selected_session() {
+                if !session.worktree_path.is_empty() {
+                    let title = session.title.clone();
+                    let id = session.id.clone();
+                    let wt_path = session.worktree_path.clone();
+                    let branch = session.worktree_branch.clone();
+                    app.overlay = Overlay::Confirm(crate::app::ConfirmDialog {
+                        message: format!(
+                            "Finish '{}'? Removes worktree {} and (if merged into main/master) branch {}.",
+                            title, wt_path, branch
+                        ),
+                        action: crate::app::ConfirmAction::FinishSession(id),
+                    });
+                } else {
+                    app.toast.message =
+                        Some("Session has no worktree — use 'd' to delete".to_string());
+                    app.toast.expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                }
+            }
+        }
         CommandAction::RestartSession => {
             if let Some(session) = app.selected_session() {
                 let id = session.id.clone();
@@ -310,6 +332,59 @@ pub fn execute_command_action(
                     message: format!("Delete routine '{}'?", routine.name),
                     action: crate::app::ConfirmAction::DeleteRoutine(routine.id.clone()),
                 });
+            }
+        }
+        CommandAction::SweepOrphanWorktrees => {
+            let repo = app
+                .selected_session()
+                .map(|s| {
+                    if s.worktree_repo.is_empty() {
+                        s.project_path.clone()
+                    } else {
+                        s.worktree_repo.clone()
+                    }
+                })
+                .unwrap_or_default();
+            if repo.is_empty() {
+                app.toast.message = Some("Select a session in the target repo first".to_string());
+                app.toast.expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                return Ok(());
+            }
+            match session_ops.find_orphan_worktrees(storage, &repo) {
+                Ok(orphans) if orphans.is_empty() => {
+                    app.toast.message = Some("No orphan worktrees".to_string());
+                    app.toast.expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                }
+                Ok(orphans) => {
+                    let mut removed = 0usize;
+                    let mut failed: Vec<String> = Vec::new();
+                    for path in &orphans {
+                        match session_ops.remove_orphan_worktree(&repo, path) {
+                            Ok(()) => removed += 1,
+                            Err(e) => failed.push(format!("{}: {}", path, e)),
+                        }
+                    }
+                    let msg = if failed.is_empty() {
+                        format!("Removed {} orphan worktree(s)", removed)
+                    } else {
+                        format!(
+                            "Removed {} orphans; {} failed: {}",
+                            removed,
+                            failed.len(),
+                            failed.join("; ")
+                        )
+                    };
+                    app.toast.message = Some(msg);
+                    app.toast.expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(8));
+                }
+                Err(e) => {
+                    app.toast.message = Some(format!("Sweep failed: {}", e));
+                    app.toast.expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+                }
             }
         }
     }

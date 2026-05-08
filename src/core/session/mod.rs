@@ -1,6 +1,7 @@
 //! Session module — lifecycle ops, status processor, crash detection, title generation.
 
 mod crash;
+pub mod hooks;
 mod ops;
 mod processor;
 

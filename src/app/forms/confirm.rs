@@ -12,4 +12,5 @@ pub enum ConfirmAction {
     BulkStop,
     DeleteGroup(String),
     DeleteRoutine(String),
+    FinishSession(String),
 }
