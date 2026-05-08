@@ -15,7 +15,6 @@ pub mod scheduler_linux;
 #[cfg(target_os = "macos")]
 pub mod scheduler_macos;
 pub mod session;
-pub mod status;
 pub mod status_page;
 pub mod storage;
 pub mod tmux;
