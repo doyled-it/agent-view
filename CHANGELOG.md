@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.7.0] - 2026-05-08
+
+### Changed
+
+- feat: worktree-aware sessions (#38) (@doyled-it)
+
 ## [1.6.0] - 2026-05-06
 
 ### Changed
