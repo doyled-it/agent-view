@@ -285,6 +285,7 @@ pub fn parse_tool_status(output: &str, tool: Option<&str>) -> ToolStatus {
 /// prompt with a monitor attached, `Monitoring` outranks `Paused` — the user
 /// explicitly armed the monitor, so that signal should remain visible even if
 /// recent prose contains a question mark.
+#[allow(dead_code)]
 pub fn resolve_session_status(parsed: &ToolStatus, is_active: bool) -> crate::types::SessionStatus {
     use crate::types::SessionStatus;
     if parsed.is_waiting {
