@@ -3,6 +3,7 @@
 //! See `docs/superpowers/specs/2026-05-08-pluggable-runner-trait-design.md`.
 
 pub mod claude;
+pub mod claude_hooks;
 pub mod fallback;
 pub mod hook_handler;
 
@@ -32,6 +33,13 @@ pub trait Runner: Send + Sync {
     fn parse_status(&self, pane_content: &str) -> ToolStatus;
     fn extract_session_id(&self, pane_content: &str) -> Option<String>;
     fn restart_command(&self, original_command: &str, tool_data: &str) -> String;
+
+    /// Install per-tool status-detection hooks into the tool's user config.
+    /// Idempotent. Default impl is a no-op for runners without hook support.
+    #[allow(dead_code)]
+    fn install_hooks(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub fn runner_for(tool: Tool) -> &'static dyn Runner {

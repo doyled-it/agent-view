@@ -228,6 +228,13 @@ impl Runner for ClaudeRunner {
         }
         "claude --continue".to_string()
     }
+
+    fn install_hooks(&self) -> Result<(), String> {
+        let dir = crate::core::runner::claude_hooks::claude_config_dir()
+            .ok_or_else(|| "no home directory".to_string())?;
+        let cmd = crate::core::runner::claude_hooks::resolve_hook_command()?;
+        crate::core::runner::claude_hooks::install_hooks_in(&dir, &cmd)
+    }
 }
 
 #[cfg(test)]
