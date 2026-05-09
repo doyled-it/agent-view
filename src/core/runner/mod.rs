@@ -7,6 +7,7 @@ pub mod claude_hooks;
 pub mod event_watcher;
 pub mod fallback;
 pub mod hook_handler;
+pub mod osc_title;
 
 use crate::types::Tool;
 
