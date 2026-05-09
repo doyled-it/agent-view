@@ -47,7 +47,3 @@ pub static CUSTOM: FallbackRunner = FallbackRunner {
     name: "custom",
     launch: "bash",
 };
-pub static SHELL: FallbackRunner = FallbackRunner {
-    name: "shell",
-    launch: "bash",
-};

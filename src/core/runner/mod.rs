@@ -8,6 +8,7 @@ pub mod event_watcher;
 pub mod fallback;
 pub mod hook_handler;
 pub mod osc_title;
+pub mod shell;
 
 use crate::core::runner::event_watcher::HookStatus;
 use crate::types::Tool;
@@ -62,7 +63,7 @@ pub fn runner_for(tool: Tool) -> &'static dyn Runner {
         Tool::Opencode => &fallback::OPENCODE,
         Tool::Gemini => &fallback::GEMINI,
         Tool::Custom => &fallback::CUSTOM,
-        Tool::Shell => &fallback::SHELL,
+        Tool::Shell => &shell::ShellRunner,
     }
 }
 
@@ -411,14 +412,7 @@ mod tests {
 
     #[test]
     fn test_fallback_runners_report_not_implemented() {
-        for tool in [
-            Tool::Codex,
-            Tool::Opencode,
-            Tool::Gemini,
-            Tool::Custom,
-            // Tool::Shell intentionally excluded — Task 4 swaps it to a real impl
-            // and this test will be extended then.
-        ] {
+        for tool in [Tool::Codex, Tool::Opencode, Tool::Gemini, Tool::Custom] {
             assert!(
                 !runner_for(tool).is_implemented(),
                 "{:?} should still be a fallback at this stage",
@@ -428,9 +422,15 @@ mod tests {
     }
 
     #[test]
-    fn test_implemented_tools_currently_only_claude() {
-        // After Task 4 lands ShellRunner, update this assertion to
-        // `vec![Tool::Claude, Tool::Shell]`. For now Shell is still a fallback.
-        assert_eq!(implemented_tools(), vec![Tool::Claude]);
+    fn test_implemented_tools_includes_claude_and_shell() {
+        assert_eq!(implemented_tools(), vec![Tool::Claude, Tool::Shell]);
+    }
+
+    #[test]
+    fn test_runner_for_shell_returns_shell_runner() {
+        let r = runner_for(Tool::Shell);
+        assert_eq!(r.name(), "shell");
+        assert_eq!(r.launch_command(), "bash");
+        assert!(r.is_implemented());
     }
 }
