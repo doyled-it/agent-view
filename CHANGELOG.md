@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.8.0] - 2026-05-09
+
+### Changed
+
+- feat(runner): hook-driven status detection + cost extraction (#45) (#51) (@doyled-it)
+
 ## [1.7.0] - 2026-05-08
 
 ### Changed
