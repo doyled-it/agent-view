@@ -122,14 +122,7 @@ impl Tool {
     }
 
     pub fn command(&self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Opencode => "opencode",
-            Self::Gemini => "gemini",
-            Self::Codex => "codex",
-            Self::Custom => "bash",
-            Self::Shell => "bash",
-        }
+        crate::core::runner::runner_for(*self).launch_command()
     }
 }
 

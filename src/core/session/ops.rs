@@ -5,7 +5,6 @@ use crate::core::tmux;
 use crate::core::tmux::{SessionCache, TmuxError};
 use crate::types::{Session, SessionCreateOptions, SessionStatus, StatusHistoryEntry, Tool};
 
-use super::crash::build_restart_command;
 use super::generate_title;
 
 #[derive(thiserror::Error, Debug)]
@@ -204,7 +203,8 @@ impl SessionOps {
         let mut env = HashMap::new();
         env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), session.id.clone());
 
-        let restart_cmd = build_restart_command(session.tool, &session.command, &session.tool_data);
+        let restart_cmd = crate::core::runner::runner_for(session.tool)
+            .restart_command(&session.command, &session.tool_data);
         tmux::create_session(
             &new_tmux_name,
             Some(&restart_cmd),

@@ -129,24 +129,19 @@ pub fn exec_routine(routine_id: &str) -> RoutineResult<()> {
             // Check if step completed by detecting idle prompt
             match crate::core::tmux::capture_pane(&tmux_name, Some(-100), false) {
                 Ok(output) => {
-                    let tool_str = match step {
-                        RoutineStep::Claude { .. } => Some("claude"),
-                        RoutineStep::Shell { .. } => None,
+                    let tool = match step {
+                        RoutineStep::Claude { .. } => crate::types::Tool::Claude,
+                        RoutineStep::Shell { .. } => crate::types::Tool::Shell,
                     };
-                    let parsed = crate::core::status::parse_tool_status(&output, tool_str);
+                    let runner = crate::core::runner::runner_for(tool);
+                    let parsed = runner.parse_status(&output);
 
-                    // For Claude: capture session ID
-                    if matches!(step, RoutineStep::Claude { .. }) {
-                        if let Some(session_id) =
-                            crate::core::status::extract_claude_session_id(&output)
-                        {
-                            let mut data: serde_json::Value =
-                                serde_json::from_str(&current_tool_data)
-                                    .unwrap_or_else(|_| serde_json::json!({}));
-                            data["claude_session_id"] = serde_json::Value::String(session_id);
-                            current_tool_data = data.to_string();
-                            let _ = storage.update_run_tool_data(&run_id, &current_tool_data);
-                        }
+                    if let Some(session_id) = runner.extract_session_id(&output) {
+                        let mut data: serde_json::Value = serde_json::from_str(&current_tool_data)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                        data["claude_session_id"] = serde_json::Value::String(session_id);
+                        current_tool_data = data.to_string();
+                        let _ = storage.update_run_tool_data(&run_id, &current_tool_data);
                     }
 
                     if parsed.has_error {
