@@ -97,7 +97,6 @@ pub fn resolve_session_status(parsed: &ToolStatus, is_active: bool) -> crate::ty
 ///   Draft / Paused / Monitoring overlays; otherwise return Idle.
 /// - Tier 2: no fresh hook; pane title matches known marker → use it.
 /// - Tier 3: regex + resolve_session_status (current behavior).
-#[allow(dead_code)]
 pub fn compose_status(
     hook: Option<&HookStatus>,
     pane_title_status: Option<crate::types::SessionStatus>,

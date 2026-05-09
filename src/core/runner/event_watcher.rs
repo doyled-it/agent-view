@@ -3,10 +3,6 @@
 //! latest hook status per agent-view session, and forwards new cost
 //! events to storage.
 
-// Task 8/10 wires spawn() and EventStateHandle into the poller/app;
-// until then the public surface is unreachable from the binary entry point.
-#![allow(dead_code)]
-
 use crate::core::paths;
 use crate::core::runner::hook_handler::HookStatusFile;
 use crate::core::storage::{CostEvent, Storage};
@@ -25,6 +21,7 @@ use std::time::{Duration, SystemTime};
 pub struct HookStatus {
     pub status: SessionStatus,
     pub claude_session_id: Option<String>,
+    #[allow(dead_code)] // used in tests; reserved for UI display (Task 11+)
     pub event: String,
     pub received_at: SystemTime,
 }
@@ -40,6 +37,7 @@ pub type EventStateHandle = Arc<Mutex<EventState>>;
 
 /// Spawn the watcher thread. Returns the shared state handle.
 /// On any setup failure, returns a handle to an empty state and logs.
+#[allow(dead_code)] // wired in Task 11
 pub fn spawn() -> EventStateHandle {
     let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
     let state_clone = Arc::clone(&state);

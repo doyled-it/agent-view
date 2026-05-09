@@ -206,7 +206,13 @@ fn run_tui(
     let attach_state: Arc<Mutex<crate::core::attach_state::AttachState>> =
         Arc::new(Mutex::new(crate::core::attach_state::AttachState::new()));
     let bg_sound = config.notifications.sound;
-    let _bg_handle = crate::poller::spawn(Arc::clone(&attach_state), bg_sound);
+    let _bg_handle = crate::poller::spawn(
+        Arc::clone(&attach_state),
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::core::runner::event_watcher::EventState::default(),
+        )),
+        bg_sound,
+    );
 
     // Spawn usage monitor
     let (usage_shared, _usage_thread) = crate::core::usage::spawn_monitor();

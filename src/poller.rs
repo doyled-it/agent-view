@@ -6,6 +6,7 @@ use std::time::Duration;
 /// Spawn the background status polling thread.
 pub fn spawn(
     attach_state: Arc<Mutex<crate::core::attach_state::AttachState>>,
+    event_state: crate::core::runner::event_watcher::EventStateHandle,
     sound: bool,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
@@ -68,13 +69,29 @@ pub fn spawn(
                     }
                 } else {
                     let is_active = cache.is_session_active(&session.tmux_session, 2);
+                    let runner = crate::core::runner::runner_for(session.tool);
+
+                    let hook = if let Ok(s) = event_state.lock() {
+                        s.hook_status.get(&session.id).cloned()
+                    } else {
+                        None
+                    };
+
+                    let pane_title_status = if hook.is_none() {
+                        crate::core::runner::osc_title::check_pane_title(&session.tmux_session)
+                    } else {
+                        None
+                    };
+
                     match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100), false)
                     {
                         Ok(output) => {
-                            let runner = crate::core::runner::runner_for(session.tool);
-                            let parsed = runner.parse_status(&output);
-
-                            if let Some(session_id) = runner.extract_session_id(&output) {
+                            // Prefer claude_session_id from hook; fall back to regex extraction.
+                            let session_id_opt = hook
+                                .as_ref()
+                                .and_then(|h| h.claude_session_id.clone())
+                                .or_else(|| runner.extract_session_id(&output));
+                            if let Some(session_id) = session_id_opt {
                                 let mut data: serde_json::Value =
                                     serde_json::from_str(&session.tool_data)
                                         .unwrap_or_else(|_| serde_json::json!({}));
@@ -88,7 +105,14 @@ pub fn spawn(
                                 }
                             }
 
-                            crate::core::runner::resolve_session_status(&parsed, is_active)
+                            crate::core::runner::compose_status(
+                                hook.as_ref(),
+                                pane_title_status,
+                                &output,
+                                runner,
+                                is_active,
+                                std::time::SystemTime::now(),
+                            )
                         }
                         Err(_) => {
                             if is_active {

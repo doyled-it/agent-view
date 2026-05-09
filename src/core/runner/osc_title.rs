@@ -8,7 +8,6 @@ use crate::types::SessionStatus;
 use std::process::Command;
 
 /// Match a trimmed pane-title string against known Claude markers.
-#[allow(dead_code)]
 pub fn match_marker(title: &str) -> Option<SessionStatus> {
     match title.trim() {
         // Conservative initial set; expand with verified Claude markers.
@@ -19,7 +18,6 @@ pub fn match_marker(title: &str) -> Option<SessionStatus> {
 }
 
 /// Read tmux pane title for a session and apply `match_marker`.
-#[allow(dead_code)]
 pub fn check_pane_title(tmux_session: &str) -> Option<SessionStatus> {
     let output = Command::new("tmux")
         .args(["display-message", "-p", "-t", tmux_session, "#{pane_title}"])
