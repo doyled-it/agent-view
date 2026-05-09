@@ -35,23 +35,48 @@ pub struct EventState {
 
 pub type EventStateHandle = Arc<Mutex<EventState>>;
 
-/// Spawn the watcher thread. Returns the shared state handle.
+/// A storage handle the watcher uses to persist cost events. `Mutex`-guarded
+/// because `rusqlite::Connection` is not `Sync`.
+pub type SharedStorage = Arc<Mutex<Storage>>;
+
+/// Spawn the watcher thread against the production directories and storage.
 /// On any setup failure, returns a handle to an empty state and logs.
 pub fn spawn() -> EventStateHandle {
-    let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-    let state_clone = Arc::clone(&state);
-
     if let Err(e) = paths::ensure_event_dirs() {
         eprintln!("agent-view: event_watcher: ensure_event_dirs failed: {}", e);
-        return state;
+        return Arc::new(Mutex::new(EventState::default()));
     }
-    let hooks = paths::hooks_dir();
-    let costs = paths::cost_events_dir();
+    let storage = match Storage::open_default() {
+        Ok(s) => Some(Arc::new(Mutex::new(s))),
+        Err(e) => {
+            eprintln!(
+                "agent-view: event_watcher: open_default storage failed: {}; cost events will not be persisted",
+                e
+            );
+            None
+        }
+    };
+    spawn_in(paths::hooks_dir(), paths::cost_events_dir(), storage)
+}
+
+/// Same as [`spawn`] but with explicit directories and storage handle.
+/// Designed for tests — production code should use [`spawn`].
+///
+/// `storage` may be `None`, in which case cost-event files are still
+/// dedup-tracked but never persisted (and are not deleted from disk, so a
+/// later run with a working storage handle can ingest them).
+pub fn spawn_in(
+    hooks: PathBuf,
+    costs: PathBuf,
+    storage: Option<SharedStorage>,
+) -> EventStateHandle {
+    let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
 
     // Bootstrap from existing files BEFORE notify subscription so we don't
     // miss anything that landed before startup.
-    load_existing(&state_clone, &hooks, &costs);
+    load_existing(&state, &hooks, &costs, storage.as_ref());
 
+    let state_thread = Arc::clone(&state);
     thread::spawn(move || {
         let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
         let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
@@ -85,7 +110,7 @@ pub fn spawn() -> EventStateHandle {
                     if !pending.is_empty() {
                         let batch = std::mem::take(&mut pending);
                         for path in batch {
-                            process_path(&state_clone, &path);
+                            process_path(&state_thread, &path, storage.as_ref());
                         }
                     }
                 }
@@ -97,20 +122,25 @@ pub fn spawn() -> EventStateHandle {
     state
 }
 
-fn load_existing(state: &EventStateHandle, hooks: &Path, costs: &Path) {
+fn load_existing(
+    state: &EventStateHandle,
+    hooks: &Path,
+    costs: &Path,
+    storage: Option<&SharedStorage>,
+) {
     if let Ok(entries) = std::fs::read_dir(hooks) {
         for e in entries.flatten() {
-            process_path(state, &e.path());
+            process_path(state, &e.path(), storage);
         }
     }
     if let Ok(entries) = std::fs::read_dir(costs) {
         for e in entries.flatten() {
-            process_path(state, &e.path());
+            process_path(state, &e.path(), storage);
         }
     }
 }
 
-fn process_path(state: &EventStateHandle, path: &Path) {
+fn process_path(state: &EventStateHandle, path: &Path, storage: Option<&SharedStorage>) {
     if path.extension().and_then(|e| e.to_str()) != Some("json") {
         return;
     }
@@ -120,7 +150,7 @@ fn process_path(state: &EventStateHandle, path: &Path) {
         .and_then(|s| s.to_str());
     match parent_name {
         Some("hooks") => process_hook_file(state, path),
-        Some("cost-events") => process_cost_file(state, path),
+        Some("cost-events") => process_cost_file(state, path, storage),
         _ => {}
     }
 }
@@ -158,7 +188,7 @@ fn process_hook_file(state: &EventStateHandle, path: &Path) {
     }
 }
 
-fn process_cost_file(state: &EventStateHandle, path: &Path) {
+fn process_cost_file(state: &EventStateHandle, path: &Path, storage: Option<&SharedStorage>) {
     let key = match path.to_str() {
         Some(p) => p.to_string(),
         None => return,
@@ -182,8 +212,20 @@ fn process_cost_file(state: &EventStateHandle, path: &Path) {
         Some(e) => e,
         None => return,
     };
-    if let Ok(storage) = Storage::open_default() {
-        let _ = storage.insert_cost_event(&event);
+    let Some(storage) = storage else {
+        // No storage — leave file in place so a future run can ingest it.
+        return;
+    };
+    let inserted = match storage.lock() {
+        Ok(s) => s.insert_cost_event(&event).is_ok(),
+        Err(_) => false,
+    };
+    if inserted {
+        // After a successful insert the file is redundant: the dedup set
+        // (in-memory) covers the rest of this process; the SQLite row
+        // covers future processes. Removing keeps cost-events/ from
+        // growing unboundedly on long-running deployments.
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -213,6 +255,7 @@ fn deserialize_cost_event(bytes: &[u8]) -> Option<CostEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::storage::test_helpers::{make_test_session, test_storage};
     use std::fs;
 
     fn write_hook_file(dir: &Path, session_id: &str, status: &str) -> PathBuf {
@@ -226,6 +269,18 @@ mod tests {
         path
     }
 
+    fn write_cost_file(dir: &Path, session_id: &str, ts: i64) -> PathBuf {
+        let path = dir.join(format!("{}_{}.json", session_id, ts));
+        let body = serde_json::json!({
+            "session_id": session_id, "model": "m",
+            "input_tokens": 1, "output_tokens": 2,
+            "cache_read_tokens": 0, "cache_creation_tokens": 0,
+            "ts": ts,
+        });
+        fs::write(&path, serde_json::to_vec(&body).unwrap()).unwrap();
+        path
+    }
+
     #[test]
     fn test_process_hook_file_inserts_status() {
         let dir = tempfile::tempdir().unwrap();
@@ -233,7 +288,7 @@ mod tests {
         fs::create_dir(&hooks).unwrap();
         let path = write_hook_file(&hooks, "sess-1", "running");
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        process_path(&state, &path);
+        process_path(&state, &path, None);
         let g = state.lock().unwrap();
         let entry = g.hook_status.get("sess-1").unwrap();
         assert_eq!(entry.status, SessionStatus::Running);
@@ -247,7 +302,7 @@ mod tests {
         fs::create_dir(&hooks).unwrap();
         let path = write_hook_file(&hooks, "sess-2", "not-a-real-status");
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        process_path(&state, &path);
+        process_path(&state, &path, None);
         let g = state.lock().unwrap();
         assert!(g.hook_status.get("sess-2").is_none());
     }
@@ -261,7 +316,7 @@ mod tests {
         fs::create_dir(&costs).unwrap();
         write_hook_file(&hooks, "abc", "waiting");
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        load_existing(&state, &hooks, &costs);
+        load_existing(&state, &hooks, &costs, None);
         assert_eq!(
             state.lock().unwrap().hook_status.get("abc").unwrap().status,
             SessionStatus::Waiting
@@ -273,17 +328,93 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let costs = dir.path().join("cost-events");
         fs::create_dir(&costs).unwrap();
-        let path = costs.join("sess-1_12345.json");
-        let body = serde_json::json!({
-            "session_id": "sess-1", "model": "m",
-            "input_tokens": 1, "output_tokens": 2,
-            "cache_read_tokens": 0, "cache_creation_tokens": 0,
-            "ts": 12345,
-        });
-        fs::write(&path, serde_json::to_vec(&body).unwrap()).unwrap();
+        let path = write_cost_file(&costs, "sess-1", 12345);
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        process_path(&state, &path);
-        process_path(&state, &path);
+        process_path(&state, &path, None);
+        process_path(&state, &path, None);
         assert_eq!(state.lock().unwrap().seen_cost_files.len(), 1);
+    }
+
+    #[test]
+    fn test_process_cost_file_persists_and_removes_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let costs = dir.path().join("cost-events");
+        fs::create_dir(&costs).unwrap();
+
+        // Need a session row for the FK on cost_events.
+        let (storage, _db_dir) = test_storage();
+        storage.save_session(&make_test_session("sess-X")).unwrap();
+        let storage: SharedStorage = Arc::new(Mutex::new(storage));
+
+        let path = write_cost_file(&costs, "sess-X", 999);
+        assert!(path.exists());
+
+        let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
+        process_path(&state, &path, Some(&storage));
+
+        let totals = storage
+            .lock()
+            .unwrap()
+            .cost_totals_for_session("sess-X")
+            .unwrap();
+        assert_eq!(totals.input, 1);
+        assert_eq!(totals.output, 2);
+        assert!(
+            !path.exists(),
+            "cost-event file should be deleted after successful insert"
+        );
+    }
+
+    #[test]
+    fn test_process_cost_file_keeps_file_when_no_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let costs = dir.path().join("cost-events");
+        fs::create_dir(&costs).unwrap();
+        let path = write_cost_file(&costs, "sess-Y", 1);
+        let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
+        process_path(&state, &path, None);
+        assert!(
+            path.exists(),
+            "file must be retained when no storage is available"
+        );
+    }
+
+    #[test]
+    fn test_spawn_in_consumes_new_hook_file_via_notify_thread() {
+        // End-to-end: write a hook file AFTER the watcher starts, verify the
+        // notify thread picks it up and mutates shared state.
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        let costs = dir.path().join("cost-events");
+        fs::create_dir(&hooks).unwrap();
+        fs::create_dir(&costs).unwrap();
+
+        let state = spawn_in(hooks.clone(), costs, None);
+
+        // Give notify a moment to attach its watch.
+        std::thread::sleep(Duration::from_millis(200));
+        write_hook_file(&hooks, "live-sess", "running");
+
+        // Watcher debounces ~100ms after the last event; poll up to ~3s.
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if state.lock().unwrap().hook_status.contains_key("live-sess") {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("watcher never picked up the new hook file");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(
+            state
+                .lock()
+                .unwrap()
+                .hook_status
+                .get("live-sess")
+                .unwrap()
+                .status,
+            SessionStatus::Running
+        );
     }
 }

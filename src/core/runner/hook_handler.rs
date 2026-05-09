@@ -114,7 +114,9 @@ struct TranscriptLine {
     message: Option<TranscriptMessage>,
 }
 
-/// Atomic write: write to `path.tmp` then rename. Returns error on any I/O failure.
+/// Atomic write: write `bytes` to a sibling `<file>.<ext>.tmp` (or `<file>.tmp`
+/// when the path has no extension), then rename onto `path`. Returns the first
+/// I/O error encountered. Parent dirs are created on demand.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -129,28 +131,71 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Validate that a transcript path is under `~/.claude` after canonical
-/// cleaning. Rejects `..` traversal. Returns the cleaned path on success.
-pub fn validate_transcript_path(raw: &str) -> Option<PathBuf> {
-    if raw.contains("..") {
-        return None;
+/// Lexically normalize a path: collapses `.` and `..` components without
+/// touching the filesystem. Symlinks are not resolved (intentional — we
+/// don't want a symlink under ~/.claude to legitimize a target outside it,
+/// but we also don't want filesystem access in a security-critical check).
+fn lexical_normalize(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
     }
-    let p = PathBuf::from(raw);
-    let home = dirs::home_dir()?;
-    let claude_root = home.join(".claude");
-    if !p.starts_with(&claude_root) {
-        return None;
-    }
-    Some(p)
+    out
 }
 
-/// Read the last non-empty line of a JSONL transcript file. Reads the
-/// whole file (transcripts are typically <10 MB; OK to load). Returns None
-/// on read error or empty file.
+/// Validate that a transcript path resolves (lexically) to a location under
+/// `~/.claude`. Returns the normalized path on success. Rejects relative
+/// paths, paths that traverse out of `~/.claude` via `..`, and paths whose
+/// home directory cannot be resolved.
+///
+/// Lexical-only normalization is deliberate: filesystem-based canonicalize
+/// would require the file to exist (a TOCTOU on Claude's transcript writes)
+/// and would resolve symlinks, which could legitimize paths an attacker
+/// planted as symlinks in `~/.claude`.
+pub fn validate_transcript_path(raw: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(raw);
+    if !p.is_absolute() {
+        return None;
+    }
+    let normalized = lexical_normalize(&p);
+    let home = dirs::home_dir()?;
+    let claude_root = lexical_normalize(&home.join(".claude"));
+    if !normalized.starts_with(&claude_root) {
+        return None;
+    }
+    Some(normalized)
+}
+
+/// Read the last non-empty line of a JSONL transcript file.
+///
+/// Reads at most the trailing 256 KiB of the file rather than loading the
+/// whole thing — a single Claude transcript line (an assistant message JSON)
+/// has never been observed near that bound. Returns None on read error,
+/// empty file, or if the trailing window contains no complete non-empty
+/// line (extremely unlikely in practice).
 pub fn read_last_jsonl_line(path: &Path) -> Option<String> {
-    let contents = fs::read_to_string(path).ok()?;
-    contents
-        .lines()
+    use std::fs::File;
+    use std::io::{Read, Seek, SeekFrom};
+
+    const TAIL_BYTES: u64 = 256 * 1024;
+
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len == 0 {
+        return None;
+    }
+    let read_from = len.saturating_sub(TAIL_BYTES);
+    file.seek(SeekFrom::Start(read_from)).ok()?;
+    let mut buf = String::new();
+    file.read_to_string(&mut buf).ok()?;
+    buf.lines()
         .rev()
         .find(|l| !l.trim().is_empty())
         .map(|s| s.to_string())
@@ -186,24 +231,63 @@ pub fn cost_event_from_transcript_line(
     })
 }
 
+/// True when `AGENT_VIEW_HOOK_DEBUG` is set to a non-empty value. When on,
+/// the hook handler emits step-by-step trace lines on stderr — useful when
+/// Claude Code reports `Hook command exited with code N` or when status
+/// updates aren't reaching the TUI.
+fn debug_enabled() -> bool {
+    std::env::var("AGENT_VIEW_HOOK_DEBUG")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+}
+
+fn dbg(msg: &str) {
+    if debug_enabled() {
+        eprintln!("agent-view hook: {}", msg);
+    }
+}
+
 /// Entrypoint: called from main.rs when argv[1] == "hook". Always exits 0.
 pub fn run() {
     let _ = run_inner();
 }
 
 fn run_inner() -> Option<()> {
-    let instance_id = std::env::var("AGENT_VIEW_SESSION_ID").ok()?;
+    let instance_id = match std::env::var("AGENT_VIEW_SESSION_ID") {
+        Ok(v) => v,
+        Err(_) => {
+            dbg("AGENT_VIEW_SESSION_ID env not set; skipping");
+            return None;
+        }
+    };
     if !validate_instance_id(&instance_id) {
+        dbg(&format!("invalid AGENT_VIEW_SESSION_ID: {:?}", instance_id));
         return None;
     }
 
     let mut buf = Vec::new();
     let stdin = std::io::stdin();
     let mut handle = stdin.lock().take(MAX_PAYLOAD_BYTES as u64 + 1);
-    handle.read_to_end(&mut buf).ok()?;
-    let payload = parse_payload(&buf)?;
+    if let Err(e) = handle.read_to_end(&mut buf) {
+        dbg(&format!("stdin read error: {}", e));
+        return None;
+    }
+    let payload = match parse_payload(&buf) {
+        Some(p) => p,
+        None => {
+            dbg(&format!("payload parse failed (size={})", buf.len()));
+            return None;
+        }
+    };
+    dbg(&format!(
+        "event={} session={:?} transcript={:?}",
+        payload.hook_event_name, payload.session_id, payload.transcript_path
+    ));
 
-    paths::ensure_event_dirs().ok()?;
+    if let Err(e) = paths::ensure_event_dirs() {
+        dbg(&format!("ensure_event_dirs failed: {}", e));
+        return None;
+    }
 
     // Resolve status. For Notification events, gate on matcher.
     let status_opt = if payload.hook_event_name == "Notification" {
@@ -222,22 +306,62 @@ fn run_inner() -> Option<()> {
         };
         let json = serde_json::to_vec(&file).ok()?;
         let path = paths::hooks_dir().join(format!("{}.json", instance_id));
-        let _ = atomic_write(&path, &json);
+        match atomic_write(&path, &json) {
+            Ok(()) => dbg(&format!(
+                "wrote status={} -> {}",
+                status.as_str(),
+                path.display()
+            )),
+            Err(e) => dbg(&format!("atomic_write status failed: {}", e)),
+        }
+    } else {
+        dbg(&format!(
+            "event {} did not map to a status; not writing hook file",
+            payload.hook_event_name
+        ));
     }
 
     // On Stop events with a transcript_path, also write a cost event.
     if payload.hook_event_name == "Stop" {
-        if let Some(raw) = payload.transcript_path.as_deref() {
-            if let Some(p) = validate_transcript_path(raw) {
-                if let Some(line) = read_last_jsonl_line(&p) {
-                    if let Some(event) = cost_event_from_transcript_line(&line, &instance_id) {
-                        let filename = format!("{}_{}.json", instance_id, event.ts);
-                        let bytes = serde_json::to_vec(&event).ok()?;
-                        let path = paths::cost_events_dir().join(filename);
-                        let _ = atomic_write(&path, &bytes);
-                    }
-                }
+        let raw = match payload.transcript_path.as_deref() {
+            Some(r) => r,
+            None => {
+                dbg("Stop event without transcript_path; skipping cost write");
+                return Some(());
             }
+        };
+        let p = match validate_transcript_path(raw) {
+            Some(p) => p,
+            None => {
+                dbg(&format!("transcript_path rejected by validator: {}", raw));
+                return Some(());
+            }
+        };
+        let line = match read_last_jsonl_line(&p) {
+            Some(l) => l,
+            None => {
+                dbg(&format!("transcript {} empty or unreadable", p.display()));
+                return Some(());
+            }
+        };
+        let event = match cost_event_from_transcript_line(&line, &instance_id) {
+            Some(e) => e,
+            None => {
+                dbg("transcript last line had no usable usage data");
+                return Some(());
+            }
+        };
+        let filename = format!("{}_{}.json", instance_id, event.ts);
+        let bytes = serde_json::to_vec(&event).ok()?;
+        let path = paths::cost_events_dir().join(filename);
+        match atomic_write(&path, &bytes) {
+            Ok(()) => dbg(&format!(
+                "wrote cost in={} out={} -> {}",
+                event.input_tokens,
+                event.output_tokens,
+                path.display()
+            )),
+            Err(e) => dbg(&format!("atomic_write cost failed: {}", e)),
         }
     }
 
@@ -398,11 +522,64 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_transcript_path_rejects_relative() {
+        assert!(validate_transcript_path(".claude/projects/x/s.jsonl").is_none());
+        assert!(validate_transcript_path("relative.jsonl").is_none());
+    }
+
+    #[test]
     fn test_validate_transcript_path_accepts_under_claude() {
         let home = dirs::home_dir().unwrap();
         let ok = home.join(".claude/projects/abc/sess.jsonl");
         let res = validate_transcript_path(ok.to_str().unwrap());
         assert!(res.is_some());
+    }
+
+    #[test]
+    fn test_validate_transcript_path_accepts_double_dot_in_segment() {
+        // A segment like "some..proj" is a single path component, NOT a
+        // traversal — must be accepted. Earlier substring-based rejection
+        // would have falsely blocked this.
+        let home = dirs::home_dir().unwrap();
+        let ok = home.join(".claude/projects/some..proj/sess.jsonl");
+        let res = validate_transcript_path(ok.to_str().unwrap());
+        assert!(res.is_some(), "double-dot inside a segment must be allowed");
+    }
+
+    #[test]
+    fn test_validate_transcript_path_normalizes_redundant_components() {
+        // ~/.claude/./projects/x/sess.jsonl normalizes to ~/.claude/projects/x/sess.jsonl
+        let home = dirs::home_dir().unwrap();
+        let raw = format!("{}/.claude/./projects/x/sess.jsonl", home.display());
+        let res = validate_transcript_path(&raw).unwrap();
+        assert_eq!(res, home.join(".claude/projects/x/sess.jsonl"));
+    }
+
+    #[test]
+    fn test_read_last_jsonl_line_returns_last_when_file_smaller_than_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n").unwrap();
+        assert_eq!(read_last_jsonl_line(&path).unwrap(), "{\"c\":3}");
+    }
+
+    #[test]
+    fn test_read_last_jsonl_line_handles_large_file() {
+        // Write a >256KB file with many small lines and verify we get the
+        // last one (the trailing-window read must include it).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.jsonl");
+        let mut contents = String::new();
+        for i in 0..40_000 {
+            contents.push_str(&format!("{{\"i\":{}}}\n", i));
+        }
+        std::fs::write(&path, &contents).unwrap();
+        assert!(
+            contents.len() > 256 * 1024,
+            "test setup invariant: file must exceed the tail-read window (got {} bytes)",
+            contents.len()
+        );
+        assert_eq!(read_last_jsonl_line(&path).unwrap(), "{\"i\":39999}");
     }
 
     #[test]

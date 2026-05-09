@@ -130,6 +130,12 @@ pub fn compose_status(
                 }
                 return SessionStatus::Idle;
             }
+            // Hook handler currently never emits Crashed / Stopped / Draft /
+            // Paused / Monitoring / Error (Crashed comes from the
+            // !session_exists path in the poller; the others are derived from
+            // pane parsing). If any of these ever leak through (malformed
+            // payload, future schema change), fall through to the title /
+            // regex tiers rather than trusting an unexpected hook status.
             _ => {}
         }
     }

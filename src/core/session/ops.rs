@@ -358,10 +358,25 @@ pub struct FinishOutcome {
 }
 
 fn delete_event_files(session_id: &str) {
-    let hook = crate::core::paths::hooks_dir().join(format!("{}.json", session_id));
+    delete_event_files_in(
+        &crate::core::paths::hooks_dir(),
+        &crate::core::paths::cost_events_dir(),
+        session_id,
+    );
+}
+
+/// Same as [`delete_event_files`] but with explicit directories. Splitting
+/// the directories out lets unit tests run against a tempdir without
+/// touching `~/.agent-orchestrator`.
+fn delete_event_files_in(
+    hooks_dir: &std::path::Path,
+    cost_dir: &std::path::Path,
+    session_id: &str,
+) {
+    let hook = hooks_dir.join(format!("{}.json", session_id));
     let _ = std::fs::remove_file(&hook);
 
-    if let Ok(entries) = std::fs::read_dir(crate::core::paths::cost_events_dir()) {
+    if let Ok(entries) = std::fs::read_dir(cost_dir) {
         let prefix = format!("{}_", session_id);
         for e in entries.flatten() {
             if let Some(name) = e.file_name().to_str() {
@@ -507,17 +522,39 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "touches real ~/.agent-orchestrator/hooks dir — run locally"]
-    fn test_delete_event_files_removes_hook_and_cost_files() {
+    fn test_delete_event_files_in_removes_hook_and_cost_files() {
         use std::fs;
-        let _ = crate::core::paths::ensure_event_dirs();
-        let id = format!("test-cleanup-{}", std::process::id());
-        let hook = crate::core::paths::hooks_dir().join(format!("{}.json", id));
-        let cost = crate::core::paths::cost_events_dir().join(format!("{}_1.json", id));
-        fs::write(&hook, "{}").unwrap();
-        fs::write(&cost, "{}").unwrap();
-        super::delete_event_files(&id);
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        let costs = dir.path().join("cost-events");
+        fs::create_dir(&hooks).unwrap();
+        fs::create_dir(&costs).unwrap();
+
+        let id = "sess-X";
+        let hook = hooks.join(format!("{}.json", id));
+        let cost1 = costs.join(format!("{}_1.json", id));
+        let cost2 = costs.join(format!("{}_2.json", id));
+        // A cost file for an UNRELATED session must NOT be touched.
+        let other = costs.join("sess-Y_1.json");
+
+        for p in [&hook, &cost1, &cost2, &other] {
+            fs::write(p, "{}").unwrap();
+        }
+
+        super::delete_event_files_in(&hooks, &costs, id);
+
         assert!(!hook.exists());
-        assert!(!cost.exists());
+        assert!(!cost1.exists());
+        assert!(!cost2.exists());
+        assert!(other.exists(), "files for other sessions must be preserved");
+    }
+
+    #[test]
+    fn test_delete_event_files_in_handles_missing_dirs() {
+        // Should not panic when neither dir exists yet.
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("does-not-exist-hooks");
+        let costs = dir.path().join("does-not-exist-costs");
+        super::delete_event_files_in(&hooks, &costs, "anything");
     }
 }
