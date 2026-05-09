@@ -151,7 +151,18 @@ fn radix_string(mut n: u64, radix: u64) -> String {
     result.into_iter().collect()
 }
 
-/// Create a new tmux session
+/// Create a new tmux session.
+///
+/// Env vars in `env` are passed via `-e KEY=VALUE` on `new-session` so they
+/// are set on the session BEFORE the initial pane's shell spawns — that
+/// shell (and any process it later forks, like `claude`) inherits them.
+/// They are ALSO replayed via `set-environment` afterwards so any future
+/// panes opened in the same session (e.g., `split-window`) see them too.
+///
+/// Note: an earlier version of this function only used `set-environment`
+/// after `new-session`, which silently failed to populate env for the
+/// initial shell. That bug masked the AGENT_VIEW_SESSION_ID injection
+/// added for the hook handler — see PR #51.
 pub fn create_session(
     name: &str,
     command: Option<&str>,
@@ -160,9 +171,23 @@ pub fn create_session(
 ) -> TmuxResult<()> {
     let cwd = cwd.unwrap_or("/tmp");
 
-    // Step 1: Create detached session
+    // Step 1: Create detached session, with env baked into the initial pane.
+    let mut args: Vec<String> = vec![
+        "new-session".to_string(),
+        "-d".to_string(),
+        "-s".to_string(),
+        name.to_string(),
+        "-c".to_string(),
+        cwd.to_string(),
+    ];
+    if let Some(env_vars) = env {
+        for (key, value) in env_vars {
+            args.push("-e".to_string());
+            args.push(format!("{}={}", key, value));
+        }
+    }
     let status = Command::new("tmux")
-        .args(["new-session", "-d", "-s", name, "-c", cwd])
+        .args(&args)
         .status()
         .map_err(|e| TmuxError::CommandFailed(format!("Failed to spawn tmux: {}", e)))?;
 
@@ -173,7 +198,8 @@ pub fn create_session(
         )));
     }
 
-    // Step 2: Set environment variables
+    // Step 2: Replay env into the session-level update-environment list so
+    // any future panes (split-window, new-window) inherit it as well.
     if let Some(env_vars) = env {
         for (key, value) in env_vars {
             let _ = Command::new("tmux")
