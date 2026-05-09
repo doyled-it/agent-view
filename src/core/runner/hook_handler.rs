@@ -173,14 +173,42 @@ pub fn validate_transcript_path(raw: &str) -> Option<PathBuf> {
     Some(normalized)
 }
 
-/// Read the last non-empty line of a JSONL transcript file.
+/// Find the last `type: "assistant"` line in a JSONL transcript whose
+/// payload contains usage data. Real Claude transcripts often end with a
+/// `type: "system"` marker (session summary, compaction note, etc.) so we
+/// can't rely on `read_last_jsonl_line` here — we must scan backward past
+/// any trailing non-assistant lines.
 ///
-/// Reads at most the trailing 256 KiB of the file rather than loading the
-/// whole thing — a single Claude transcript line (an assistant message JSON)
-/// has never been observed near that bound. Returns None on read error,
-/// empty file, or if the trailing window contains no complete non-empty
-/// line (extremely unlikely in practice).
-pub fn read_last_jsonl_line(path: &Path) -> Option<String> {
+/// Reads only the trailing 256 KiB of the file (consistent with
+/// `read_last_jsonl_line`); the assistant message produced by the most
+/// recent turn is essentially always within the last few KiB.
+pub fn find_last_assistant_line(path: &Path) -> Option<String> {
+    let buf = read_tail(path)?;
+    for line in buf.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Cheap pre-filter to skip JSON parsing for obvious non-matches.
+        if !trimmed.contains("\"type\":\"assistant\"") {
+            continue;
+        }
+        if let Ok(parsed) = serde_json::from_str::<TranscriptLine>(trimmed) {
+            if parsed.line_type == "assistant"
+                && parsed
+                    .message
+                    .as_ref()
+                    .and_then(|m| m.usage.as_ref())
+                    .is_some()
+            {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn read_tail(path: &Path) -> Option<String> {
     use std::fs::File;
     use std::io::{Read, Seek, SeekFrom};
 
@@ -195,10 +223,7 @@ pub fn read_last_jsonl_line(path: &Path) -> Option<String> {
     file.seek(SeekFrom::Start(read_from)).ok()?;
     let mut buf = String::new();
     file.read_to_string(&mut buf).ok()?;
-    buf.lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .map(|s| s.to_string())
+    Some(buf)
 }
 
 /// Build a CostEvent from a transcript last-line and an agent-view session
@@ -337,17 +362,20 @@ fn run_inner() -> Option<()> {
                 return Some(());
             }
         };
-        let line = match read_last_jsonl_line(&p) {
+        let line = match find_last_assistant_line(&p) {
             Some(l) => l,
             None => {
-                dbg(&format!("transcript {} empty or unreadable", p.display()));
+                dbg(&format!(
+                    "transcript {} contains no assistant line with usage in tail window",
+                    p.display()
+                ));
                 return Some(());
             }
         };
         let event = match cost_event_from_transcript_line(&line, &instance_id) {
             Some(e) => e,
             None => {
-                dbg("transcript last line had no usable usage data");
+                dbg("found assistant line but cost_event_from_transcript_line rejected it");
                 return Some(());
             }
         };
@@ -556,54 +584,26 @@ mod tests {
     }
 
     #[test]
-    fn test_read_last_jsonl_line_returns_last_when_file_smaller_than_window() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.jsonl");
-        std::fs::write(&path, "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n").unwrap();
-        assert_eq!(read_last_jsonl_line(&path).unwrap(), "{\"c\":3}");
-    }
-
-    #[test]
-    fn test_read_last_jsonl_line_handles_large_file() {
-        // Write a >256KB file with many small lines and verify we get the
-        // last one (the trailing-window read must include it).
+    fn test_find_last_assistant_line_handles_large_file() {
+        // The tail-window read must reach back far enough to find the last
+        // assistant line in a >256 KiB transcript.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("big.jsonl");
         let mut contents = String::new();
-        for i in 0..40_000 {
-            contents.push_str(&format!("{{\"i\":{}}}\n", i));
+        let asst = r#"{"type":"assistant","message":{"model":"m","usage":{"input_tokens":1,"output_tokens":2}}}"#;
+        for _ in 0..3_000 {
+            contents.push_str(asst);
+            contents.push('\n');
         }
+        contents.push_str(r#"{"type":"system","subtype":"summary"}"#);
+        contents.push('\n');
         std::fs::write(&path, &contents).unwrap();
         assert!(
             contents.len() > 256 * 1024,
             "test setup invariant: file must exceed the tail-read window (got {} bytes)",
             contents.len()
         );
-        assert_eq!(read_last_jsonl_line(&path).unwrap(), "{\"i\":39999}");
-    }
-
-    #[test]
-    fn test_read_last_jsonl_line_skips_trailing_blank() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.jsonl");
-        std::fs::write(&path, "{\"a\":1}\n{\"a\":2}\n\n").unwrap();
-        assert_eq!(read_last_jsonl_line(&path).unwrap(), "{\"a\":2}");
-    }
-
-    #[test]
-    fn test_read_last_jsonl_line_single_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.jsonl");
-        std::fs::write(&path, "{\"a\":1}").unwrap();
-        assert_eq!(read_last_jsonl_line(&path).unwrap(), "{\"a\":1}");
-    }
-
-    #[test]
-    fn test_read_last_jsonl_line_empty_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("empty.jsonl");
-        std::fs::write(&path, "").unwrap();
-        assert!(read_last_jsonl_line(&path).is_none());
+        assert!(find_last_assistant_line(&path).is_some());
     }
 
     #[test]
@@ -628,5 +628,61 @@ mod tests {
     fn test_cost_event_skips_zero_usage() {
         let line = r#"{"type":"assistant","message":{"model":"x","usage":{"input_tokens":0,"output_tokens":0}}}"#;
         assert!(cost_event_from_transcript_line(line, "x").is_none());
+    }
+
+    #[test]
+    fn test_find_last_assistant_line_skips_trailing_system() {
+        // Reproduces the real-world bug: Claude transcripts often end with
+        // a `type: "system"` marker after the final assistant message. The
+        // hook handler must walk back past it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let user = r#"{"type":"user","message":{"role":"user","content":"hi"}}"#;
+        let asst = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":2}}}"#;
+        let sys = r#"{"type":"system","subtype":"summary"}"#;
+        std::fs::write(&path, format!("{}\n{}\n{}\n", user, asst, sys)).unwrap();
+
+        let line = find_last_assistant_line(&path).expect("should find the assistant line");
+        let event = cost_event_from_transcript_line(&line, "sess-X").unwrap();
+        assert_eq!(event.input_tokens, 1);
+        assert_eq!(event.output_tokens, 2);
+    }
+
+    #[test]
+    fn test_find_last_assistant_line_picks_most_recent_when_multiple() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let older = r#"{"type":"assistant","message":{"model":"m","usage":{"input_tokens":10,"output_tokens":100}}}"#;
+        let newer = r#"{"type":"assistant","message":{"model":"m","usage":{"input_tokens":20,"output_tokens":200}}}"#;
+        let sys = r#"{"type":"system","subtype":"x"}"#;
+        std::fs::write(&path, format!("{}\n{}\n{}\n", older, newer, sys)).unwrap();
+
+        let line = find_last_assistant_line(&path).unwrap();
+        let event = cost_event_from_transcript_line(&line, "s").unwrap();
+        assert_eq!(event.input_tokens, 20);
+        assert_eq!(event.output_tokens, 200);
+    }
+
+    #[test]
+    fn test_find_last_assistant_line_skips_assistant_without_usage() {
+        // A streaming-in-progress entry might lack usage; we should keep
+        // walking back to find one that has it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let with_usage = r#"{"type":"assistant","message":{"model":"m","usage":{"input_tokens":5,"output_tokens":50}}}"#;
+        let no_usage = r#"{"type":"assistant","message":{"model":"m"}}"#;
+        std::fs::write(&path, format!("{}\n{}\n", with_usage, no_usage)).unwrap();
+
+        let line = find_last_assistant_line(&path).unwrap();
+        let event = cost_event_from_transcript_line(&line, "s").unwrap();
+        assert_eq!(event.input_tokens, 5);
+    }
+
+    #[test]
+    fn test_find_last_assistant_line_none_when_no_assistant() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, "{\"type\":\"user\",\"message\":{}}\n").unwrap();
+        assert!(find_last_assistant_line(&path).is_none());
     }
 }
