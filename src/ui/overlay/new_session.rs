@@ -9,9 +9,9 @@ use crate::ui::theme::Theme;
 
 /// Render the new session creation form as a centered overlay.
 pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, theme: &Theme) {
-    let has_path_completions = form.focused_field == 1 && form.completions.len() > 1;
-    let has_branch_completions = form.focused_field == 2 && form.completions.len() > 1;
-    let has_base_completions = form.focused_field == 3 && form.completions.len() > 1;
+    let has_path_completions = form.focused_field == 2 && form.completions.len() > 1;
+    let has_branch_completions = form.focused_field == 3 && form.completions.len() > 1;
+    let has_base_completions = form.focused_field == 4 && form.completions.len() > 1;
     let has_completions = has_path_completions || has_branch_completions || has_base_completions;
     let max_completion_rows: usize = 6;
     let overlay_width = 64u16.min(area.width.saturating_sub(4));
@@ -31,6 +31,7 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     // directly under the field whose completion is active.
     //
     // Layout sections (each 1 row unless noted):
+    //   runner label, runner cycle row, spacer (after runner),
     //   title label, title input, spacer,
     //   path label, path input,
     //   [if path completions: completion hint, completion grid (N rows)],
@@ -41,8 +42,11 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     //   base label, base input,
     //   [if error: error row],
     //   help hint
-    // title label + input + spacer; path label + input — always present
+    // runner label + cycle row + spacer; title label + input + spacer; path label + input — always present
     let mut constraints: Vec<Constraint> = vec![
+        Constraint::Length(1), // runner label
+        Constraint::Length(1), // runner cycle row
+        Constraint::Length(1), // spacer (after runner, before title)
         Constraint::Length(1), // title label
         Constraint::Length(1), // title input
         Constraint::Length(1), // spacer
@@ -129,16 +133,32 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
 
     let mut i: usize = 0;
 
-    // Title
+    // Runner row — chunks[i] is label, chunks[i+1] is the cycle value, chunks[i+2] is spacer
     frame.render_widget(
-        Paragraph::new("Title (leave empty for random):")
-            .style(label_style(form.focused_field == 0)),
+        Paragraph::new("Runner:").style(label_style(form.focused_field == 0)),
         chunks[i],
     );
     i += 1;
-    let title_display = if form.title.is_empty() && form.focused_field == 0 {
+    let runner_label = display_runner_label(form.runner.as_str());
+    let runner_line = Line::from(vec![
+        Span::styled("  \u{2039} ", Style::default().fg(theme.text_muted)),
+        Span::styled(runner_label, Style::default().fg(theme.text)),
+        Span::styled(" \u{203a}", Style::default().fg(theme.text_muted)),
+    ]);
+    frame.render_widget(Paragraph::new(runner_line), chunks[i]);
+    i += 1;
+    i += 1; // spacer after runner
+
+    // Title
+    frame.render_widget(
+        Paragraph::new("Title (leave empty for random):")
+            .style(label_style(form.focused_field == 1)),
+        chunks[i],
+    );
+    i += 1;
+    let title_display = if form.title.is_empty() && form.focused_field == 1 {
         "\u{2588}".to_string()
-    } else if form.focused_field == 0 {
+    } else if form.focused_field == 1 {
         format!("{}\u{2588}", form.title)
     } else if form.title.is_empty() {
         "(auto-generated)".to_string()
@@ -154,11 +174,11 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
 
     // Path
     frame.render_widget(
-        Paragraph::new("Project Path:").style(label_style(form.focused_field == 1)),
+        Paragraph::new("Project Path:").style(label_style(form.focused_field == 2)),
         chunks[i],
     );
     i += 1;
-    let path_display = if form.focused_field == 1 {
+    let path_display = if form.focused_field == 2 {
         format!("{}\u{2588}", form.project_path)
     } else {
         form.project_path.clone()
@@ -203,11 +223,11 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     };
     let branch_label = format!("Worktree Branch \u{00b7} {}:", mode_hint);
     frame.render_widget(
-        Paragraph::new(branch_label).style(label_style(form.focused_field == 2)),
+        Paragraph::new(branch_label).style(label_style(form.focused_field == 3)),
         chunks[i],
     );
     i += 1;
-    let branch_display = if form.focused_field == 2 {
+    let branch_display = if form.focused_field == 3 {
         format!("{}\u{2588}", form.worktree_branch)
     } else if form.worktree_branch.is_empty() {
         "(no worktree)".to_string()
@@ -256,14 +276,14 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         // Attach mode: always dim regardless of focus
         Style::default().fg(theme.text_muted)
     } else {
-        label_style(form.focused_field == 3)
+        label_style(form.focused_field == 4)
     };
     frame.render_widget(
         Paragraph::new(base_label).style(base_label_style),
         chunks[i],
     );
     i += 1;
-    let base_display = if form.focused_field == 3 {
+    let base_display = if form.focused_field == 4 {
         format!("{}\u{2588}", form.worktree_base)
     } else if form.worktree_base.is_empty() {
         if form.worktree_new_branch {
@@ -317,13 +337,27 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     }
 
     // Help hint line — always last
+    let base_hint =
+        "^S save · Esc cancel · Tab/\u{2193} next · \u{21e7}Tab/\u{2191} back · ^T toggle";
+    let hint = if form.focused_field == 0 {
+        format!("\u{2190}/\u{2192} cycle runner   {}", base_hint)
+    } else {
+        base_hint.to_string()
+    };
     frame.render_widget(
-        Paragraph::new(
-            "^S save · Esc cancel · Tab/\u{2193} next · \u{21e7}Tab/\u{2191} back · ^T toggle",
-        )
-        .style(Style::default().fg(theme.text_muted)),
+        Paragraph::new(hint).style(Style::default().fg(theme.text_muted)),
         chunks[i],
     );
+}
+
+/// ASCII-uppercase the first character of a runner's `name()` for display.
+/// E.g., "claude" -> "Claude", "shell" -> "Shell".
+fn display_runner_label(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn render_completion_hint(
