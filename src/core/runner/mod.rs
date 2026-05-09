@@ -66,6 +66,18 @@ pub fn runner_for(tool: Tool) -> &'static dyn Runner {
     }
 }
 
+/// Tools backed by a real `Runner` impl, in `Tool::ALL` order. Drives the
+/// new-session overlay's runner picker — adding a new real runner makes
+/// it appear here automatically (no picker code change required).
+#[allow(dead_code)] // wired in Task 6
+pub fn implemented_tools() -> Vec<Tool> {
+    Tool::ALL
+        .iter()
+        .copied()
+        .filter(|t| runner_for(*t).is_implemented())
+        .collect()
+}
+
 /// Resolve a parsed `ToolStatus` plus the tmux pane's active flag into the
 /// canonical `SessionStatus` shown in the UI. Moved verbatim from the old
 /// `core::status` module.
@@ -413,5 +425,12 @@ mod tests {
                 tool
             );
         }
+    }
+
+    #[test]
+    fn test_implemented_tools_currently_only_claude() {
+        // After Task 4 lands ShellRunner, update this assertion to
+        // `vec![Tool::Claude, Tool::Shell]`. For now Shell is still a fallback.
+        assert_eq!(implemented_tools(), vec![Tool::Claude]);
     }
 }
