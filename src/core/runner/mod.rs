@@ -40,6 +40,14 @@ pub trait Runner: Send + Sync {
     fn extract_session_id(&self, pane_content: &str) -> Option<String>;
     fn restart_command(&self, original_command: &str, tool_data: &str) -> String;
 
+    /// True for runners with a real per-tool impl. False for FallbackRunner
+    /// stubs so the new-session picker can hide tools that aren't yet wired
+    /// up. Default is true so a new real runner needs no boilerplate.
+    #[allow(dead_code)] // part of the public Runner API surface; used by UI layer
+    fn is_implemented(&self) -> bool {
+        true
+    }
+
     /// Install per-tool status-detection hooks into the tool's user config.
     /// Idempotent. Default impl is a no-op for runners without hook support.
     fn install_hooks(&self) -> Result<(), String> {
@@ -382,5 +390,28 @@ mod tests {
             SystemTime::now(),
         );
         assert_eq!(s, SessionStatus::Running);
+    }
+
+    #[test]
+    fn test_claude_runner_is_implemented() {
+        assert!(runner_for(Tool::Claude).is_implemented());
+    }
+
+    #[test]
+    fn test_fallback_runners_report_not_implemented() {
+        for tool in [
+            Tool::Codex,
+            Tool::Opencode,
+            Tool::Gemini,
+            Tool::Custom,
+            // Tool::Shell intentionally excluded — Task 4 swaps it to a real impl
+            // and this test will be extended then.
+        ] {
+            assert!(
+                !runner_for(tool).is_implemented(),
+                "{:?} should still be a fallback at this stage",
+                tool
+            );
+        }
     }
 }

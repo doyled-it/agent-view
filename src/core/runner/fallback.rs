@@ -26,6 +26,9 @@ impl Runner for FallbackRunner {
     fn restart_command(&self, original_command: &str, _tool_data: &str) -> String {
         original_command.to_string()
     }
+    fn is_implemented(&self) -> bool {
+        false
+    }
 }
 
 pub static CODEX: FallbackRunner = FallbackRunner {
