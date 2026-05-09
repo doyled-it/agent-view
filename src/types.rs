@@ -64,6 +64,24 @@ impl SessionStatus {
         }
     }
 
+    /// Strict parse: returns None on unknown strings (unlike `from_str` which
+    /// defaults to Idle for storage compatibility).
+    pub fn try_parse_strict(s: &str) -> Option<Self> {
+        match s {
+            "running" => Some(Self::Running),
+            "waiting" => Some(Self::Waiting),
+            "draft" => Some(Self::Draft),
+            "paused" => Some(Self::Paused),
+            "compacting" => Some(Self::Compacting),
+            "monitoring" => Some(Self::Monitoring),
+            "idle" => Some(Self::Idle),
+            "error" => Some(Self::Error),
+            "crashed" => Some(Self::Crashed),
+            "stopped" => Some(Self::Stopped),
+            _ => None,
+        }
+    }
+
     pub fn icon(&self) -> &'static str {
         match self {
             Self::Running => "●",
