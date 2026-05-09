@@ -1,8 +1,14 @@
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewSessionForm {
+    /// The runner this session will use. Cycled via Left/Right when the
+    /// runner field is focused (focused_field == 0).
+    pub runner: crate::types::Tool,
+    /// Snapshot of `runner::implemented_tools()` taken at form construction
+    /// so per-frame renders don't re-query the runner registry.
+    pub runners: Vec<crate::types::Tool>,
     pub title: String,
     pub project_path: String,
-    /// 0 = title, 1 = project path, 2 = worktree branch, 3 = base ref
+    /// 0 = runner, 1 = title, 2 = project path, 3 = worktree branch, 4 = base ref
     pub focused_field: usize,
     pub completions: Vec<String>,
     pub completion_index: Option<usize>,
@@ -25,6 +31,8 @@ impl NewSessionForm {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "/tmp".to_string());
         Self {
+            runner: crate::types::Tool::Claude,
+            runners: crate::core::runner::implemented_tools(),
             title: String::new(),
             project_path: home,
             focused_field: 0,
@@ -44,5 +52,80 @@ impl NewSessionForm {
         self.completions.clear();
         self.completion_index = None;
         self.completion_base.clear();
+    }
+
+    /// Move the runner selection to the next entry in `runners`, wrapping.
+    #[allow(dead_code)] // wired in Task 6 (input handler)
+    pub fn cycle_runner_next(&mut self) {
+        if self.runners.is_empty() {
+            return;
+        }
+        let idx = self
+            .runners
+            .iter()
+            .position(|t| *t == self.runner)
+            .unwrap_or(0);
+        self.runner = self.runners[(idx + 1) % self.runners.len()];
+    }
+
+    /// Move the runner selection to the previous entry in `runners`, wrapping.
+    #[allow(dead_code)] // wired in Task 6 (input handler)
+    pub fn cycle_runner_prev(&mut self) {
+        if self.runners.is_empty() {
+            return;
+        }
+        let idx = self
+            .runners
+            .iter()
+            .position(|t| *t == self.runner)
+            .unwrap_or(0);
+        let n = self.runners.len();
+        self.runner = self.runners[(idx + n - 1) % n];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Tool;
+
+    #[test]
+    fn test_form_default_runner_is_claude() {
+        let f = NewSessionForm::new();
+        assert_eq!(f.runner, Tool::Claude);
+        assert_eq!(f.focused_field, 0);
+    }
+
+    #[test]
+    fn test_runners_field_populated_at_construction() {
+        let f = NewSessionForm::new();
+        assert!(f.runners.contains(&Tool::Claude));
+        assert!(f.runners.contains(&Tool::Shell));
+        assert!(!f.runners.is_empty());
+    }
+
+    #[test]
+    fn test_cycle_runner_next_wraps() {
+        let mut f = NewSessionForm::new();
+        let n = f.runners.len();
+        for _ in 0..n {
+            f.cycle_runner_next();
+        }
+        assert_eq!(f.runner, Tool::Claude);
+    }
+
+    #[test]
+    fn test_cycle_runner_prev_wraps() {
+        let mut f = NewSessionForm::new();
+        f.cycle_runner_prev();
+        assert_eq!(f.runner, *f.runners.last().unwrap());
+    }
+
+    #[test]
+    fn test_cycle_runner_next_advances_one() {
+        let mut f = NewSessionForm::new();
+        assert_eq!(f.runner, Tool::Claude);
+        f.cycle_runner_next();
+        assert_eq!(f.runner, f.runners[1]);
     }
 }

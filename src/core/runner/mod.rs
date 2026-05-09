@@ -70,7 +70,6 @@ pub fn runner_for(tool: Tool) -> &'static dyn Runner {
 /// Tools backed by a real `Runner` impl, in `Tool::ALL` order. Drives the
 /// new-session overlay's runner picker — adding a new real runner makes
 /// it appear here automatically (no picker code change required).
-#[allow(dead_code)] // wired in Task 6
 pub fn implemented_tools() -> Vec<Tool> {
     Tool::ALL
         .iter()
