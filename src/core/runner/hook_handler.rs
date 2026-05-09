@@ -6,10 +6,6 @@
 //! blocked. The pure parsing/mapping helpers below are unit-tested; the
 //! I/O orchestrator is in `run()`.
 
-// Task 11 wires `run()` into main.rs; until then all items in this module
-// are unreachable from the binary entry point.
-#![allow(dead_code)]
-
 use crate::core::paths;
 use crate::core::storage::CostEvent;
 use crate::types::SessionStatus;

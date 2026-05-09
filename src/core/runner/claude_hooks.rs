@@ -8,10 +8,8 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[allow(dead_code)]
 const COMMAND_SUFFIX: &str = " hook";
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct HookEventConfig {
     event: &'static str,
@@ -19,7 +17,6 @@ struct HookEventConfig {
     async_: bool,          // false = synchronous (Claude Code blocks on exit code)
 }
 
-#[allow(dead_code)]
 const EVENTS: &[HookEventConfig] = &[
     HookEventConfig {
         event: "SessionStart",
@@ -59,7 +56,6 @@ const EVENTS: &[HookEventConfig] = &[
 ];
 
 /// Locate Claude config dir: $CLAUDE_CONFIG_DIR if set, else ~/.claude.
-#[allow(dead_code)]
 pub fn claude_config_dir() -> Option<PathBuf> {
     if let Ok(d) = std::env::var("CLAUDE_CONFIG_DIR") {
         return Some(PathBuf::from(d));
@@ -68,7 +64,6 @@ pub fn claude_config_dir() -> Option<PathBuf> {
 }
 
 /// Resolve the full hook command: "<abs path to agent-view> hook".
-#[allow(dead_code)]
 pub fn resolve_hook_command() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| format!("current_exe failed: {}", e))?;
     Ok(format!("{}{}", exe.display(), COMMAND_SUFFIX))
@@ -78,7 +73,6 @@ pub fn resolve_hook_command() -> Result<String, String> {
 /// re-merges if drift is detected (matcher or async flag mismatch). Atomic
 /// write via `<file>.tmp` + rename. Returns Ok(()) whether or not changes
 /// were made; callers may treat repeated calls as no-ops.
-#[allow(dead_code)]
 pub fn install_hooks_in(config_dir: &Path, hook_command: &str) -> Result<(), String> {
     fs::create_dir_all(config_dir).map_err(|e| format!("create config dir: {}", e))?;
 

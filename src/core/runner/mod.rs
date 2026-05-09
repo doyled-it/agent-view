@@ -42,7 +42,6 @@ pub trait Runner: Send + Sync {
 
     /// Install per-tool status-detection hooks into the tool's user config.
     /// Idempotent. Default impl is a no-op for runners without hook support.
-    #[allow(dead_code)]
     fn install_hooks(&self) -> Result<(), String> {
         Ok(())
     }

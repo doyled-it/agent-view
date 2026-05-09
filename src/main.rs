@@ -31,12 +31,21 @@ enum Commands {
         /// The routine ID to execute
         routine_id: String,
     },
+    /// Internal: invoked by Claude Code hooks. Reads JSON payload from
+    /// stdin, writes a hook status file to ~/.agent-orchestrator/hooks/
+    /// keyed by AGENT_VIEW_SESSION_ID. Always exits 0.
+    Hook,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Handle subcommands that don't need the TUI
+    if matches!(cli.command, Some(Commands::Hook)) {
+        crate::core::runner::hook_handler::run();
+        return Ok(());
+    }
+
     if let Some(Commands::ExecRoutine { routine_id }) = &cli.command {
         return crate::core::routine::exec_routine(routine_id).map_err(|e| e.into());
     }
@@ -51,6 +60,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Open storage and run migrations
     let storage = crate::core::storage::Storage::open_default()?;
     storage.migrate()?;
+
+    // Best-effort hook installation. Failures are non-fatal.
+    if let Err(e) = crate::core::runner::runner_for(crate::types::Tool::Claude).install_hooks() {
+        eprintln!("agent-view: install_hooks warning: {}", e);
+    }
+
+    // Sweep stale hook status files (>24h). Cost-event files are NOT age-cleaned.
+    let _ = sweep_stale_hook_files();
+
+    // Spawn the event watcher; share state with the poller.
+    let event_state = crate::core::runner::event_watcher::spawn();
 
     // Load config
     let config = crate::core::config::load_config();
@@ -173,8 +193,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Run the TUI event loop
-    run_tui(app, storage, config)?;
+    run_tui(app, storage, config, event_state)?;
 
+    Ok(())
+}
+
+fn sweep_stale_hook_files() -> std::io::Result<()> {
+    let dir = crate::core::paths::hooks_dir();
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60);
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            if let Ok(meta) = e.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if modified < cutoff {
+                        let _ = std::fs::remove_file(e.path());
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -182,6 +219,7 @@ fn run_tui(
     mut app: crate::app::App,
     storage: crate::core::storage::Storage,
     config: crate::core::config::AppConfig,
+    event_state: crate::core::runner::event_watcher::EventStateHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::{
         event::{self, Event},
@@ -206,13 +244,7 @@ fn run_tui(
     let attach_state: Arc<Mutex<crate::core::attach_state::AttachState>> =
         Arc::new(Mutex::new(crate::core::attach_state::AttachState::new()));
     let bg_sound = config.notifications.sound;
-    let _bg_handle = crate::poller::spawn(
-        Arc::clone(&attach_state),
-        std::sync::Arc::new(std::sync::Mutex::new(
-            crate::core::runner::event_watcher::EventState::default(),
-        )),
-        bg_sound,
-    );
+    let _bg_handle = crate::poller::spawn(Arc::clone(&attach_state), event_state.clone(), bg_sound);
 
     // Spawn usage monitor
     let (usage_shared, _usage_thread) = crate::core::usage::spawn_monitor();

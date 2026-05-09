@@ -37,7 +37,6 @@ pub type EventStateHandle = Arc<Mutex<EventState>>;
 
 /// Spawn the watcher thread. Returns the shared state handle.
 /// On any setup failure, returns a handle to an empty state and logs.
-#[allow(dead_code)] // wired in Task 11
 pub fn spawn() -> EventStateHandle {
     let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
     let state_clone = Arc::clone(&state);
