@@ -116,6 +116,19 @@ pub enum Tool {
 }
 
 impl Tool {
+    /// Every variant of `Tool`, in declaration order. Used by
+    /// `runner::implemented_tools()` to drive the new-session picker;
+    /// also serves as the canonical source for any future iteration site.
+    #[allow(dead_code)]
+    pub const ALL: &[Tool] = &[
+        Tool::Claude,
+        Tool::Opencode,
+        Tool::Gemini,
+        Tool::Codex,
+        Tool::Custom,
+        Tool::Shell,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Claude => "claude",
@@ -809,5 +822,27 @@ mod tests {
         };
         assert_eq!(opts.worktree.as_ref().unwrap().branch, "feature/x");
         assert!(opts.worktree.as_ref().unwrap().new_branch);
+    }
+
+    #[test]
+    fn test_tool_all_covers_every_variant() {
+        fn must_be_in_all(t: Tool) {
+            assert!(
+                Tool::ALL.contains(&t),
+                "Tool::{:?} must be added to Tool::ALL",
+                t
+            );
+        }
+        for variant in [
+            Tool::Claude,
+            Tool::Opencode,
+            Tool::Gemini,
+            Tool::Codex,
+            Tool::Custom,
+            Tool::Shell,
+        ] {
+            must_be_in_all(variant);
+        }
+        assert_eq!(Tool::ALL.len(), 6);
     }
 }
