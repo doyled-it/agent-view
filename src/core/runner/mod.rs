@@ -3,9 +3,17 @@
 //! See `docs/superpowers/specs/2026-05-08-pluggable-runner-trait-design.md`.
 
 pub mod claude;
+pub mod claude_hooks;
+pub mod event_watcher;
 pub mod fallback;
+pub mod hook_handler;
+pub mod osc_title;
 
+use crate::core::runner::event_watcher::HookStatus;
 use crate::types::Tool;
+use std::time::{Duration, SystemTime};
+
+const HOOK_FRESHNESS: Duration = Duration::from_millis(1100);
 
 /// Result of parsing tmux pane output for tool status.
 /// Runner-agnostic; `resolve_session_status` maps it onto `SessionStatus`.
@@ -31,6 +39,12 @@ pub trait Runner: Send + Sync {
     fn parse_status(&self, pane_content: &str) -> ToolStatus;
     fn extract_session_id(&self, pane_content: &str) -> Option<String>;
     fn restart_command(&self, original_command: &str, tool_data: &str) -> String;
+
+    /// Install per-tool status-detection hooks into the tool's user config.
+    /// Idempotent. Default impl is a no-op for runners without hook support.
+    fn install_hooks(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub fn runner_for(tool: Tool) -> &'static dyn Runner {
@@ -74,6 +88,64 @@ pub fn resolve_session_status(parsed: &ToolStatus, is_active: bool) -> crate::ty
     } else {
         SessionStatus::Idle
     }
+}
+
+/// Three-tier status composition.
+/// - Tier 1a: fresh hook with Running/Waiting/Compacting → use directly.
+/// - Tier 1b: fresh hook with Idle → run regex but only let it produce
+///   Draft / Paused / Monitoring overlays; otherwise return Idle.
+/// - Tier 2: no fresh hook; pane title matches known marker → use it.
+/// - Tier 3: regex + resolve_session_status (current behavior).
+pub fn compose_status(
+    hook: Option<&HookStatus>,
+    pane_title_status: Option<crate::types::SessionStatus>,
+    pane_content: &str,
+    runner: &dyn Runner,
+    is_active: bool,
+    now: SystemTime,
+) -> crate::types::SessionStatus {
+    use crate::types::SessionStatus;
+
+    let fresh_hook = hook.filter(|h| {
+        now.duration_since(h.received_at)
+            .map(|d| d <= HOOK_FRESHNESS)
+            .unwrap_or(false)
+    });
+
+    if let Some(h) = fresh_hook {
+        match h.status {
+            SessionStatus::Running | SessionStatus::Waiting | SessionStatus::Compacting => {
+                return h.status;
+            }
+            SessionStatus::Idle => {
+                let parsed = runner.parse_status(pane_content);
+                if parsed.has_draft {
+                    return SessionStatus::Draft;
+                }
+                if parsed.is_monitoring && parsed.has_idle_prompt {
+                    return SessionStatus::Monitoring;
+                }
+                if parsed.has_idle_prompt && parsed.has_question {
+                    return SessionStatus::Paused;
+                }
+                return SessionStatus::Idle;
+            }
+            // Hook handler currently never emits Crashed / Stopped / Draft /
+            // Paused / Monitoring / Error (Crashed comes from the
+            // !session_exists path in the poller; the others are derived from
+            // pane parsing). If any of these ever leak through (malformed
+            // payload, future schema change), fall through to the title /
+            // regex tiers rather than trusting an unexpected hook status.
+            _ => {}
+        }
+    }
+
+    if let Some(s) = pane_title_status {
+        return s;
+    }
+
+    let parsed = runner.parse_status(pane_content);
+    resolve_session_status(&parsed, is_active)
 }
 
 #[cfg(test)]
@@ -198,5 +270,117 @@ mod tests {
             resolve_session_status(&parsed, false),
             SessionStatus::Running
         );
+    }
+
+    use crate::core::runner::event_watcher::HookStatus;
+    use std::time::{Duration, SystemTime};
+
+    fn fresh_hook(status: SessionStatus) -> HookStatus {
+        HookStatus {
+            status,
+            claude_session_id: None,
+            event: "test".to_string(),
+            received_at: SystemTime::now(),
+        }
+    }
+
+    fn stale_hook(status: SessionStatus) -> HookStatus {
+        HookStatus {
+            status,
+            claude_session_id: None,
+            event: "test".to_string(),
+            received_at: SystemTime::now() - Duration::from_secs(10),
+        }
+    }
+
+    #[test]
+    fn test_compose_fresh_running_hook_overrides_regex() {
+        let s = compose_status(
+            Some(&fresh_hook(SessionStatus::Running)),
+            None,
+            "\u{276f} \n",
+            runner_for(Tool::Claude),
+            false,
+            SystemTime::now(),
+        );
+        assert_eq!(s, SessionStatus::Running);
+    }
+
+    #[test]
+    fn test_compose_fresh_idle_hook_with_draft_overlay() {
+        let s = compose_status(
+            Some(&fresh_hook(SessionStatus::Idle)),
+            None,
+            "\u{276f} fix the bug in\n",
+            runner_for(Tool::Claude),
+            false,
+            SystemTime::now(),
+        );
+        assert_eq!(s, SessionStatus::Draft);
+    }
+
+    #[test]
+    fn test_compose_fresh_idle_hook_with_paused_overlay() {
+        let s = compose_status(
+            Some(&fresh_hook(SessionStatus::Idle)),
+            None,
+            "What file should I edit?\n\u{276f} \n",
+            runner_for(Tool::Claude),
+            false,
+            SystemTime::now(),
+        );
+        assert_eq!(s, SessionStatus::Paused);
+    }
+
+    #[test]
+    fn test_compose_fresh_idle_hook_no_overlay_returns_idle() {
+        let s = compose_status(
+            Some(&fresh_hook(SessionStatus::Idle)),
+            None,
+            "Done.\n\u{276f} \n",
+            runner_for(Tool::Claude),
+            false,
+            SystemTime::now(),
+        );
+        assert_eq!(s, SessionStatus::Idle);
+    }
+
+    #[test]
+    fn test_compose_stale_hook_falls_back_to_regex() {
+        let s = compose_status(
+            Some(&stale_hook(SessionStatus::Idle)),
+            None,
+            "ctrl+c to interrupt\n",
+            runner_for(Tool::Claude),
+            false,
+            SystemTime::now(),
+        );
+        assert_eq!(s, SessionStatus::Running);
+    }
+
+    #[test]
+    fn test_compose_no_hook_uses_pane_title_when_available() {
+        let s = compose_status(
+            None,
+            Some(SessionStatus::Running),
+            "doesn't matter",
+            runner_for(Tool::Claude),
+            false,
+            SystemTime::now(),
+        );
+        assert_eq!(s, SessionStatus::Running);
+    }
+
+    #[test]
+    fn test_compose_no_hook_no_title_uses_regex() {
+        let s = compose_status(
+            None,
+            None,
+            "ctrl+c to interrupt\n",
+            runner_for(Tool::Claude),
+            false,
+            SystemTime::now(),
+        );
+        assert_eq!(s, SessionStatus::Running);
     }
 }

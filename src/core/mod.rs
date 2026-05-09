@@ -6,6 +6,7 @@ pub mod groups;
 pub mod logger;
 pub mod notify;
 pub mod path_complete;
+pub mod paths;
 pub mod routine;
 pub mod runner;
 pub mod schedule;
