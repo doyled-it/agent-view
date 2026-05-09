@@ -4,6 +4,7 @@
 
 pub mod claude;
 pub mod fallback;
+pub mod hook_handler;
 
 use crate::types::Tool;
 
