@@ -5,12 +5,16 @@ use rusqlite::{Connection, Result as SqlResult};
 use std::fs;
 use std::path::Path;
 
+mod cost_events;
 mod groups;
 mod meta;
 mod routines;
 mod runs;
 mod schema;
 mod sessions;
+
+#[allow(unused_imports)]
+pub use cost_events::{CostEvent, CostTotals};
 
 pub struct Storage {
     conn: Connection,

@@ -3,7 +3,7 @@ use rusqlite::Result as SqlResult;
 
 use super::Storage;
 
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 impl Storage {
     pub fn migrate(&self) -> SqlResult<()> {
@@ -168,6 +168,26 @@ impl Storage {
             )?;
         }
 
+        // v7 -> v8: cost_events table for hook-driven token/cost tracking
+        if version < 8 {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS cost_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                    ts INTEGER NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                )",
+            )?;
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_cost_events_session ON cost_events(session_id, ts)",
+            )?;
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -202,7 +222,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("7".to_string()));
+        assert_eq!(version, Some("8".to_string()));
     }
 
     #[test]
@@ -210,7 +230,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("7".to_string()));
+        assert_eq!(version, Some("8".to_string()));
     }
 
     #[test]
@@ -329,9 +349,9 @@ mod tests {
     }
 
     #[test]
-    fn test_v7_schema_version() {
+    fn test_v8_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("7".to_string()));
+        assert_eq!(version, Some("8".to_string()));
     }
 }
