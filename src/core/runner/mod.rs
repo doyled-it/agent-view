@@ -36,7 +36,11 @@ pub struct ToolStatus {
 pub trait Runner: Send + Sync {
     #[allow(dead_code)] // part of the public Runner API surface; used by tests and reserved for future runners
     fn name(&self) -> &'static str;
-    fn launch_command(&self) -> &'static str;
+    /// Command to run inside the freshly-created tmux pane. `None` means
+    /// "no command — let tmux's default-shell take over". Used by `ShellRunner`
+    /// so opening a Shell session drops you into your login shell directly,
+    /// rather than spawning a second shell on top of it.
+    fn launch_command(&self) -> Option<&'static str>;
     fn parse_status(&self, pane_content: &str) -> ToolStatus;
     fn extract_session_id(&self, pane_content: &str) -> Option<String>;
     fn restart_command(&self, original_command: &str, tool_data: &str) -> String;
@@ -175,18 +179,20 @@ mod tests {
     #[test]
     fn test_runner_for_claude() {
         assert_eq!(runner_for(Tool::Claude).name(), "claude");
-        assert_eq!(runner_for(Tool::Claude).launch_command(), "claude");
+        assert_eq!(runner_for(Tool::Claude).launch_command(), Some("claude"));
     }
 
     #[test]
-    fn test_fallback_launch_commands_match_tool_command() {
-        // Bit-for-bit parity check against the launch commands
-        // `Tool::command()` returned on main before this refactor.
-        assert_eq!(runner_for(Tool::Codex).launch_command(), "codex");
-        assert_eq!(runner_for(Tool::Opencode).launch_command(), "opencode");
-        assert_eq!(runner_for(Tool::Gemini).launch_command(), "gemini");
-        assert_eq!(runner_for(Tool::Custom).launch_command(), "bash");
-        assert_eq!(runner_for(Tool::Shell).launch_command(), "bash");
+    fn test_launch_commands_per_tool() {
+        assert_eq!(runner_for(Tool::Codex).launch_command(), Some("codex"));
+        assert_eq!(
+            runner_for(Tool::Opencode).launch_command(),
+            Some("opencode")
+        );
+        assert_eq!(runner_for(Tool::Gemini).launch_command(), Some("gemini"));
+        assert_eq!(runner_for(Tool::Custom).launch_command(), Some("bash"));
+        // Shell defers to tmux's default-shell.
+        assert_eq!(runner_for(Tool::Shell).launch_command(), None);
     }
 
     #[test]
@@ -428,7 +434,8 @@ mod tests {
     fn test_runner_for_shell_returns_shell_runner() {
         let r = runner_for(Tool::Shell);
         assert_eq!(r.name(), "shell");
-        assert_eq!(r.launch_command(), "bash");
+        // None means tmux's default-shell handles the pane — no send-keys.
+        assert_eq!(r.launch_command(), None);
         assert!(r.is_implemented());
     }
 }

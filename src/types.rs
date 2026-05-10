@@ -151,7 +151,10 @@ impl Tool {
         }
     }
 
-    pub fn command(&self) -> &'static str {
+    /// Default command to launch in a new tmux pane for this tool. `None`
+    /// means "no command — tmux's default-shell handles it" (used by
+    /// `Tool::Shell`).
+    pub fn command(&self) -> Option<&'static str> {
         crate::core::runner::runner_for(*self).launch_command()
     }
 }
@@ -548,12 +551,13 @@ mod tests {
 
     #[test]
     fn test_tool_command_strings() {
-        assert_eq!(Tool::Claude.command(), "claude");
-        assert_eq!(Tool::Opencode.command(), "opencode");
-        assert_eq!(Tool::Gemini.command(), "gemini");
-        assert_eq!(Tool::Codex.command(), "codex");
-        assert_eq!(Tool::Custom.command(), "bash");
-        assert_eq!(Tool::Shell.command(), "bash");
+        assert_eq!(Tool::Claude.command(), Some("claude"));
+        assert_eq!(Tool::Opencode.command(), Some("opencode"));
+        assert_eq!(Tool::Gemini.command(), Some("gemini"));
+        assert_eq!(Tool::Codex.command(), Some("codex"));
+        assert_eq!(Tool::Custom.command(), Some("bash"));
+        // Shell defers to tmux's default-shell — no explicit command sent.
+        assert_eq!(Tool::Shell.command(), None);
     }
 
     #[test]

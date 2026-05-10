@@ -1,6 +1,12 @@
-//! Plain shell runner. Launches `bash`; no agent-specific status detection,
-//! no session-id extraction, no hooks. The simplest possible Runner impl —
-//! used as the inaugural non-Claude runner per issue #46.
+//! Plain shell runner. Drops the user into their tmux default-shell (which
+//! itself defaults to `$SHELL`), with no agent-specific status detection,
+//! no session-id extraction, and no hooks. The simplest possible Runner
+//! impl — used as the inaugural non-Claude runner per issue #46.
+//!
+//! `launch_command` returns `None` so no command is sent into the pane;
+//! tmux's own default-shell takes over. Sending `bash` here would nest a
+//! new shell on top of the user's existing one (zsh on macOS), which is
+//! both wasteful and visually noisy.
 
 use super::{Runner, ToolStatus};
 
@@ -10,8 +16,8 @@ impl Runner for ShellRunner {
     fn name(&self) -> &'static str {
         "shell"
     }
-    fn launch_command(&self) -> &'static str {
-        "bash"
+    fn launch_command(&self) -> Option<&'static str> {
+        None
     }
     fn parse_status(&self, _pane_content: &str) -> ToolStatus {
         ToolStatus::default()
@@ -33,7 +39,8 @@ mod tests {
     fn test_name_and_launch_command() {
         let r = ShellRunner;
         assert_eq!(r.name(), "shell");
-        assert_eq!(r.launch_command(), "bash");
+        // None means "let tmux's default-shell run" — no send-keys.
+        assert_eq!(r.launch_command(), None);
     }
 
     #[test]

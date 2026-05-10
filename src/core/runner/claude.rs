@@ -112,8 +112,8 @@ impl Runner for ClaudeRunner {
     fn name(&self) -> &'static str {
         "claude"
     }
-    fn launch_command(&self) -> &'static str {
-        "claude"
+    fn launch_command(&self) -> Option<&'static str> {
+        Some("claude")
     }
 
     fn parse_status(&self, pane_content: &str) -> ToolStatus {

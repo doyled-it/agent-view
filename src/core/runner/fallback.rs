@@ -14,8 +14,8 @@ impl Runner for FallbackRunner {
     fn name(&self) -> &'static str {
         self.name
     }
-    fn launch_command(&self) -> &'static str {
-        self.launch
+    fn launch_command(&self) -> Option<&'static str> {
+        Some(self.launch)
     }
     fn parse_status(&self, _pane_content: &str) -> ToolStatus {
         ToolStatus::default()
