@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.9.0] - 2026-05-10
+
+### Changed
+
+- feat(runner): runner picker in new-session overlay + ShellRunner (#46) (#52) (@doyled-it)
+
 ## [1.8.0] - 2026-05-09
 
 ### Changed
