@@ -9,6 +9,7 @@ pub fn handle_new_session_key(
     use crossterm::event::{KeyCode, KeyModifiers};
 
     if let crate::app::Overlay::NewSession(ref mut form) = app.overlay {
+        const FIELD_COUNT: usize = 5;
         match (key.modifiers, key.code) {
             (_, KeyCode::Esc) => {
                 app.overlay = crate::app::Overlay::None;
@@ -69,7 +70,7 @@ pub fn handle_new_session_key(
                     title,
                     project_path,
                     group_path: None,
-                    tool: crate::types::Tool::Claude,
+                    tool: form.runner,
                     command: None,
                     worktree,
                 };
@@ -101,9 +102,15 @@ pub fn handle_new_session_key(
                     }
                 }
             }
+            (KeyModifiers::NONE, KeyCode::Left) if form.focused_field == 0 => {
+                form.cycle_runner_prev();
+            }
+            (KeyModifiers::NONE, KeyCode::Right) if form.focused_field == 0 => {
+                form.cycle_runner_next();
+            }
             (_, KeyCode::Tab) => {
                 match form.focused_field {
-                    1 => {
+                    2 => {
                         // Path field: filesystem completion
                         if !form.completions.is_empty() && form.completions.len() > 1 {
                             // Cycle: rebuild path from the captured base + next candidate.
@@ -133,7 +140,7 @@ pub fn handle_new_session_key(
                             };
                         }
                     }
-                    2 => {
+                    3 => {
                         // Branch field: local-branch completion
                         if !form.completions.is_empty() && form.completions.len() > 1 {
                             let idx = match form.completion_index {
@@ -161,7 +168,7 @@ pub fn handle_new_session_key(
                             }
                         }
                     }
-                    3 if form.worktree_new_branch => {
+                    4 if form.worktree_new_branch => {
                         // Base ref field: local-branch completion (only when
                         // creating a new branch — no-op in attach mode).
                         if !form.completions.is_empty() && form.completions.len() > 1 {
@@ -191,27 +198,27 @@ pub fn handle_new_session_key(
                         }
                     }
                     _ => {
-                        // Fields 0 (and 3 in attach mode): advance focus
-                        form.focused_field = (form.focused_field + 1) % 4;
+                        // Fields 0 (runner), 1 (title), and 4 (base in attach mode): advance focus
+                        form.focused_field = (form.focused_field + 1) % FIELD_COUNT;
                         form.clear_completions();
                     }
                 }
             }
             (_, KeyCode::BackTab) => {
-                form.focused_field = (form.focused_field + 3) % 4;
+                form.focused_field = (form.focused_field + FIELD_COUNT - 1) % FIELD_COUNT;
                 form.clear_completions();
             }
             (_, KeyCode::Down) => {
-                form.focused_field = (form.focused_field + 1) % 4;
+                form.focused_field = (form.focused_field + 1) % FIELD_COUNT;
                 form.clear_completions();
             }
             (_, KeyCode::Up) => {
-                form.focused_field = (form.focused_field + 3) % 4;
+                form.focused_field = (form.focused_field + FIELD_COUNT - 1) % FIELD_COUNT;
                 form.clear_completions();
             }
             (_, KeyCode::Enter) => {
                 // Advance focus forward — NEVER submits
-                form.focused_field = (form.focused_field + 1) % 4;
+                form.focused_field = (form.focused_field + 1) % FIELD_COUNT;
                 form.clear_completions();
             }
             // Generic Char arm — guard excludes Ctrl and Super so those don't append
@@ -219,16 +226,17 @@ pub fn handle_new_session_key(
                 if !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::SUPER) =>
             {
                 match form.focused_field {
-                    0 => form.title.push(c),
-                    1 => {
+                    0 => {} // runner field — text input ignored
+                    1 => form.title.push(c),
+                    2 => {
                         form.project_path.push(c);
                         form.clear_completions();
                     }
-                    2 => {
+                    3 => {
                         form.worktree_branch.push(c);
                         form.error = None;
                     }
-                    3 => {
+                    4 => {
                         form.worktree_base.push(c);
                         form.error = None;
                     }
@@ -236,18 +244,19 @@ pub fn handle_new_session_key(
                 }
             }
             (_, KeyCode::Backspace) => match form.focused_field {
-                0 => {
+                0 => {} // runner field — text input ignored
+                1 => {
                     form.title.pop();
                 }
-                1 => {
+                2 => {
                     form.project_path.pop();
                     form.clear_completions();
                 }
-                2 => {
+                3 => {
                     form.worktree_branch.pop();
                     form.error = None;
                 }
-                3 => {
+                4 => {
                     form.worktree_base.pop();
                     form.error = None;
                 }

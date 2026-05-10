@@ -38,9 +38,13 @@ impl SessionOps {
         let title = options.title.unwrap_or_else(generate_title);
         let id = uuid::Uuid::new_v4().to_string();
         let tmux_name = tmux::generate_session_name(&title);
-        let command = options
+        // `None` here means "no explicit command — let tmux's default-shell
+        // run in the pane" (the path used by `Tool::Shell`). For storage
+        // we coerce to the empty string so `Session.command` retains its
+        // simple `String` type.
+        let command: Option<String> = options
             .command
-            .unwrap_or_else(|| options.tool.command().to_string());
+            .or_else(|| options.tool.command().map(String::from));
 
         let now = chrono::Utc::now().timestamp_millis();
 
@@ -89,7 +93,12 @@ impl SessionOps {
         // NOTE: if tmux::create_session fails here, a freshly created worktree
         // at `working_dir` is leaked on disk. Task 8's orphan sweep is the
         // recovery path; no inline rollback to keep the failure message simple.
-        tmux::create_session(&tmux_name, Some(&command), Some(&working_dir), Some(&env))?;
+        tmux::create_session(
+            &tmux_name,
+            command.as_deref(),
+            Some(&working_dir),
+            Some(&env),
+        )?;
 
         cache.register(&tmux_name);
 
@@ -101,7 +110,7 @@ impl SessionOps {
                 .group_path
                 .unwrap_or_else(|| "my-sessions".to_string()),
             order: storage.load_sessions().unwrap_or_default().len() as i32,
-            command,
+            command: command.unwrap_or_default(),
             wrapper: String::new(),
             tool: options.tool,
             status: SessionStatus::Running,
@@ -210,9 +219,16 @@ impl SessionOps {
 
         let restart_cmd = crate::core::runner::runner_for(session.tool)
             .restart_command(&session.command, &session.tool_data);
+        // Empty string is the storage sentinel for "no command, use tmux
+        // default-shell" — see `Tool::Shell` and `ShellRunner::launch_command`.
+        let restart_cmd_arg = if restart_cmd.is_empty() {
+            None
+        } else {
+            Some(restart_cmd.as_str())
+        };
         tmux::create_session(
             &new_tmux_name,
-            Some(&restart_cmd),
+            restart_cmd_arg,
             Some(&session.project_path),
             Some(&env),
         )?;

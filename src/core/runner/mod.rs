@@ -8,6 +8,7 @@ pub mod event_watcher;
 pub mod fallback;
 pub mod hook_handler;
 pub mod osc_title;
+pub mod shell;
 
 use crate::core::runner::event_watcher::HookStatus;
 use crate::types::Tool;
@@ -35,10 +36,21 @@ pub struct ToolStatus {
 pub trait Runner: Send + Sync {
     #[allow(dead_code)] // part of the public Runner API surface; used by tests and reserved for future runners
     fn name(&self) -> &'static str;
-    fn launch_command(&self) -> &'static str;
+    /// Command to run inside the freshly-created tmux pane. `None` means
+    /// "no command — let tmux's default-shell take over". Used by `ShellRunner`
+    /// so opening a Shell session drops you into your login shell directly,
+    /// rather than spawning a second shell on top of it.
+    fn launch_command(&self) -> Option<&'static str>;
     fn parse_status(&self, pane_content: &str) -> ToolStatus;
     fn extract_session_id(&self, pane_content: &str) -> Option<String>;
     fn restart_command(&self, original_command: &str, tool_data: &str) -> String;
+
+    /// True for runners with a real per-tool impl. False for FallbackRunner
+    /// stubs so the new-session picker can hide tools that aren't yet wired
+    /// up. Default is true so a new real runner needs no boilerplate.
+    fn is_implemented(&self) -> bool {
+        true
+    }
 
     /// Install per-tool status-detection hooks into the tool's user config.
     /// Idempotent. Default impl is a no-op for runners without hook support.
@@ -54,8 +66,19 @@ pub fn runner_for(tool: Tool) -> &'static dyn Runner {
         Tool::Opencode => &fallback::OPENCODE,
         Tool::Gemini => &fallback::GEMINI,
         Tool::Custom => &fallback::CUSTOM,
-        Tool::Shell => &fallback::SHELL,
+        Tool::Shell => &shell::ShellRunner,
     }
+}
+
+/// Tools backed by a real `Runner` impl, in `Tool::ALL` order. Drives the
+/// new-session overlay's runner picker — adding a new real runner makes
+/// it appear here automatically (no picker code change required).
+pub fn implemented_tools() -> Vec<Tool> {
+    Tool::ALL
+        .iter()
+        .copied()
+        .filter(|t| runner_for(*t).is_implemented())
+        .collect()
 }
 
 /// Resolve a parsed `ToolStatus` plus the tmux pane's active flag into the
@@ -156,18 +179,20 @@ mod tests {
     #[test]
     fn test_runner_for_claude() {
         assert_eq!(runner_for(Tool::Claude).name(), "claude");
-        assert_eq!(runner_for(Tool::Claude).launch_command(), "claude");
+        assert_eq!(runner_for(Tool::Claude).launch_command(), Some("claude"));
     }
 
     #[test]
-    fn test_fallback_launch_commands_match_tool_command() {
-        // Bit-for-bit parity check against the launch commands
-        // `Tool::command()` returned on main before this refactor.
-        assert_eq!(runner_for(Tool::Codex).launch_command(), "codex");
-        assert_eq!(runner_for(Tool::Opencode).launch_command(), "opencode");
-        assert_eq!(runner_for(Tool::Gemini).launch_command(), "gemini");
-        assert_eq!(runner_for(Tool::Custom).launch_command(), "bash");
-        assert_eq!(runner_for(Tool::Shell).launch_command(), "bash");
+    fn test_launch_commands_per_tool() {
+        assert_eq!(runner_for(Tool::Codex).launch_command(), Some("codex"));
+        assert_eq!(
+            runner_for(Tool::Opencode).launch_command(),
+            Some("opencode")
+        );
+        assert_eq!(runner_for(Tool::Gemini).launch_command(), Some("gemini"));
+        assert_eq!(runner_for(Tool::Custom).launch_command(), Some("bash"));
+        // Shell defers to tmux's default-shell.
+        assert_eq!(runner_for(Tool::Shell).launch_command(), None);
     }
 
     #[test]
@@ -382,5 +407,35 @@ mod tests {
             SystemTime::now(),
         );
         assert_eq!(s, SessionStatus::Running);
+    }
+
+    #[test]
+    fn test_claude_runner_is_implemented() {
+        assert!(runner_for(Tool::Claude).is_implemented());
+    }
+
+    #[test]
+    fn test_fallback_runners_report_not_implemented() {
+        for tool in [Tool::Codex, Tool::Opencode, Tool::Gemini, Tool::Custom] {
+            assert!(
+                !runner_for(tool).is_implemented(),
+                "{:?} should still be a fallback at this stage",
+                tool
+            );
+        }
+    }
+
+    #[test]
+    fn test_implemented_tools_includes_claude_and_shell() {
+        assert_eq!(implemented_tools(), vec![Tool::Claude, Tool::Shell]);
+    }
+
+    #[test]
+    fn test_runner_for_shell_returns_shell_runner() {
+        let r = runner_for(Tool::Shell);
+        assert_eq!(r.name(), "shell");
+        // None means tmux's default-shell handles the pane — no send-keys.
+        assert_eq!(r.launch_command(), None);
+        assert!(r.is_implemented());
     }
 }

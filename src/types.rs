@@ -116,6 +116,18 @@ pub enum Tool {
 }
 
 impl Tool {
+    /// Every variant of `Tool`, in declaration order. Used by
+    /// `runner::implemented_tools()` to drive the new-session picker;
+    /// also serves as the canonical source for any future iteration site.
+    pub const ALL: &[Tool] = &[
+        Tool::Claude,
+        Tool::Opencode,
+        Tool::Gemini,
+        Tool::Codex,
+        Tool::Custom,
+        Tool::Shell,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Claude => "claude",
@@ -139,7 +151,10 @@ impl Tool {
         }
     }
 
-    pub fn command(&self) -> &'static str {
+    /// Default command to launch in a new tmux pane for this tool. `None`
+    /// means "no command — tmux's default-shell handles it" (used by
+    /// `Tool::Shell`).
+    pub fn command(&self) -> Option<&'static str> {
         crate::core::runner::runner_for(*self).launch_command()
     }
 }
@@ -536,12 +551,13 @@ mod tests {
 
     #[test]
     fn test_tool_command_strings() {
-        assert_eq!(Tool::Claude.command(), "claude");
-        assert_eq!(Tool::Opencode.command(), "opencode");
-        assert_eq!(Tool::Gemini.command(), "gemini");
-        assert_eq!(Tool::Codex.command(), "codex");
-        assert_eq!(Tool::Custom.command(), "bash");
-        assert_eq!(Tool::Shell.command(), "bash");
+        assert_eq!(Tool::Claude.command(), Some("claude"));
+        assert_eq!(Tool::Opencode.command(), Some("opencode"));
+        assert_eq!(Tool::Gemini.command(), Some("gemini"));
+        assert_eq!(Tool::Codex.command(), Some("codex"));
+        assert_eq!(Tool::Custom.command(), Some("bash"));
+        // Shell defers to tmux's default-shell — no explicit command sent.
+        assert_eq!(Tool::Shell.command(), None);
     }
 
     #[test]
@@ -809,5 +825,27 @@ mod tests {
         };
         assert_eq!(opts.worktree.as_ref().unwrap().branch, "feature/x");
         assert!(opts.worktree.as_ref().unwrap().new_branch);
+    }
+
+    #[test]
+    fn test_tool_all_covers_every_variant() {
+        fn must_be_in_all(t: Tool) {
+            assert!(
+                Tool::ALL.contains(&t),
+                "Tool::{:?} must be added to Tool::ALL",
+                t
+            );
+        }
+        for variant in [
+            Tool::Claude,
+            Tool::Opencode,
+            Tool::Gemini,
+            Tool::Codex,
+            Tool::Custom,
+            Tool::Shell,
+        ] {
+            must_be_in_all(variant);
+        }
+        assert_eq!(Tool::ALL.len(), 6);
     }
 }
