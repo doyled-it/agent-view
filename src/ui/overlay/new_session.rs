@@ -133,21 +133,21 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
 
     let mut i: usize = 0;
 
-    // Runner row — chunks[i] is label, chunks[i+1] is the cycle value, chunks[i+2] is spacer
+    // Runner row: label, cycle value, then a one-row spacer before the title.
     frame.render_widget(
         Paragraph::new("Runner:").style(label_style(form.focused_field == 0)),
         chunks[i],
     );
-    i += 1;
-    let runner_label = display_runner_label(form.runner.as_str());
     let runner_line = Line::from(vec![
         Span::styled("  \u{2039} ", Style::default().fg(theme.text_muted)),
-        Span::styled(runner_label, Style::default().fg(theme.text)),
+        Span::styled(
+            display_runner_label(form.runner.as_str()),
+            Style::default().fg(theme.text),
+        ),
         Span::styled(" \u{203a}", Style::default().fg(theme.text_muted)),
     ]);
-    frame.render_widget(Paragraph::new(runner_line), chunks[i]);
-    i += 1;
-    i += 1; // spacer after runner
+    frame.render_widget(Paragraph::new(runner_line), chunks[i + 1]);
+    i += 3;
 
     // Title
     frame.render_widget(

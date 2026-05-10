@@ -44,7 +44,6 @@ pub trait Runner: Send + Sync {
     /// True for runners with a real per-tool impl. False for FallbackRunner
     /// stubs so the new-session picker can hide tools that aren't yet wired
     /// up. Default is true so a new real runner needs no boilerplate.
-    #[allow(dead_code)] // part of the public Runner API surface; used by UI layer
     fn is_implemented(&self) -> bool {
         true
     }

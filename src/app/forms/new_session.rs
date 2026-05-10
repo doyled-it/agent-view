@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewSessionForm {
     /// The runner this session will use. Cycled via Left/Right when the
-    /// runner field is focused (focused_field == 0).
+    /// runner picker is focused.
     pub runner: crate::types::Tool,
     /// Snapshot of `runner::implemented_tools()` taken at form construction
     /// so per-frame renders don't re-query the runner registry.
@@ -35,7 +35,7 @@ impl NewSessionForm {
             runners: crate::core::runner::implemented_tools(),
             title: String::new(),
             project_path: home,
-            focused_field: 0,
+            focused_field: 1,
             completions: Vec::new(),
             completion_index: None,
             completion_base: String::new(),
@@ -55,32 +55,23 @@ impl NewSessionForm {
     }
 
     /// Move the runner selection to the next entry in `runners`, wrapping.
-    #[allow(dead_code)] // wired in Task 6 (input handler)
     pub fn cycle_runner_next(&mut self) {
-        if self.runners.is_empty() {
-            return;
-        }
-        let idx = self
-            .runners
-            .iter()
-            .position(|t| *t == self.runner)
-            .unwrap_or(0);
+        let idx = self.current_runner_index();
         self.runner = self.runners[(idx + 1) % self.runners.len()];
     }
 
     /// Move the runner selection to the previous entry in `runners`, wrapping.
-    #[allow(dead_code)] // wired in Task 6 (input handler)
     pub fn cycle_runner_prev(&mut self) {
-        if self.runners.is_empty() {
-            return;
-        }
-        let idx = self
-            .runners
-            .iter()
-            .position(|t| *t == self.runner)
-            .unwrap_or(0);
+        let idx = self.current_runner_index();
         let n = self.runners.len();
         self.runner = self.runners[(idx + n - 1) % n];
+    }
+
+    fn current_runner_index(&self) -> usize {
+        self.runners
+            .iter()
+            .position(|t| *t == self.runner)
+            .expect("runner is always a member of runners")
     }
 }
 
@@ -90,10 +81,13 @@ mod tests {
     use crate::types::Tool;
 
     #[test]
-    fn test_form_default_runner_is_claude() {
+    fn test_form_default_runner_is_claude_with_title_focused() {
         let f = NewSessionForm::new();
         assert_eq!(f.runner, Tool::Claude);
-        assert_eq!(f.focused_field, 0);
+        // Title (field 1) is focused by default so the existing keystroke flow
+        // — open overlay, start typing — still works. Users reach the runner
+        // picker via Shift-Tab or Up.
+        assert_eq!(f.focused_field, 1);
     }
 
     #[test]

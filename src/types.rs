@@ -119,7 +119,6 @@ impl Tool {
     /// Every variant of `Tool`, in declaration order. Used by
     /// `runner::implemented_tools()` to drive the new-session picker;
     /// also serves as the canonical source for any future iteration site.
-    #[allow(dead_code)]
     pub const ALL: &[Tool] = &[
         Tool::Claude,
         Tool::Opencode,
