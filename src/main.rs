@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle subcommands that don't need the TUI
     if matches!(cli.command, Some(Commands::Hook)) {
-        crate::core::runner::hook_handler::run();
+        crate::core::runner::claude::hook_handler::run();
         return Ok(());
     }
 

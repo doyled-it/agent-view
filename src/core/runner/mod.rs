@@ -3,10 +3,8 @@
 //! See `docs/superpowers/specs/2026-05-08-pluggable-runner-trait-design.md`.
 
 pub mod claude;
-pub mod claude_hooks;
 pub mod event_watcher;
 pub mod fallback;
-pub mod hook_handler;
 pub mod osc_title;
 pub mod shell;
 
