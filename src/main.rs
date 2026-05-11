@@ -39,7 +39,12 @@ enum Commands {
     /// JSON payload from stdin or argv, writes a hook status file to
     /// ~/.agent-orchestrator/hooks/ keyed by AGENT_VIEW_SESSION_ID.
     /// Always exits 0.
-    CodexNotify,
+    CodexNotify {
+        /// Free-form notify payload (JSON or plain event string). Codex
+        /// passes this positionally; we also accept payload via stdin.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -51,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if matches!(cli.command, Some(Commands::CodexNotify)) {
+    if matches!(cli.command, Some(Commands::CodexNotify { .. })) {
         crate::core::runner::codex::notify_handler::run();
         return Ok(());
     }
