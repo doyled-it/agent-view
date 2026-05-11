@@ -31,10 +31,6 @@ impl Runner for FallbackRunner {
     }
 }
 
-pub static CODEX: FallbackRunner = FallbackRunner {
-    name: "codex",
-    launch: "codex",
-};
 pub static OPENCODE: FallbackRunner = FallbackRunner {
     name: "opencode",
     launch: "opencode",

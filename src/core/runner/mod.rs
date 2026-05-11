@@ -71,7 +71,7 @@ pub trait Runner: Send + Sync {
 pub fn runner_for(tool: Tool) -> &'static dyn Runner {
     match tool {
         Tool::Claude => &claude::ClaudeRunner,
-        Tool::Codex => &fallback::CODEX,
+        Tool::Codex => &codex::CodexRunner,
         Tool::Opencode => &fallback::OPENCODE,
         Tool::Gemini => &fallback::GEMINI,
         Tool::Custom => &fallback::CUSTOM,
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_fallback_runners_report_not_implemented() {
-        for tool in [Tool::Codex, Tool::Opencode, Tool::Gemini, Tool::Custom] {
+        for tool in [Tool::Opencode, Tool::Gemini, Tool::Custom] {
             assert!(
                 !runner_for(tool).is_implemented(),
                 "{:?} should still be a fallback at this stage",
@@ -435,8 +435,11 @@ mod tests {
     }
 
     #[test]
-    fn test_implemented_tools_includes_claude_and_shell() {
-        assert_eq!(implemented_tools(), vec![Tool::Claude, Tool::Shell]);
+    fn test_implemented_tools_includes_claude_codex_and_shell() {
+        assert_eq!(
+            implemented_tools(),
+            vec![Tool::Claude, Tool::Codex, Tool::Shell]
+        );
     }
 
     #[test]
@@ -446,5 +449,14 @@ mod tests {
         // None means tmux's default-shell handles the pane — no send-keys.
         assert_eq!(r.launch_command(), None);
         assert!(r.is_implemented());
+    }
+
+    #[test]
+    fn test_runner_for_codex_returns_codex_runner() {
+        let r = runner_for(Tool::Codex);
+        assert_eq!(r.name(), "codex");
+        assert_eq!(r.launch_command(), Some("codex"));
+        assert!(r.is_implemented());
+        assert_eq!(r.tool_data_session_id_key(), "codex_session_id");
     }
 }

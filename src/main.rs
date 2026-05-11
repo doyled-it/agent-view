@@ -71,9 +71,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = crate::core::storage::Storage::open_default()?;
     storage.migrate()?;
 
-    // Best-effort hook installation. Failures are non-fatal.
-    if let Err(e) = crate::core::runner::runner_for(crate::types::Tool::Claude).install_hooks() {
-        eprintln!("agent-view: install_hooks warning: {}", e);
+    // Best-effort hook installation for every implemented runner. Failures
+    // are non-fatal — agent-view stays usable even if a tool's config dir
+    // is unwritable. New runners get auto-install for free.
+    for tool in crate::core::runner::implemented_tools() {
+        let runner = crate::core::runner::runner_for(tool);
+        if let Err(e) = runner.install_hooks() {
+            eprintln!(
+                "agent-view: install_hooks({}) warning: {}",
+                runner.name(),
+                e
+            );
+        }
     }
 
     // Sweep stale hook status files (>24h). Cost-event files are NOT age-cleaned.
