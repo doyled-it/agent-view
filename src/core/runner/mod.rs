@@ -5,6 +5,7 @@
 pub mod claude;
 pub mod event_watcher;
 pub mod fallback;
+pub mod hook_io;
 pub mod osc_title;
 pub mod shell;
 

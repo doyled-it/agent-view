@@ -4,7 +4,7 @@
 //! events to storage.
 
 use crate::core::paths;
-use crate::core::runner::claude::hook_handler::HookStatusFile;
+use crate::core::runner::hook_io::HookStatusFile;
 use crate::core::storage::{CostEvent, Storage};
 use crate::types::SessionStatus;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
