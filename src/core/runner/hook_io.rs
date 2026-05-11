@@ -123,4 +123,30 @@ mod tests {
         atomic_write(&path, b"x").unwrap();
         assert!(path.exists());
     }
+
+    #[test]
+    fn test_hook_status_file_deserializes_legacy_claude_session_id() {
+        // Old in-flight hook files written before the field rename used
+        // `claude_session_id`. The serde alias must keep them readable.
+        let legacy =
+            br#"{"status":"waiting","claude_session_id":"legacy-sid","event":"Stop","ts":1700000000}"#;
+        let parsed: HookStatusFile = serde_json::from_slice(legacy).unwrap();
+        assert_eq!(parsed.tool_session_id, "legacy-sid");
+        assert_eq!(parsed.status, "waiting");
+        assert_eq!(parsed.event, "Stop");
+    }
+
+    #[test]
+    fn test_hook_status_file_omits_empty_tool_session_id() {
+        // skip_serializing_if keeps the JSON tidy when no sid was captured.
+        let file = HookStatusFile {
+            status: "running".to_string(),
+            tool_session_id: String::new(),
+            event: "turn.started".to_string(),
+            ts: 1700000000,
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        assert!(!json.contains("tool_session_id"), "got: {}", json);
+        assert!(!json.contains("claude_session_id"), "got: {}", json);
+    }
 }
