@@ -83,42 +83,16 @@ pub fn install_hooks_in(config_dir: &Path, notify_command_body: &str) -> Result<
         .map_err(|e| format!("write config.toml: {}", e))
 }
 
-/// Remove our notify block from `<config_dir>/config.toml`. No-op if the
-/// block isn't present.
-#[allow(dead_code)]
-pub fn uninstall_hooks_in(config_dir: &Path) -> Result<(), String> {
-    let config_path = config_dir.join("config.toml");
-    let existing = match fs::read_to_string(&config_path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("read config.toml: {}", e)),
-    };
-
-    let Some(start) = existing.find(MARKER_BEGIN) else {
-        return Ok(());
-    };
-    let after_start = &existing[start..];
-    let end_rel = after_start
-        .find(MARKER_END)
-        .ok_or_else(|| "marker block start present but end missing".to_string())?;
-    let end = start + end_rel + MARKER_END.len();
-    let before = &existing[..start];
-    let after = &existing[end..];
-    let after = after.strip_prefix('\n').unwrap_or(after);
-    let new_contents = format!("{}{}", before.trim_end(), after).trim().to_string();
-
-    let bytes = if new_contents.is_empty() {
-        Vec::new()
-    } else {
-        format!("{}\n", new_contents).into_bytes()
-    };
-
-    atomic_write(&config_path, &bytes).map_err(|e| format!("write config.toml: {}", e))
-}
-
 /// True if `content` contains a `notify = ...` line not surrounded by our
 /// marker block. Detects bare `notify =` at the start of any line, ignoring
 /// our own block.
+///
+/// Known limitation: this is a line-based heuristic, not a TOML parser. A
+/// `notify = ...` key nested inside a `[some.section]` table would be
+/// flagged as "foreign" even though it doesn't conflict with our top-level
+/// key. In practice Codex's `notify` is documented as a top-level setting
+/// and we have never seen it scoped under a table; if that becomes a
+/// problem we should swap in `toml_edit` for a structure-aware check.
 fn foreign_notify_line(content: &str) -> bool {
     let without_marker_block = strip_marker_block(content);
     without_marker_block.lines().any(|line| {
@@ -167,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn test_install_replaces_block_on_command_drift() {
+    fn test_install_replaces_block_on_binary_path_drift() {
         let dir = TempDir::new().unwrap();
         install_hooks_in(dir.path(), &cmd()).unwrap();
         let new_cmd = r#"["/new/path/agent-view", "codex-notify"]"#;
@@ -205,22 +179,8 @@ mod tests {
     }
 
     #[test]
-    fn test_uninstall_removes_block() {
-        let dir = TempDir::new().unwrap();
-        install_hooks_in(dir.path(), &cmd()).unwrap();
-        uninstall_hooks_in(dir.path()).unwrap();
-        let content = fs::read_to_string(dir.path().join("config.toml")).unwrap();
-        assert!(!content.contains(MARKER_BEGIN));
-    }
-
-    #[test]
-    fn test_uninstall_no_op_when_file_missing() {
-        let dir = TempDir::new().unwrap();
-        uninstall_hooks_in(dir.path()).unwrap();
-    }
-
-    #[test]
     fn test_codex_config_dir_uses_env() {
+        let _guard = crate::core::runner::hook_io::lock_env();
         std::env::set_var("CODEX_HOME", "/tmp/my-codex-test");
         let dir = codex_config_dir().unwrap();
         assert_eq!(dir, PathBuf::from("/tmp/my-codex-test"));

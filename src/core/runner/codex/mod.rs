@@ -124,6 +124,7 @@ mod tests {
 
     #[test]
     fn test_restart_command_falls_back_when_rollout_missing() {
+        let _guard = crate::core::runner::hook_io::lock_env();
         let dir = TempDir::new().unwrap();
         std::env::set_var("CODEX_HOME", dir.path());
         let cmd = CodexRunner.restart_command("codex", r#"{"codex_session_id": "stale-uuid-xyz"}"#);
@@ -133,6 +134,7 @@ mod tests {
 
     #[test]
     fn test_restart_command_resumes_when_rollout_exists() {
+        let _guard = crate::core::runner::hook_io::lock_env();
         let dir = TempDir::new().unwrap();
         let sid = "abc-123";
         let rollout_dir = dir

@@ -21,8 +21,10 @@ fn run_inner() -> Option<()> {
         return None;
     }
 
-    // Codex may pass payload via stdin OR argv. Prefer stdin.
-    let mut bytes = read_payload_from_stdin();
+    // Codex may pass payload via stdin OR argv. Prefer stdin. A read error
+    // is treated the same as an empty stdin — fall through to argv parsing
+    // rather than aborting; Codex itself never sees a non-zero exit.
+    let mut bytes = read_payload_from_stdin().unwrap_or_default();
     if bytes.is_empty() {
         // Look for the first JSON-shaped argv (starts with `{`).
         if let Some(arg) = std::env::args()
@@ -48,6 +50,10 @@ fn run_inner() -> Option<()> {
 
     paths::ensure_event_dirs().ok()?;
 
+    // Trim event/session_id defensively — Codex's notify payload is
+    // free-form JSON with no documented field-shape contract, so values may
+    // arrive with stray whitespace. (Claude's hook handler doesn't trim
+    // because its payload comes from a structured `HookPayload` enum.)
     let file = HookStatusFile {
         status: status.as_str().to_string(),
         tool_session_id: session_id.trim().to_string(),

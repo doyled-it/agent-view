@@ -21,7 +21,11 @@ static INSTANCE_ID_RE: LazyLock<Regex> = LazyLock::new(|| {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookStatusFile {
     pub status: String,
-    #[serde(default, alias = "claude_session_id")]
+    #[serde(
+        default,
+        alias = "claude_session_id",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub tool_session_id: String,
     pub event: String,
     pub ts: i64, // unix seconds
@@ -53,14 +57,30 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Read up to `MAX_PAYLOAD_BYTES + 1` from stdin. Returns the captured bytes
-/// (empty on read error or when stdin is empty).
-pub fn read_payload_from_stdin() -> Vec<u8> {
+/// Read up to `MAX_PAYLOAD_BYTES + 1` from stdin. Returns the captured bytes,
+/// or the underlying I/O error so callers can choose to log it (Claude's hook
+/// handler debug-logs read errors; Codex's notify handler silently falls
+/// through to argv).
+pub fn read_payload_from_stdin() -> std::io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     let stdin = std::io::stdin();
     let mut handle = stdin.lock().take(MAX_PAYLOAD_BYTES as u64 + 1);
-    let _ = handle.read_to_end(&mut buf);
-    buf
+    handle.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Process-wide mutex for tests that mutate environment variables. `cargo test`
+/// runs tests in parallel within a binary, and `std::env::set_var` /
+/// `remove_var` are global. Tests that touch `CODEX_HOME`, `CODEX_SESSION_ID`,
+/// etc. should acquire this before mutating to avoid cross-test races.
+#[cfg(test)]
+pub(crate) static ENV_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire the env test mutex, surviving poisoning (a panicked test should
+/// not freeze the rest of the suite).
+#[cfg(test)]
+pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]

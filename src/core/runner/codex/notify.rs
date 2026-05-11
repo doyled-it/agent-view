@@ -172,6 +172,27 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_payload_nested_payload_capital_p() {
+        // Capital-P `Payload` is a separate fallback tier from `Params`.
+        let json = br#"{"Payload":{"event":"turn.failed","thread-id":"p-4"}}"#;
+        let (event, sid) = parse_payload(json);
+        assert_eq!(event, "turn.failed");
+        assert_eq!(sid, "p-4");
+    }
+
+    #[test]
+    fn test_parse_payload_session_id_falls_back_to_env() {
+        // No session_id in the JSON; should fall through to CODEX_SESSION_ID.
+        let _guard = crate::core::runner::hook_io::lock_env();
+        std::env::set_var("CODEX_SESSION_ID", "env-sid-9");
+        let json = br#"{"type":"turn.started"}"#;
+        let (event, sid) = parse_payload(json);
+        std::env::remove_var("CODEX_SESSION_ID");
+        assert_eq!(event, "turn.started");
+        assert_eq!(sid, "env-sid-9");
+    }
+
+    #[test]
     fn test_parse_payload_invalid_json_returns_empty() {
         let (event, sid) = parse_payload(b"not json");
         assert_eq!(event, "");

@@ -247,7 +247,13 @@ fn run_inner() -> Option<()> {
         return None;
     }
 
-    let buf = read_payload_from_stdin();
+    let buf = match read_payload_from_stdin() {
+        Ok(b) => b,
+        Err(e) => {
+            dbg(&format!("stdin read error: {}", e));
+            return None;
+        }
+    };
     let payload = match parse_payload(&buf) {
         Some(p) => p,
         None => {
