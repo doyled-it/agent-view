@@ -119,6 +119,10 @@ impl Runner for ClaudeRunner {
         Some("claude")
     }
 
+    fn tool_data_session_id_key(&self) -> &'static str {
+        "claude_session_id"
+    }
+
     fn parse_status(&self, pane_content: &str) -> ToolStatus {
         let cleaned = crate::core::tmux::strip_ansi(pane_content);
 

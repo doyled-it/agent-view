@@ -51,6 +51,15 @@ pub trait Runner: Send + Sync {
         true
     }
 
+    /// Key under which `Session.tool_data` stores the captured session id for
+    /// this runner. Empty string means "this runner does not capture session
+    /// ids". The poller reads this to merge `HookStatusFile.tool_session_id`
+    /// into `tool_data` under the right tool-specific key, so different
+    /// runners' session ids don't collide in storage.
+    fn tool_data_session_id_key(&self) -> &'static str {
+        ""
+    }
+
     /// Install per-tool status-detection hooks into the tool's user config.
     /// Idempotent. Default impl is a no-op for runners without hook support.
     fn install_hooks(&self) -> Result<(), String> {
@@ -302,7 +311,7 @@ mod tests {
     fn fresh_hook(status: SessionStatus) -> HookStatus {
         HookStatus {
             status,
-            claude_session_id: None,
+            tool_session_id: None,
             event: "test".to_string(),
             received_at: SystemTime::now(),
         }
@@ -311,7 +320,7 @@ mod tests {
     fn stale_hook(status: SessionStatus) -> HookStatus {
         HookStatus {
             status,
-            claude_session_id: None,
+            tool_session_id: None,
             event: "test".to_string(),
             received_at: SystemTime::now() - Duration::from_secs(10),
         }

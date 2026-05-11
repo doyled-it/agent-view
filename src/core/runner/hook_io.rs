@@ -21,8 +21,8 @@ static INSTANCE_ID_RE: LazyLock<Regex> = LazyLock::new(|| {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookStatusFile {
     pub status: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub claude_session_id: String,
+    #[serde(default, alias = "claude_session_id")]
+    pub tool_session_id: String,
     pub event: String,
     pub ts: i64, // unix seconds
 }

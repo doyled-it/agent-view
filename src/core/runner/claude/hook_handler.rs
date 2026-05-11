@@ -276,7 +276,7 @@ fn run_inner() -> Option<()> {
         let claude_sid = payload.session_id.clone().unwrap_or_default();
         let file = HookStatusFile {
             status: status.as_str().to_string(),
-            claude_session_id: claude_sid.trim().to_string(),
+            tool_session_id: claude_sid.trim().to_string(),
             event: payload.hook_event_name.clone(),
             ts: chrono::Utc::now().timestamp(),
         };

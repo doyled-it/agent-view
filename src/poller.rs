@@ -86,22 +86,22 @@ pub fn spawn(
                     match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100), false)
                     {
                         Ok(output) => {
-                            // Prefer claude_session_id from hook; fall back to regex extraction.
+                            // Prefer tool_session_id from hook; fall back to regex extraction.
                             let session_id_opt = hook
                                 .as_ref()
-                                .and_then(|h| h.claude_session_id.clone())
+                                .and_then(|h| h.tool_session_id.clone())
                                 .or_else(|| runner.extract_session_id(&output));
                             if let Some(session_id) = session_id_opt {
-                                let mut data: serde_json::Value =
-                                    serde_json::from_str(&session.tool_data)
-                                        .unwrap_or_else(|_| serde_json::json!({}));
-                                if data.get("claude_session_id").and_then(|v| v.as_str())
-                                    != Some(&session_id)
-                                {
-                                    data["claude_session_id"] =
-                                        serde_json::Value::String(session_id);
-                                    let _ =
-                                        bg_storage.update_tool_data(&session.id, &data.to_string());
+                                let key = runner.tool_data_session_id_key();
+                                if !key.is_empty() {
+                                    let mut data: serde_json::Value =
+                                        serde_json::from_str(&session.tool_data)
+                                            .unwrap_or_else(|_| serde_json::json!({}));
+                                    if data.get(key).and_then(|v| v.as_str()) != Some(&session_id) {
+                                        data[key] = serde_json::Value::String(session_id);
+                                        let _ = bg_storage
+                                            .update_tool_data(&session.id, &data.to_string());
+                                    }
                                 }
                             }
 
