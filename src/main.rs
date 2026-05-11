@@ -35,6 +35,11 @@ enum Commands {
     /// stdin, writes a hook status file to ~/.agent-orchestrator/hooks/
     /// keyed by AGENT_VIEW_SESSION_ID. Always exits 0.
     Hook,
+    /// Internal: invoked by Codex notify config on lifecycle events. Reads
+    /// JSON payload from stdin or argv, writes a hook status file to
+    /// ~/.agent-orchestrator/hooks/ keyed by AGENT_VIEW_SESSION_ID.
+    /// Always exits 0.
+    CodexNotify,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,6 +48,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle subcommands that don't need the TUI
     if matches!(cli.command, Some(Commands::Hook)) {
         crate::core::runner::claude::hook_handler::run();
+        return Ok(());
+    }
+
+    if matches!(cli.command, Some(Commands::CodexNotify)) {
+        crate::core::runner::codex::notify_handler::run();
         return Ok(());
     }
 

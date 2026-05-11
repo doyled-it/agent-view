@@ -31,7 +31,6 @@ struct NotifyPayload {
 
 /// Parse a JSON payload (from stdin or argv) and extract `(event, session_id)`.
 /// Returns empty strings on parse failure or absence.
-#[allow(dead_code)]
 pub fn parse_payload(bytes: &[u8]) -> (String, String) {
     let payload: NotifyPayload = match serde_json::from_slice(bytes) {
         Ok(p) => p,
@@ -80,7 +79,6 @@ pub fn parse_payload(bytes: &[u8]) -> (String, String) {
 /// Map a Codex event name to a `SessionStatus`. Accepts `.`, `-`, and `_`
 /// as interchangeable separators (`turn.started` ≡ `turn-started` ≡
 /// `turn_started`). Returns `None` for events we do not care about.
-#[allow(dead_code)]
 pub fn map_event_to_status(event: &str) -> Option<SessionStatus> {
     let normalized = event
         .trim()

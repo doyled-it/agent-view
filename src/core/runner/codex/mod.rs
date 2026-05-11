@@ -4,6 +4,7 @@
 
 pub mod hooks;
 pub mod notify;
+pub mod notify_handler;
 
 use super::{Runner, ToolStatus};
 use std::path::PathBuf;
