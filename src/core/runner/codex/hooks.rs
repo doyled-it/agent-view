@@ -6,10 +6,6 @@
 //! `notify =` line is already present we refuse to clobber it and return
 //! an Err with merge guidance.
 
-// Public API is wired up in Task 6 (CodexRunner impl); suppress dead-code
-// warnings until then.
-#![allow(dead_code)]
-
 use crate::core::runner::hook_io::atomic_write;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -89,6 +85,7 @@ pub fn install_hooks_in(config_dir: &Path, notify_command_body: &str) -> Result<
 
 /// Remove our notify block from `<config_dir>/config.toml`. No-op if the
 /// block isn't present.
+#[allow(dead_code)]
 pub fn uninstall_hooks_in(config_dir: &Path) -> Result<(), String> {
     let config_path = config_dir.join("config.toml");
     let existing = match fs::read_to_string(&config_path) {
