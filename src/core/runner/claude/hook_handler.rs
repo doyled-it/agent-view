@@ -7,21 +7,14 @@
 //! I/O orchestrator is in `run()`.
 
 use crate::core::paths;
+use crate::core::runner::hook_io::{
+    atomic_write, read_payload_from_stdin, validate_instance_id, HookStatusFile, MAX_PAYLOAD_BYTES,
+};
 use crate::core::storage::CostEvent;
 use crate::types::SessionStatus;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-pub const MAX_PAYLOAD_BYTES: usize = 1 << 20; // 1 MiB
-
-static INSTANCE_ID_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$").expect("static regex must compile")
-});
 
 #[derive(Debug, Deserialize)]
 pub struct HookPayload {
@@ -32,15 +25,6 @@ pub struct HookPayload {
     pub transcript_path: Option<String>,
     #[serde(default)]
     pub matcher: Option<serde_json::Value>,
-}
-
-/// Validate an `AGENT_VIEW_SESSION_ID` env value. Returns `true` if safe to
-/// use as a filename component. Rejects empty / `..` / unusual chars.
-pub fn validate_instance_id(id: &str) -> bool {
-    if id.is_empty() || id.contains("..") {
-        return false;
-    }
-    INSTANCE_ID_RE.is_match(id)
 }
 
 /// Map a Claude Code hook event to a `SessionStatus`. Returns `None` for
@@ -76,16 +60,6 @@ pub fn parse_payload(data: &[u8]) -> Option<HookPayload> {
     serde_json::from_slice(data).ok()
 }
 
-/// On-disk hook status file. `status` uses `SessionStatus::as_str()`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct HookStatusFile {
-    pub status: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub claude_session_id: String,
-    pub event: String,
-    pub ts: i64, // unix seconds
-}
-
 #[derive(Debug, Deserialize)]
 struct TranscriptUsage {
     #[serde(default)]
@@ -112,23 +86,6 @@ struct TranscriptLine {
     line_type: String,
     #[serde(default)]
     message: Option<TranscriptMessage>,
-}
-
-/// Atomic write: write `bytes` to a sibling `<file>.<ext>.tmp` (or `<file>.tmp`
-/// when the path has no extension), then rename onto `path`. Returns the first
-/// I/O error encountered. Parent dirs are created on demand.
-pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension(
-        path.extension()
-            .map(|e| format!("{}.tmp", e.to_string_lossy()))
-            .unwrap_or_else(|| "tmp".to_string()),
-    );
-    fs::write(&tmp, bytes)?;
-    fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 /// Lexically normalize a path: collapses `.` and `..` components without
@@ -290,13 +247,13 @@ fn run_inner() -> Option<()> {
         return None;
     }
 
-    let mut buf = Vec::new();
-    let stdin = std::io::stdin();
-    let mut handle = stdin.lock().take(MAX_PAYLOAD_BYTES as u64 + 1);
-    if let Err(e) = handle.read_to_end(&mut buf) {
-        dbg(&format!("stdin read error: {}", e));
-        return None;
-    }
+    let buf = match read_payload_from_stdin() {
+        Ok(b) => b,
+        Err(e) => {
+            dbg(&format!("stdin read error: {}", e));
+            return None;
+        }
+    };
     let payload = match parse_payload(&buf) {
         Some(p) => p,
         None => {
@@ -325,7 +282,7 @@ fn run_inner() -> Option<()> {
         let claude_sid = payload.session_id.clone().unwrap_or_default();
         let file = HookStatusFile {
             status: status.as_str().to_string(),
-            claude_session_id: claude_sid.trim().to_string(),
+            tool_session_id: claude_sid.trim().to_string(),
             event: payload.hook_event_name.clone(),
             ts: chrono::Utc::now().timestamp(),
         };

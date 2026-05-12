@@ -55,11 +55,19 @@ pub(super) fn render_preview(
 
     match preview_content.into_text() {
         Ok(core_text) => {
-            // Convert ratatui_core types to ratatui types for rendering
-            let line_count = core_text.lines.len();
+            // TUIs that draw with absolute cursor positioning (Codex) pad the
+            // capture buffer's tail with blank lines, which would otherwise
+            // push real content out of the visible window.
+            let mut lines = core_text.lines;
+            while lines
+                .last()
+                .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+            {
+                lines.pop();
+            }
+            let line_count = lines.len();
             let skip = line_count.saturating_sub(height);
-            let visible_lines: Vec<Line> = core_text
-                .lines
+            let visible_lines: Vec<Line> = lines
                 .into_iter()
                 .skip(skip)
                 .map(convert_core_line)
@@ -68,12 +76,11 @@ pub(super) fn render_preview(
         }
         Err(_) => {
             // Fall back to plain text rendering
-            let lines: Vec<&str> = preview_content.lines().collect();
-            let skip = if lines.len() > height {
-                lines.len() - height
-            } else {
-                0
-            };
+            let mut lines: Vec<&str> = preview_content.lines().collect();
+            while lines.last().is_some_and(|l| l.trim().is_empty()) {
+                lines.pop();
+            }
+            let skip = lines.len().saturating_sub(height);
             let visible: Vec<Line> = lines.into_iter().skip(skip).map(Line::raw).collect();
             frame.render_widget(Paragraph::new(visible), inner);
         }

@@ -42,10 +42,20 @@ pub(super) fn render_routine_preview(
 
     match preview_content.into_text() {
         Ok(core_text) => {
-            let line_count = core_text.lines.len();
+            // Routine logs are typically scroll-tail like a shell, but a
+            // routine that runs a TUI (e.g. wraps a `codex` invocation) leaves
+            // trailing blank padding in the capture. Trim so visible window
+            // doesn't blank out.
+            let mut lines = core_text.lines;
+            while lines
+                .last()
+                .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+            {
+                lines.pop();
+            }
+            let line_count = lines.len();
             let skip = line_count.saturating_sub(height);
-            let visible_lines: Vec<Line> = core_text
-                .lines
+            let visible_lines: Vec<Line> = lines
                 .into_iter()
                 .skip(skip)
                 .map(convert_core_line)
@@ -54,7 +64,10 @@ pub(super) fn render_routine_preview(
         }
         Err(_) => {
             // Fallback to plain text
-            let lines: Vec<&str> = preview_content.lines().collect();
+            let mut lines: Vec<&str> = preview_content.lines().collect();
+            while lines.last().is_some_and(|l| l.trim().is_empty()) {
+                lines.pop();
+            }
             let skip = lines.len().saturating_sub(height);
             let visible: Vec<Line> = lines.into_iter().skip(skip).map(Line::raw).collect();
             frame.render_widget(Paragraph::new(visible), inner);

@@ -35,6 +35,16 @@ enum Commands {
     /// stdin, writes a hook status file to ~/.agent-orchestrator/hooks/
     /// keyed by AGENT_VIEW_SESSION_ID. Always exits 0.
     Hook,
+    /// Internal: invoked by Codex notify config on lifecycle events. Reads
+    /// JSON payload from stdin or argv, writes a hook status file to
+    /// ~/.agent-orchestrator/hooks/ keyed by AGENT_VIEW_SESSION_ID.
+    /// Always exits 0.
+    CodexNotify {
+        /// Free-form notify payload (JSON or plain event string). Codex
+        /// passes this positionally; we also accept payload via stdin.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +52,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle subcommands that don't need the TUI
     if matches!(cli.command, Some(Commands::Hook)) {
-        crate::core::runner::hook_handler::run();
+        crate::core::runner::claude::hook_handler::run();
+        return Ok(());
+    }
+
+    if matches!(cli.command, Some(Commands::CodexNotify { .. })) {
+        crate::core::runner::codex::notify_handler::run();
         return Ok(());
     }
 
@@ -61,9 +76,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = crate::core::storage::Storage::open_default()?;
     storage.migrate()?;
 
-    // Best-effort hook installation. Failures are non-fatal.
-    if let Err(e) = crate::core::runner::runner_for(crate::types::Tool::Claude).install_hooks() {
-        eprintln!("agent-view: install_hooks warning: {}", e);
+    // Best-effort hook installation for every implemented runner. Failures
+    // are non-fatal — agent-view stays usable even if a tool's config dir
+    // is unwritable. New runners get auto-install for free.
+    for tool in crate::core::runner::implemented_tools() {
+        let runner = crate::core::runner::runner_for(tool);
+        if let Err(e) = runner.install_hooks() {
+            eprintln!(
+                "agent-view: install_hooks({}) warning: {}",
+                runner.name(),
+                e
+            );
+        }
     }
 
     // Sweep stale hook status files (>24h). Cost-event files are NOT age-cleaned.

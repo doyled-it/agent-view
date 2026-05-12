@@ -4,7 +4,7 @@
 //! events to storage.
 
 use crate::core::paths;
-use crate::core::runner::hook_handler::HookStatusFile;
+use crate::core::runner::hook_io::HookStatusFile;
 use crate::core::storage::{CostEvent, Storage};
 use crate::types::SessionStatus;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime};
 #[derive(Debug, Clone)]
 pub struct HookStatus {
     pub status: SessionStatus,
-    pub claude_session_id: Option<String>,
+    pub tool_session_id: Option<String>,
     #[allow(dead_code)] // used in tests; reserved for UI display (Task 11+)
     pub event: String,
     pub received_at: SystemTime,
@@ -172,14 +172,14 @@ fn process_hook_file(state: &EventStateHandle, path: &Path) {
         Some(s) => s,
         None => return,
     };
-    let claude_sid = if file.claude_session_id.is_empty() {
+    let tool_sid = if file.tool_session_id.is_empty() {
         None
     } else {
-        Some(file.claude_session_id)
+        Some(file.tool_session_id)
     };
     let entry = HookStatus {
         status,
-        claude_session_id: claude_sid,
+        tool_session_id: tool_sid,
         event: file.event,
         received_at: SystemTime::now(),
     };

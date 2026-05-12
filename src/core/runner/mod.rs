@@ -3,10 +3,10 @@
 //! See `docs/superpowers/specs/2026-05-08-pluggable-runner-trait-design.md`.
 
 pub mod claude;
-pub mod claude_hooks;
+pub mod codex;
 pub mod event_watcher;
 pub mod fallback;
-pub mod hook_handler;
+pub mod hook_io;
 pub mod osc_title;
 pub mod shell;
 
@@ -52,6 +52,15 @@ pub trait Runner: Send + Sync {
         true
     }
 
+    /// Key under which `Session.tool_data` stores the captured session id for
+    /// this runner. Empty string means "this runner does not capture session
+    /// ids". The poller reads this to merge `HookStatusFile.tool_session_id`
+    /// into `tool_data` under the right tool-specific key, so different
+    /// runners' session ids don't collide in storage.
+    fn tool_data_session_id_key(&self) -> &'static str {
+        ""
+    }
+
     /// Install per-tool status-detection hooks into the tool's user config.
     /// Idempotent. Default impl is a no-op for runners without hook support.
     fn install_hooks(&self) -> Result<(), String> {
@@ -62,7 +71,7 @@ pub trait Runner: Send + Sync {
 pub fn runner_for(tool: Tool) -> &'static dyn Runner {
     match tool {
         Tool::Claude => &claude::ClaudeRunner,
-        Tool::Codex => &fallback::CODEX,
+        Tool::Codex => &codex::CodexRunner,
         Tool::Opencode => &fallback::OPENCODE,
         Tool::Gemini => &fallback::GEMINI,
         Tool::Custom => &fallback::CUSTOM,
@@ -303,7 +312,7 @@ mod tests {
     fn fresh_hook(status: SessionStatus) -> HookStatus {
         HookStatus {
             status,
-            claude_session_id: None,
+            tool_session_id: None,
             event: "test".to_string(),
             received_at: SystemTime::now(),
         }
@@ -312,7 +321,7 @@ mod tests {
     fn stale_hook(status: SessionStatus) -> HookStatus {
         HookStatus {
             status,
-            claude_session_id: None,
+            tool_session_id: None,
             event: "test".to_string(),
             received_at: SystemTime::now() - Duration::from_secs(10),
         }
@@ -416,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_fallback_runners_report_not_implemented() {
-        for tool in [Tool::Codex, Tool::Opencode, Tool::Gemini, Tool::Custom] {
+        for tool in [Tool::Opencode, Tool::Gemini, Tool::Custom] {
             assert!(
                 !runner_for(tool).is_implemented(),
                 "{:?} should still be a fallback at this stage",
@@ -426,8 +435,11 @@ mod tests {
     }
 
     #[test]
-    fn test_implemented_tools_includes_claude_and_shell() {
-        assert_eq!(implemented_tools(), vec![Tool::Claude, Tool::Shell]);
+    fn test_implemented_tools_includes_claude_codex_and_shell() {
+        assert_eq!(
+            implemented_tools(),
+            vec![Tool::Claude, Tool::Codex, Tool::Shell]
+        );
     }
 
     #[test]
@@ -437,5 +449,14 @@ mod tests {
         // None means tmux's default-shell handles the pane — no send-keys.
         assert_eq!(r.launch_command(), None);
         assert!(r.is_implemented());
+    }
+
+    #[test]
+    fn test_runner_for_codex_returns_codex_runner() {
+        let r = runner_for(Tool::Codex);
+        assert_eq!(r.name(), "codex");
+        assert_eq!(r.launch_command(), Some("codex"));
+        assert!(r.is_implemented());
+        assert_eq!(r.tool_data_session_id_key(), "codex_session_id");
     }
 }

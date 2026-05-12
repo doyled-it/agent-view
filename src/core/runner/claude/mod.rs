@@ -1,6 +1,9 @@
 //! Claude Code runner. Detection logic ported from the former
 //! `src/core/status.rs` (TypeScript tmux.ts patterns).
 
+pub mod hook_handler;
+pub mod hooks;
+
 use super::{Runner, ToolStatus};
 use regex::Regex;
 use std::sync::LazyLock;
@@ -114,6 +117,10 @@ impl Runner for ClaudeRunner {
     }
     fn launch_command(&self) -> Option<&'static str> {
         Some("claude")
+    }
+
+    fn tool_data_session_id_key(&self) -> &'static str {
+        "claude_session_id"
     }
 
     fn parse_status(&self, pane_content: &str) -> ToolStatus {
@@ -230,10 +237,10 @@ impl Runner for ClaudeRunner {
     }
 
     fn install_hooks(&self) -> Result<(), String> {
-        let dir = crate::core::runner::claude_hooks::claude_config_dir()
+        let dir = crate::core::runner::claude::hooks::claude_config_dir()
             .ok_or_else(|| "no home directory".to_string())?;
-        let cmd = crate::core::runner::claude_hooks::resolve_hook_command()?;
-        crate::core::runner::claude_hooks::install_hooks_in(&dir, &cmd)
+        let cmd = crate::core::runner::claude::hooks::resolve_hook_command()?;
+        crate::core::runner::claude::hooks::install_hooks_in(&dir, &cmd)
     }
 }
 
