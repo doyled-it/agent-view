@@ -1,13 +1,36 @@
 //! Codex runner. Launches `codex`, captures session ids from notify
 //! payloads (see `notify.rs`), and resumes via `codex resume <sid>`
 //! gated on the on-disk rollout file (agent-deck issue #756).
+//!
+//! `parse_status` does light pane scraping to detect when the user has
+//! typed but not yet sent input — this powers the Draft session status.
+//! Codex shows a rotating placeholder (e.g. `Find and fix a bug in
+//! @filename`, `Implement {feature}`) when the input is empty, which we
+//! distinguish from real input by its template markers.
 
 pub mod hooks;
 pub mod notify;
 pub mod notify_handler;
 
 use super::{Runner, ToolStatus};
+use regex::Regex;
 use std::path::PathBuf;
+use std::sync::LazyLock;
+
+/// Codex's input prompt sigil — U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK.
+const PROMPT_SIGIL: char = '\u{203a}';
+
+/// Matches Codex placeholder template markers like `{feature}`, `{file}`,
+/// `{description}` — a lowercase identifier in curly braces. Real user
+/// input rarely contains this exact pattern.
+static PLACEHOLDER_TEMPLATE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{[a-z_][a-z0-9_]*\}").expect("static regex must compile"));
+
+/// Literal substrings that appear in Codex's rotating placeholders but are
+/// extremely unlikely in real user input. `@filename` is the placeholder
+/// for "supply a path here" — real file refs would have an extension
+/// (`@foo.rs`), so we match only the bare literal.
+const PLACEHOLDER_LITERALS: &[&str] = &["@filename", "@filepath", "@directory"];
 
 pub struct CodexRunner;
 
@@ -20,10 +43,43 @@ impl Runner for CodexRunner {
         Some("codex")
     }
 
-    fn parse_status(&self, _pane_content: &str) -> ToolStatus {
-        // Defer to hooks. The active-pane heuristic in resolve_session_status
-        // handles the pre-first-notify window correctly.
-        ToolStatus::default()
+    fn parse_status(&self, pane_content: &str) -> ToolStatus {
+        // Running/Waiting come from notify hooks; this only surfaces the
+        // Draft overlay (and the idle-prompt flag that gates it). See
+        // compose_status in runner/mod.rs for the precedence rules.
+        let mut status = ToolStatus::default();
+        let lines: Vec<&str> = pane_content.lines().collect();
+        let scan_start = lines.len().saturating_sub(30);
+        let recent = &lines[scan_start..];
+
+        let Some(rel_idx) = recent
+            .iter()
+            .rposition(|l| l.trim_start().starts_with(PROMPT_SIGIL))
+        else {
+            return status;
+        };
+
+        status.has_idle_prompt = true;
+        let prompt_line = recent[rel_idx].trim_start();
+        let after = prompt_line.strip_prefix(PROMPT_SIGIL).unwrap_or("");
+        let body = after.trim();
+
+        // Strip whitespace, NBSP, and the cursor block before checking for
+        // meaningful content (mirrors claude/mod.rs:166).
+        let meaningful: String = body
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '\u{00a0}' && *c != '\u{2588}')
+            .collect();
+        if meaningful.is_empty() {
+            return status;
+        }
+
+        if is_codex_placeholder(body) {
+            return status;
+        }
+
+        status.has_draft = true;
+        status
     }
 
     fn extract_session_id(&self, _pane_content: &str) -> Option<String> {
@@ -81,6 +137,17 @@ pub(crate) fn codex_rollout_exists(sid: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True if `body` looks like one of Codex's rotating empty-input placeholders.
+/// Matches the `{lowercase_token}` template form and a small set of bare
+/// literal markers (`@filename` etc.) that Codex uses but real input rarely
+/// contains verbatim.
+fn is_codex_placeholder(body: &str) -> bool {
+    if PLACEHOLDER_LITERALS.iter().any(|lit| body.contains(lit)) {
+        return true;
+    }
+    PLACEHOLDER_TEMPLATE_RE.is_match(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,11 +162,120 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_status_returns_default() {
-        let s = CodexRunner.parse_status("any pane content");
+    fn test_parse_status_no_prompt_returns_default() {
+        let pane = "Codex starting up...\nMCP startup incomplete (failed: gitlab)\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(!s.has_idle_prompt);
+        assert!(!s.has_draft);
         assert!(!s.is_busy);
-        assert!(!s.is_waiting);
         assert!(!s.has_error);
+    }
+
+    #[test]
+    fn test_parse_status_empty_prompt_is_idle_not_draft() {
+        let pane = "› \n  gpt-5.5 default fast · ~\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_just_sigil_no_space_is_idle_not_draft() {
+        let pane = "›\n  gpt-5.5 default fast\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_only_cursor_block_is_not_draft() {
+        let pane = "› \u{2588}\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_template_placeholder_is_not_draft() {
+        // Real Codex 0.128 placeholder seen on fresh session.
+        let pane = "› Implement {feature}\n  gpt-5.5 default fast · ~\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_filename_placeholder_is_not_draft() {
+        // Real Codex 0.128 placeholder seen on fresh session.
+        let pane = "› Find and fix a bug in @filename\n  gpt-5.5 default fast · ~\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_typed_text_is_draft() {
+        let pane = "› fix the auth bug\n  gpt-5.5 default fast · ~\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_single_typed_char_is_draft() {
+        let pane = "› x\n  gpt-5.5 default fast · ~\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_user_file_ref_with_extension_is_draft() {
+        // Real file refs have an extension; only the bare `@filename` literal
+        // is a placeholder.
+        let pane = "› fix the bug in @auth.rs\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_last_prompt_line_wins() {
+        // Older typed-then-sent prompt above; current input is empty.
+        let pane = "› old typed text\nresponse\n\n› \n  gpt-5.5 default fast\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_typed_text_with_curly_braces_treated_as_placeholder() {
+        // Known false-negative: real input containing a `{token}` pattern
+        // is misclassified as a placeholder. Pin the current behavior so any
+        // future refinement is intentional.
+        let pane = "› {feature}\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(
+            !s.has_draft,
+            "documented limitation: literal {{token}} reads as placeholder"
+        );
+    }
+
+    #[test]
+    fn test_is_codex_placeholder_literals() {
+        assert!(is_codex_placeholder("Find and fix a bug in @filename"));
+        assert!(is_codex_placeholder("Open @filepath"));
+        assert!(!is_codex_placeholder("fix @auth.rs"));
+        assert!(!is_codex_placeholder("anything else"));
+    }
+
+    #[test]
+    fn test_is_codex_placeholder_template_re() {
+        assert!(is_codex_placeholder("Implement {feature}"));
+        assert!(is_codex_placeholder("Refactor {old} into {new}"));
+        assert!(
+            !is_codex_placeholder("fix {THIS} bug"),
+            "uppercase token is not a Codex placeholder"
+        );
+        assert!(!is_codex_placeholder("see }leftover{"), "unbalanced braces");
     }
 
     #[test]
