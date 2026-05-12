@@ -28,13 +28,23 @@ IMPORTANT: CI runs `rust:latest` which may be newer than the local toolchain. Al
 - `src/app.rs` — central `App` struct, overlay enums, command palette
 - `src/types.rs` — shared types used across modules
 
+## Runner trait
+
+Each supported tool (Claude, Codex, Shell, plus fallbacks) implements the `Runner` trait in `src/core/runner/mod.rs`. Per-tool code lives under its own subdirectory (`src/core/runner/claude/`, `src/core/runner/codex/`). The trait covers launch command, status parsing, session-id extraction, restart command, and an idempotent `install_hooks` invoked at startup over `implemented_tools()`. To add a tool, create a new subdir, impl `Runner`, register in `runner_for(Tool::…)`, and the startup loop wires hook installation automatically.
+
+Status is composed in `compose_status` (runner/mod.rs) with three tiers: fresh-hook (Running/Waiting/Compacting authoritative; Idle allows parse_status to add a Draft/Paused/Monitoring overlay), then pane-title marker, then full regex via `resolve_session_status`. Hook freshness window is 1.1s.
+
 ## Key Patterns
 
 - Overlays (dialogs) are rendered in `src/ui/overlay.rs`, input handled in `src/input/session.rs` and `src/input/overlay.rs`
-- Session status is detected by parsing tmux pane output in `src/core/status.rs`
-- All storage goes through `src/core/storage.rs` (SQLite via rusqlite with bundled feature)
+- Session status flows through the Runner trait: notify/Claude hooks write to `~/.agent-orchestrator/hooks/<session_id>.json`, the poller reads those plus `tmux capture-pane` and feeds both to `compose_status`
+- All storage goes through `src/core/storage/` (SQLite via rusqlite with bundled feature; one file per table — `sessions.rs`, `routines.rs`, `runs.rs`, etc.)
 - Themes are defined in `src/ui/theme.rs` — all colors come from the `Theme` struct, never hardcoded
-- Usage tracking runs a hidden `__agentview_meta_usage` tmux session managed by `src/core/usage.rs` — parser, monitor thread, and shared state via `Arc<Mutex<>>`. Sessions prefixed with `__agentview_meta_` are filtered from the UI and poller.
+- Usage tracking runs a hidden `__agentview_meta_usage` tmux session managed by `src/core/usage/` — parser, monitor thread, and shared state via `Arc<Mutex<>>`. Sessions prefixed with `__agentview_meta_` are filtered from the UI and poller.
+
+### Pane scraping pitfalls
+
+TUI-style runners (Codex) draw with absolute cursor positioning and pad the bottom of `tmux capture-pane` with blank lines. **Always strip trailing whitespace-only lines before applying a tail window or computing a `skip` offset** — otherwise the prompt/content sits outside the scan area and detection silently never fires. See `src/core/runner/codex/mod.rs::parse_status` and `src/ui/detail/{session,routine}.rs::render_preview`.
 
 ## Testing
 

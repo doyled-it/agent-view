@@ -54,11 +54,17 @@ Agent View monitors sessions and shows real-time status:
 | Status | Meaning |
 |--------|---------|
 | Running | Agent is actively working |
-| Waiting | Needs your input |
-| Paused | Agent is paused/compacting |
-| Idle | Ready for commands |
-| Stopped | Session was stopped |
+| Waiting | Agent is asking for your input |
+| Draft | You've typed input but haven't sent it yet |
+| Paused | Agent is blocked on a yes/no or approval prompt |
+| Compacting | Agent is compacting context to free token budget |
+| Monitoring | Agent is watching for events (e.g. `claude --monitor`) |
+| Idle | Session is ready for commands |
+| Stopped | Session was stopped manually |
+| Crashed | tmux session is no longer running |
 | Error | Something went wrong |
+
+Sessions are sorted with the most attention-needing states first (Crashed, Waiting, Draft, Paused), so anything wanting your eyes floats to the top of the list.
 
 ### Account Usage Tracking
 
