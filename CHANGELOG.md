@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.10.0] - 2026-05-12
+
+### Changed
+
+- feat(runner): CodexRunner with notify hooks + stale-sid resume safeguard (#47) (#53) (@doyled-it)
+
 ## [1.9.0] - 2026-05-10
 
 ### Changed
