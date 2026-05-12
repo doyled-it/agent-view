@@ -47,8 +47,16 @@ impl Runner for CodexRunner {
         // Running/Waiting come from notify hooks; this only surfaces the
         // Draft overlay (and the idle-prompt flag that gates it). See
         // compose_status in runner/mod.rs for the precedence rules.
+        //
+        // Codex draws its TUI with absolute cursor positioning and pads the
+        // bottom of the capture buffer with blank lines (unlike a scrolling
+        // shell where the latest content is at the tail). Strip trailing
+        // blanks before windowing or the prompt line falls outside the scan.
         let mut status = ToolStatus::default();
-        let lines: Vec<&str> = pane_content.lines().collect();
+        let mut lines: Vec<&str> = pane_content.lines().collect();
+        while lines.last().is_some_and(|l| l.trim().is_empty()) {
+            lines.pop();
+        }
         let scan_start = lines.len().saturating_sub(30);
         let recent = &lines[scan_start..];
 
@@ -235,6 +243,30 @@ mod tests {
         let pane = "› fix the bug in @auth.rs\n";
         let s = CodexRunner.parse_status(pane);
         assert!(s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_draft_with_trailing_blank_padding() {
+        // Codex's TUI pads the bottom of `tmux capture-pane` with blank
+        // lines. The prompt line must still be found after the blanks are
+        // stripped, or live Draft detection breaks under the poller's real
+        // capture window (-S -100 → ~80+ trailing blanks for an 80-row pane).
+        let mut pane = String::from(
+            "╭───────────────╮\n\
+             │ Codex header  │\n\
+             ╰───────────────╯\n\
+             › hello there\n\
+               gpt-5.5 default fast · ~\n",
+        );
+        for _ in 0..120 {
+            pane.push('\n');
+        }
+        let s = CodexRunner.parse_status(&pane);
+        assert!(s.has_idle_prompt);
+        assert!(
+            s.has_draft,
+            "trailing blank padding must not hide the prompt"
+        );
     }
 
     #[test]
