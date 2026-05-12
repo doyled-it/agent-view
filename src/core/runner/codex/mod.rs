@@ -32,6 +32,15 @@ static PLACEHOLDER_TEMPLATE_RE: LazyLock<Regex> =
 /// (`@foo.rs`), so we match only the bare literal.
 const PLACEHOLDER_LITERALS: &[&str] = &["@filename", "@filepath", "@directory"];
 
+/// A numbered confirmation choice like `1. Yes, continue` or `1) No`.
+/// When Codex shows a yes/no/confirm dialog (trust-directory, sandbox
+/// escalation, apply-changes), the prompt-sigil line carries the first
+/// option. Treat it as a question awaiting input, not draft input.
+/// Requires whitespace after the separator so `1.5x speedup` (decimal)
+/// doesn't false-positive.
+static NUMBERED_CHOICE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*\d+[.)]\s+\S").expect("static regex must compile"));
+
 pub struct CodexRunner;
 
 impl Runner for CodexRunner {
@@ -79,6 +88,13 @@ impl Runner for CodexRunner {
             .filter(|c| !c.is_whitespace() && *c != '\u{00a0}' && *c != '\u{2588}')
             .collect();
         if meaningful.is_empty() {
+            return status;
+        }
+
+        if NUMBERED_CHOICE_RE.is_match(body) {
+            // Confirmation dialog awaiting a numbered choice — Paused, not Draft.
+            // resolve_session_status maps has_question + has_idle_prompt → Paused.
+            status.has_question = true;
             return status;
         }
 
@@ -243,6 +259,54 @@ mod tests {
         let pane = "› fix the bug in @auth.rs\n";
         let s = CodexRunner.parse_status(pane);
         assert!(s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_numbered_choice_dot_is_paused_not_draft() {
+        // Codex trust-directory dialog and sandbox/apply prompts.
+        let pane = "› 1. Yes, continue\n  2. No, quit\n  Press enter to continue\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(s.has_question);
+        assert!(
+            !s.has_draft,
+            "numbered confirmation must be Paused, not Draft"
+        );
+    }
+
+    #[test]
+    fn test_parse_status_numbered_choice_paren_is_paused() {
+        let pane = "› 1) Yes\n  2) No\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_question);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_choice_other_than_first_is_paused() {
+        // Whichever option happens to be highlighted/echoed on the sigil line.
+        let pane = "› 2. No, quit\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_question);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_decimal_in_typed_text_is_draft() {
+        // `1.5x` is a decimal, not a numbered choice — must remain Draft.
+        let pane = "› we got a 1.5x speedup\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_draft);
+        assert!(!s.has_question);
+    }
+
+    #[test]
+    fn test_parse_status_digit_without_separator_is_draft() {
+        // No `.` or `)` after the digit — just typed text.
+        let pane = "› 1 yes please\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_draft);
+        assert!(!s.has_question);
     }
 
     #[test]
