@@ -4,9 +4,12 @@
 //!
 //! `parse_status` does light pane scraping to detect when the user has
 //! typed but not yet sent input — this powers the Draft session status.
-//! Codex shows a rotating placeholder (e.g. `Find and fix a bug in
-//! @filename`, `Implement {feature}`) when the input is empty, which we
-//! distinguish from real input by its template markers.
+//! Codex renders empty-input suggestions with the SGR dim attribute
+//! (`\e[2m`); real typed input is rendered with default formatting. We
+//! capture the pane with `-e` (see `wants_ansi_escapes`) so the parser
+//! can use this contrast as the primary signal. The older
+//! template/literal allowlist (`{feature}`, `@filename`) is kept as a
+//! defensive fallback for cases where ANSI capture fails.
 
 pub mod hooks;
 pub mod notify;
@@ -41,6 +44,30 @@ const PLACEHOLDER_LITERALS: &[&str] = &["@filename", "@filepath", "@directory"];
 static NUMBERED_CHOICE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*\d+[.)]\s+\S").expect("static regex must compile"));
 
+/// SGR "faint/dim" attribute. Codex wraps empty-input placeholders with
+/// `\e[2m ... \e[0m`; real user input never carries this on the prompt line.
+const SGR_DIM: &str = "\u{1b}[2m";
+
+/// Default busy indicator. Codex prints `• Working (Xs • esc to interrupt)`
+/// above the input area while a turn is in progress. This is the universal
+/// signal that works on every Codex setup, but it disappears once the
+/// model starts streaming response content (gone by ~frame 10 of a
+/// 30-frame mid-turn capture).
+const BUSY_INDICATOR_MARKER: &str = "esc to interrupt";
+
+/// Footer state marker present on some setups via statusline customization.
+/// When configured, the model/status line at the very bottom reads
+/// `gpt-X default fast · ~ · Working · Context …` mid-turn (vs `· Ready ·`
+/// when idle). This persists for the entire turn, so when present it
+/// bridges the streaming gap that `BUSY_INDICATOR_MARKER` leaves uncovered.
+/// Checked only on the last non-blank line — the substring could otherwise
+/// appear in conversation prose ("the agent reported · Working · earlier").
+///
+/// Codex 0.128 fires notify only on turn-complete (no turn-started event
+/// reaches the shim), so pane scraping is the sole Running signal during
+/// a turn.
+const BUSY_FOOTER_MARKER: &str = "\u{00b7} Working \u{00b7}";
+
 pub struct CodexRunner;
 
 impl Runner for CodexRunner {
@@ -61,23 +88,51 @@ impl Runner for CodexRunner {
         // bottom of the capture buffer with blank lines (unlike a scrolling
         // shell where the latest content is at the tail). Strip trailing
         // blanks before windowing or the prompt line falls outside the scan.
+        //
+        // The poller captures with -e (see wants_ansi_escapes) so SGR codes
+        // are preserved here. We strip them for content matching but inspect
+        // the raw line for the dim attribute that marks placeholder hints.
         let mut status = ToolStatus::default();
-        let mut lines: Vec<&str> = pane_content.lines().collect();
-        while lines.last().is_some_and(|l| l.trim().is_empty()) {
-            lines.pop();
-        }
-        let scan_start = lines.len().saturating_sub(30);
-        let recent = &lines[scan_start..];
-
-        let Some(rel_idx) = recent
+        let raw_lines: Vec<&str> = pane_content.lines().collect();
+        let cleaned_lines: Vec<String> = raw_lines
             .iter()
-            .rposition(|l| l.trim_start().starts_with(PROMPT_SIGIL))
+            .map(|l| crate::core::tmux::strip_ansi(l))
+            .collect();
+
+        let mut end = cleaned_lines.len();
+        while end > 0 && cleaned_lines[end - 1].trim().is_empty() {
+            end -= 1;
+        }
+        let scan_start = end.saturating_sub(30);
+
+        // Busy check first. We deliberately don't set has_idle_prompt
+        // because resolve_session_status gates Running behind
+        // !has_idle_prompt, and Codex keeps the prompt sigil drawn even
+        // mid-turn. Two markers with different scoping:
+        //   - BUSY_INDICATOR_MARKER (`esc to interrupt`): default signal,
+        //     scan the recent window because the `• Working` indicator can
+        //     appear on any line above the prompt.
+        //   - BUSY_FOOTER_MARKER (`· Working ·`): present only on setups
+        //     with the statusline customization. Check just the last
+        //     non-blank line so the substring doesn't false-positive on
+        //     conversation prose.
+        let indicator_busy =
+            (scan_start..end).any(|i| cleaned_lines[i].contains(BUSY_INDICATOR_MARKER));
+        let footer_busy = end > 0 && cleaned_lines[end - 1].contains(BUSY_FOOTER_MARKER);
+        if indicator_busy || footer_busy {
+            status.is_busy = true;
+            return status;
+        }
+
+        let Some(rel_idx) = (scan_start..end)
+            .rev()
+            .find(|i| cleaned_lines[*i].trim_start().starts_with(PROMPT_SIGIL))
         else {
             return status;
         };
 
         status.has_idle_prompt = true;
-        let prompt_line = recent[rel_idx].trim_start();
+        let prompt_line = cleaned_lines[rel_idx].trim_start();
         let after = prompt_line.strip_prefix(PROMPT_SIGIL).unwrap_or("");
         let body = after.trim();
 
@@ -91,6 +146,12 @@ impl Runner for CodexRunner {
             return status;
         }
 
+        // Primary placeholder signal: the raw (ANSI-bearing) prompt line
+        // contains `\e[2m`. Codex wraps every empty-input suggestion in dim,
+        // including phrases that have no template marker ("Explain this
+        // codebase", "Refactor X", etc.). Numbered-choice detection runs
+        // first because trust-directory prompts may also use dim styling
+        // and we want them surfaced as Paused, not silently swallowed.
         if NUMBERED_CHOICE_RE.is_match(body) {
             // Confirmation dialog awaiting a numbered choice — Paused, not Draft.
             // resolve_session_status maps has_question + has_idle_prompt → Paused.
@@ -98,6 +159,12 @@ impl Runner for CodexRunner {
             return status;
         }
 
+        if raw_lines[rel_idx].contains(SGR_DIM) {
+            return status;
+        }
+
+        // Fallback: known template/literal markers, for cases where the
+        // pane was captured without ANSI (e.g. legacy callers, tests).
         if is_codex_placeholder(body) {
             return status;
         }
@@ -133,6 +200,10 @@ impl Runner for CodexRunner {
 
     fn tool_data_session_id_key(&self) -> &'static str {
         "codex_session_id"
+    }
+
+    fn wants_ansi_escapes(&self) -> bool {
+        true
     }
 }
 
@@ -343,6 +414,42 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_status_dim_placeholder_without_template_marker_is_not_draft() {
+        // Real bug: Codex's "Explain this codebase" suggestion (no {token},
+        // no @filename — just a complete sentence) was being read as Draft
+        // because the literal/template allowlist didn't catch it. With ANSI
+        // capture, the dim attribute is the authoritative signal.
+        let pane = "\u{1b}[0;1m\u{203a}\u{1b}[0m \u{1b}[2mExplain this codebase\u{1b}[0m\n  gpt-5.5 default fast · ~ · Ready · Context 56% left\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(
+            !s.has_draft,
+            "dim-wrapped placeholder must not register as draft"
+        );
+    }
+
+    #[test]
+    fn test_parse_status_real_typed_input_with_ansi_is_draft() {
+        // User typed real input — no dim wrapper on the body.
+        let pane =
+            "\u{1b}[0;1m\u{203a}\u{1b}[0m fix the auth bug\n  gpt-5.5 default fast · ~ · Ready\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt);
+        assert!(s.has_draft);
+    }
+
+    #[test]
+    fn test_parse_status_ansi_numbered_choice_is_paused_not_swallowed() {
+        // Trust-directory prompts may also be styled dim; numbered-choice
+        // detection runs before the dim check so they still surface as Paused.
+        let pane =
+            "\u{1b}[0;1m\u{203a}\u{1b}[0m \u{1b}[2m1. Yes, continue\u{1b}[0m\n  2. No, quit\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_question);
+        assert!(!s.has_draft);
+    }
+
+    #[test]
     fn test_parse_status_typed_text_with_curly_braces_treated_as_placeholder() {
         // Known false-negative: real input containing a `{token}` pattern
         // is misclassified as a placeholder. Pin the current behavior so any
@@ -387,6 +494,117 @@ mod tests {
     #[test]
     fn test_tool_data_session_id_key() {
         assert_eq!(CodexRunner.tool_data_session_id_key(), "codex_session_id");
+    }
+
+    #[test]
+    fn test_parse_status_indicator_esc_to_interrupt_marks_busy() {
+        // Default Codex busy signal — the `• Working (Xs • esc to interrupt)`
+        // line above the prompt. Works on every setup without customization.
+        let pane = "› do it again\n\n• Working (1s • esc to interrupt)\n\n› Explain this codebase\n  gpt-5.5 default fast · ~ · Context 57% left\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.is_busy, "`esc to interrupt` indicator must set is_busy");
+        assert!(
+            !s.has_idle_prompt,
+            "busy state must suppress has_idle_prompt so Tier 3 reaches the Running branch"
+        );
+    }
+
+    #[test]
+    fn test_parse_status_footer_working_marks_busy() {
+        // Customized statusline footer — present when the user has the
+        // optional Codex statusline override. Bridges the streaming gap
+        // where the default indicator disappears.
+        let pane =
+            "› Explain this codebase\n\n  gpt-5.5 default fast · ~ · Working · Context 57% left\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.is_busy, "`· Working ·` footer must set is_busy");
+        assert!(!s.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_parse_status_streaming_response_with_default_footer_is_idle() {
+        // Mid-turn on a default Codex (no statusline customization): the
+        // `• Working` indicator has vanished while the model streams
+        // response content, and the footer doesn't carry a state word.
+        // Documents a known gap — without the statusline customization,
+        // long streaming responses briefly read as Idle. We accept this
+        // because the alternative (state tracking) is a bigger lift.
+        let pane = "  73. Crab\n  74. Lobster\n  75. Shrimp\n› Explain this codebase\n  gpt-5.5 default fast · ~ · Context 57% left\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(
+            !s.is_busy,
+            "documented limitation: streaming without footer customization reads as Idle"
+        );
+        assert!(s.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_parse_status_streaming_response_with_customized_footer_is_busy() {
+        // Same mid-turn frame as above but with the statusline override
+        // applied — footer keeps `· Working ·` for the full turn, so
+        // streaming stays Running.
+        let pane = "  73. Crab\n  74. Lobster\n  75. Shrimp\n› Explain this codebase\n  gpt-5.5 default fast · ~ · Working · Context 57% left\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.is_busy);
+        assert!(!s.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_parse_status_footer_ready_is_not_busy() {
+        let pane = "› \n\n  gpt-5.5 default fast · ~ · Ready · Context 56% left\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(!s.is_busy);
+        assert!(s.has_idle_prompt);
+    }
+
+    #[test]
+    fn test_parse_status_working_in_conversation_history_is_not_busy() {
+        // The substring `· Working ·` could appear in conversation text but
+        // only matters when it's on the footer (last non-blank) line. Idle
+        // pane with prose containing `Working` must not flip to busy.
+        let pane = "The agent reported · Working · earlier today.\n› \n  gpt-5.5 default fast · ~ · Ready · Context 56% left\n";
+        let s = CodexRunner.parse_status(pane);
+        assert!(!s.is_busy);
+    }
+
+    #[test]
+    fn test_parse_status_against_real_captured_pane() {
+        // Captured from a live Codex 0.128 session sitting idle on the
+        // "Explain this codebase" suggestion — the case the homepage was
+        // misreading as Draft. Asserts the dim-attribute fix catches it.
+        let pane = include_str!("test_fixture_real_pane.txt");
+        let s = CodexRunner.parse_status(pane);
+        assert!(s.has_idle_prompt, "real fixture must reach the prompt line");
+        assert!(
+            !s.has_draft,
+            "real fixture (dim placeholder) must not be Draft — got {:?}",
+            s
+        );
+    }
+
+    #[test]
+    fn test_parse_status_against_real_running_pane() {
+        // Captured mid-turn from a live Codex 0.128 session streaming a
+        // response — the `• Working` indicator is gone but the footer
+        // still shows `· Working ·`. This is the case the homepage was
+        // missing entirely (no Running detection at all).
+        let pane = include_str!("test_fixture_running_pane.txt");
+        let s = CodexRunner.parse_status(pane);
+        assert!(
+            s.is_busy,
+            "real running fixture must set is_busy — got {:?}",
+            s
+        );
+        assert!(
+            !s.has_idle_prompt,
+            "busy must suppress has_idle_prompt so Running wins in resolve_session_status"
+        );
+    }
+
+    #[test]
+    fn test_wants_ansi_escapes_true() {
+        // The parser uses SGR dim as the authoritative placeholder signal.
+        assert!(CodexRunner.wants_ansi_escapes());
     }
 
     #[test]

@@ -1,0 +1,133 @@
+  [38;5;12m41. [39mCat
+  [38;5;12m42. [39mRabbit
+  [38;5;12m43. [39mHare
+  [38;5;12m44. [39mSquirrel
+  [38;5;12m45. [39mChipmunk
+  [38;5;12m46. [39mMouse
+  [38;5;12m47. [39mRat
+  [38;5;12m48. [39mHamster
+  [38;5;12m49. [39mGuinea pig
+  [38;5;12m50. [39mHedgehog
+  [38;5;12m51. [39mBat
+  [38;5;12m52. [39mDolphin
+  [38;5;12m53. [39mWhale
+  [38;5;12m54. [39mOrca
+  [38;5;12m55. [39mSeal
+  [38;5;12m56. [39mSea lion
+  [38;5;12m57. [39mWalrus
+  [38;5;12m58. [39mManatee
+  [38;5;12m59. [39mShark
+  [38;5;12m60. [39mRay
+  [38;5;12m61. [39mOctopus
+  [38;5;12m62. [39mSquid
+  [38;5;12m63. [39mJellyfish
+  [38;5;12m64. [39mStarfish
+  [38;5;12m65. [39mCrab
+  [38;5;12m66. [39mLobster
+  [38;5;12m67. [39mShrimp
+  [38;5;12m68. [39mTurtle
+  [38;5;12m69. [39mTortoise
+  [38;5;12m70. [39mCrocodile
+  [38;5;12m71. [39mAlligator
+  [38;5;12m72. [39mLizard
+  [38;5;12m73. [39mIguana
+  [38;5;12m74. [39mChameleon
+  [38;5;12m75. [39mSnake
+  [38;5;12m76. [39mFrog
+  [38;5;12m77. [39mToad
+  [38;5;12m78. [39mSalamander
+  [38;5;12m79. [39mNewt
+  [38;5;12m80. [39mEagle
+  [38;5;12m81. [39mHawk
+  [38;5;12m82. [39mFalcon
+  [38;5;12m83. [39mOwl
+  [38;5;12m84. [39mParrot
+  [38;5;12m85. [39mPenguin
+  [38;5;12m86. [39mFlamingo
+  [38;5;12m87. [39mSwan
+  [38;5;12m88. [39mDuck
+  [38;5;12m89. [39mGoose
+  [38;5;12m90. [39mTurkey
+  [38;5;12m91. [39mChicken
+  [38;5;12m92. [39mPeacock
+  [38;5;12m93. [39mOstrich
+  [38;5;12m94. [39mEmu
+  [38;5;12m95. [39mCrow
+  [38;5;12m96. [39mRaven
+  [38;5;12m97. [39mHummingbird
+  [38;5;12m98. [39mWoodpecker
+  [38;5;12m99. [39mPelican
+  [38;5;12m100. [39mToucan
+
+
+[1;2m› [0mdo it again
+
+
+[2m• [0m[38;5;12m1. [39mLion
+  [38;5;12m2. [39mTiger
+  [38;5;12m3. [39mElephant
+  [38;5;12m4. [39mGiraffe
+  [38;5;12m5. [39mZebra
+  [38;5;12m6. [39mRhino
+  [38;5;12m7. [39mHippo
+  [38;5;12m8. [39mCheetah
+  [38;5;12m9. [39mLeopard
+  [38;5;12m10. [39mJaguar
+  [38;5;12m11. [39mWolf
+  [38;5;12m12. [39mFox
+  [38;5;12m13. [39mBear
+  [38;5;12m14. [39mPanda
+  [38;5;12m15. [39mKoala
+  [38;5;12m16. [39mKangaroo
+  [38;5;12m17. [39mWallaby
+  [38;5;12m18. [39mSloth
+  [38;5;12m19. [39mAnteater
+  [38;5;12m20. [39mArmadillo
+  [38;5;12m21. [39mOtter
+  [38;5;12m22. [39mBeaver
+  [38;5;12m23. [39mBadger
+  [38;5;12m24. [39mMoose
+  [38;5;12m25. [39mElk
+  [38;5;12m26. [39mDeer
+  [38;5;12m27. [39mBison
+  [38;5;12m28. [39mHorse
+  [38;5;12m29. [39mDonkey
+  [38;5;12m30. [39mCamel
+  [38;5;12m31. [39mLlama
+  [38;5;12m32. [39mAlpaca
+  [38;5;12m33. [39mGoat
+  [38;5;12m34. [39mSheep
+  [38;5;12m35. [39mCow
+  [38;5;12m36. [39mPig
+  [38;5;12m37. [39mDog
+  [38;5;12m38. [39mCat
+  [38;5;12m39. [39mRabbit
+  [38;5;12m40. [39mHare
+  [38;5;12m41. [39mSquirrel
+  [38;5;12m42. [39mChipmunk
+  [38;5;12m43. [39mMouse
+  [38;5;12m44. [39mRat
+  [38;5;12m45. [39mHamster
+  [38;5;12m46. [39mGuinea pig
+  [38;5;12m47. [39mHedgehog
+  [38;5;12m48. [39mBat
+  [38;5;12m49. [39mDolphin
+  [38;5;12m50. [39mWhale
+  [38;5;12m51. [39mOrca
+  [38;5;12m52. [39mSeal
+  [38;5;12m53. [39mSea lion
+  [38;5;12m54. [39mWalrus
+  [38;5;12m55. [39mManatee
+  [38;5;12m56. [39mShark
+  [38;5;12m57. [39mRay
+  [38;5;12m58. [39mOctopus
+  [38;5;12m59. [39mSquid
+  [38;5;12m60. [39mJellyfish
+  [38;5;12m61. [39mStarfish
+  [38;5;12m62. [39mCrab
+
+
+[1m›[0m [2mExplain this codebase[0m
+
+[2m  gpt-5.5 default fast · ~ · Working · Context 57% left[0m
+

@@ -66,6 +66,15 @@ pub trait Runner: Send + Sync {
     fn install_hooks(&self) -> Result<(), String> {
         Ok(())
     }
+
+    /// True if this runner's `parse_status` needs ANSI escape codes preserved
+    /// in the captured pane content. The poller passes this to `capture_pane`'s
+    /// `-e` flag. Codex relies on SGR dim (`\e[2m`) to distinguish placeholder
+    /// hints from real user input; most runners don't need ANSI and run their
+    /// regex against stripped text.
+    fn wants_ansi_escapes(&self) -> bool {
+        false
+    }
 }
 
 pub fn runner_for(tool: Tool) -> &'static dyn Runner {
