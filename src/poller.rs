@@ -83,8 +83,11 @@ pub fn spawn(
                         None
                     };
 
-                    match crate::core::tmux::capture_pane(&session.tmux_session, Some(-100), false)
-                    {
+                    match crate::core::tmux::capture_pane(
+                        &session.tmux_session,
+                        Some(-100),
+                        runner.wants_ansi_escapes(),
+                    ) {
                         Ok(output) => {
                             // Prefer tool_session_id from hook; fall back to regex extraction.
                             let session_id_opt = hook
