@@ -2,8 +2,9 @@ use rusqlite::params;
 use rusqlite::Result as SqlResult;
 
 use super::Storage;
+use crate::core::cost::Pricer;
 
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 impl Storage {
     pub fn migrate(&self) -> SqlResult<()> {
@@ -188,6 +189,16 @@ impl Storage {
             )?;
         }
 
+        // v8 -> v9: add cost_microdollars column to cost_events and backfill
+        // existing rows using the built-in default rate table.
+        if version < 9 {
+            let _ = self.conn.execute(
+                "ALTER TABLE cost_events ADD COLUMN cost_microdollars INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            backfill_cost_microdollars(&self.conn)?;
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -196,6 +207,38 @@ impl Storage {
 
         Ok(())
     }
+}
+
+/// Recompute `cost_microdollars` for every row in `cost_events` using the
+/// built-in default rate table. Called during the v8→v9 migration; safe to
+/// rerun (writes are idempotent given the same rate table).
+fn backfill_cost_microdollars(conn: &rusqlite::Connection) -> SqlResult<()> {
+    let pricer = Pricer::with_defaults();
+    let mut stmt = conn.prepare(
+        "SELECT id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+         FROM cost_events",
+    )?;
+    let rows: Vec<(i64, String, i64, i64, i64, i64)> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<SqlResult<Vec<_>>>()?;
+    drop(stmt);
+    for (id, model, input, output, cache_read, cache_write) in rows {
+        let micros = pricer.compute_microdollars(&model, input, output, cache_read, cache_write);
+        conn.execute(
+            "UPDATE cost_events SET cost_microdollars = ?1 WHERE id = ?2",
+            params![micros, id],
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -222,7 +265,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("8".to_string()));
+        assert_eq!(version, Some("9".to_string()));
     }
 
     #[test]
@@ -230,7 +273,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("8".to_string()));
+        assert_eq!(version, Some("9".to_string()));
     }
 
     #[test]
@@ -352,6 +395,87 @@ mod tests {
     fn test_v8_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("8".to_string()));
+        assert_eq!(version, Some("9".to_string()));
+    }
+
+    #[test]
+    fn test_v9_cost_microdollars_column_exists() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO sessions (id, title, project_path, created_at)
+                 VALUES ('s1', 't', '/tmp', 0)",
+                [],
+            )
+            .unwrap();
+        // Inserting with explicit cost_microdollars value should succeed,
+        // proving the column is present after migration.
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO cost_events
+                    (session_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ts, cost_microdollars)
+                 VALUES ('s1', 'claude-opus-4-7', 1, 2, 0, 0, 0, 12345)",
+                [],
+            )
+            .unwrap();
+        let micros: i64 = storage
+            .conn()
+            .query_row(
+                "SELECT cost_microdollars FROM cost_events WHERE session_id = 's1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(micros, 12345);
+    }
+
+    #[test]
+    fn test_v9_backfills_existing_rows() {
+        // Simulate the pre-v9 state: a cost_events row that lacks
+        // cost_microdollars. We do this by manually downgrading the schema
+        // version after migrate() and re-running it, but the cleaner approach
+        // is to insert with cost_microdollars=0 (the default) and confirm
+        // a fresh `migrate()` call recomputes it.
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO sessions (id, title, project_path, created_at)
+                 VALUES ('s1', 't', '/tmp', 0)",
+                [],
+            )
+            .unwrap();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO cost_events
+                    (session_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ts, cost_microdollars)
+                 VALUES ('s1', 'claude-opus-4-7', 1000000, 1000000, 0, 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+        // Force a re-run of the backfill by rolling schema_version back and
+        // re-migrating. The backfill is idempotent — calling it again
+        // recomputes microdollars on the existing rows.
+        storage
+            .conn()
+            .execute(
+                "UPDATE metadata SET value = '8' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        storage.migrate().unwrap();
+        let micros: i64 = storage
+            .conn()
+            .query_row(
+                "SELECT cost_microdollars FROM cost_events WHERE session_id = 's1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // 1M input @ $15 + 1M output @ $75 = $90 = 90_000_000 microdollars
+        assert_eq!(micros, 90_000_000);
     }
 }

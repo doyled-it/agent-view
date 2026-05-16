@@ -210,6 +210,10 @@ pub fn cost_event_from_transcript_line(
         cache_read_tokens: usage.cache_read_input_tokens,
         cache_creation_tokens: usage.cache_creation_input_tokens,
         ts: ts_nanos,
+        // Microdollars are computed at ingest time by `event_watcher`, not
+        // here — the hook subprocess deliberately stays free of config
+        // loading and rate tables.
+        cost_microdollars: 0,
     })
 }
 
@@ -359,7 +363,7 @@ fn run_inner() -> Option<()> {
 impl Serialize for CostEvent {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut st = s.serialize_struct("CostEvent", 7)?;
+        let mut st = s.serialize_struct("CostEvent", 8)?;
         st.serialize_field("session_id", &self.session_id)?;
         st.serialize_field("model", &self.model)?;
         st.serialize_field("input_tokens", &self.input_tokens)?;
@@ -367,6 +371,7 @@ impl Serialize for CostEvent {
         st.serialize_field("cache_read_tokens", &self.cache_read_tokens)?;
         st.serialize_field("cache_creation_tokens", &self.cache_creation_tokens)?;
         st.serialize_field("ts", &self.ts)?;
+        st.serialize_field("cost_microdollars", &self.cost_microdollars)?;
         st.end()
     }
 }

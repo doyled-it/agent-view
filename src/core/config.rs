@@ -1,6 +1,8 @@
 //! Configuration loading from ~/.agent-view/config.json
 
+use crate::core::cost::{ModelRate, Pricer};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -8,6 +10,15 @@ use std::path::PathBuf;
 pub struct NotificationConfig {
     #[serde(default)]
     pub sound: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CostsConfig {
+    /// Per-model rate overrides. Keys are model name prefixes (matched
+    /// longest-prefix at lookup time); values override or extend the built-in
+    /// rate table baked into [`Pricer::with_defaults`].
+    #[serde(default)]
+    pub pricing: HashMap<String, ModelRate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +33,16 @@ pub struct AppConfig {
     pub notifications: NotificationConfig,
     #[serde(default = "default_detail_panel_mode")]
     pub detail_panel_mode: String,
+    #[serde(default)]
+    pub costs: CostsConfig,
+}
+
+impl AppConfig {
+    /// Build a Pricer seeded with built-in defaults and the user's `costs.pricing`
+    /// overrides layered on top.
+    pub fn pricer(&self) -> Pricer {
+        Pricer::with_defaults().with_overrides(self.costs.pricing.clone())
+    }
 }
 
 fn default_tool() -> String {
@@ -48,6 +69,7 @@ impl Default for AppConfig {
             default_group: default_group(),
             notifications: NotificationConfig::default(),
             detail_panel_mode: default_detail_panel_mode(),
+            costs: CostsConfig::default(),
         }
     }
 }
@@ -213,6 +235,7 @@ mod tests {
             default_group: "work".to_string(),
             notifications: NotificationConfig { sound: true },
             detail_panel_mode: "preview".to_string(),
+            costs: CostsConfig::default(),
         };
 
         // Write manually using save_config logic (bypass the hardcoded path)
@@ -227,6 +250,57 @@ mod tests {
     }
 
     #[test]
+    fn test_costs_pricing_parses_from_config() {
+        let json = r#"{
+            "costs": {
+                "pricing": {
+                    "claude-opus-4-7": {
+                        "input_per_mtok": 1.0,
+                        "output_per_mtok": 2.0,
+                        "cache_read_per_mtok": 0.1,
+                        "cache_write_per_mtok": 0.5
+                    }
+                }
+            }
+        }"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        let rate = cfg.costs.pricing.get("claude-opus-4-7").unwrap();
+        assert_eq!(rate.input_per_mtok, 1.0);
+        assert_eq!(rate.output_per_mtok, 2.0);
+    }
+
+    #[test]
+    fn test_pricer_overrides_defaults_from_config() {
+        let mut cfg = AppConfig::default();
+        cfg.costs.pricing.insert(
+            "claude-opus-4-7".to_string(),
+            ModelRate {
+                input_per_mtok: 1.0,
+                output_per_mtok: 1.0,
+                cache_read_per_mtok: 0.0,
+                cache_write_per_mtok: 0.0,
+            },
+        );
+        let pricer = cfg.pricer();
+        // 1M in + 1M out @ $1 each = $2 = 2_000_000 microdollars
+        assert_eq!(
+            pricer.compute_microdollars("claude-opus-4-7", 1_000_000, 1_000_000, 0, 0),
+            2_000_000
+        );
+    }
+
+    #[test]
+    fn test_pricer_defaults_when_config_empty() {
+        let cfg = AppConfig::default();
+        let pricer = cfg.pricer();
+        // Sonnet 4.6: 1M in @ $3 = $3 = 3_000_000 microdollars
+        assert_eq!(
+            pricer.compute_microdollars("claude-sonnet-4-6", 1_000_000, 0, 0, 0),
+            3_000_000
+        );
+    }
+
+    #[test]
     fn test_serialization_roundtrip_via_json_string() {
         let config = AppConfig {
             default_tool: "codex".to_string(),
@@ -234,6 +308,7 @@ mod tests {
             default_group: "research".to_string(),
             notifications: NotificationConfig { sound: false },
             detail_panel_mode: "both".to_string(),
+            costs: CostsConfig::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: AppConfig = serde_json::from_str(&json).unwrap();

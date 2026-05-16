@@ -3,6 +3,8 @@
 //! latest hook status per agent-view session, and forwards new cost
 //! events to storage.
 
+use crate::core::config::load_config;
+use crate::core::cost::Pricer;
 use crate::core::paths;
 use crate::core::runner::hook_io::HookStatusFile;
 use crate::core::storage::{CostEvent, Storage};
@@ -56,11 +58,17 @@ pub fn spawn() -> EventStateHandle {
             None
         }
     };
-    spawn_in(paths::hooks_dir(), paths::cost_events_dir(), storage)
+    let pricer = Arc::new(load_config().pricer());
+    spawn_in(
+        paths::hooks_dir(),
+        paths::cost_events_dir(),
+        storage,
+        pricer,
+    )
 }
 
-/// Same as [`spawn`] but with explicit directories and storage handle.
-/// Designed for tests — production code should use [`spawn`].
+/// Same as [`spawn`] but with explicit directories, storage handle, and
+/// pricer. Designed for tests — production code should use [`spawn`].
 ///
 /// `storage` may be `None`, in which case cost-event files are still
 /// dedup-tracked but never persisted (and are not deleted from disk, so a
@@ -69,14 +77,16 @@ pub fn spawn_in(
     hooks: PathBuf,
     costs: PathBuf,
     storage: Option<SharedStorage>,
+    pricer: Arc<Pricer>,
 ) -> EventStateHandle {
     let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
 
     // Bootstrap from existing files BEFORE notify subscription so we don't
     // miss anything that landed before startup.
-    load_existing(&state, &hooks, &costs, storage.as_ref());
+    load_existing(&state, &hooks, &costs, storage.as_ref(), &pricer);
 
     let state_thread = Arc::clone(&state);
+    let pricer_thread = Arc::clone(&pricer);
     thread::spawn(move || {
         let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
         let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
@@ -110,7 +120,7 @@ pub fn spawn_in(
                     if !pending.is_empty() {
                         let batch = std::mem::take(&mut pending);
                         for path in batch {
-                            process_path(&state_thread, &path, storage.as_ref());
+                            process_path(&state_thread, &path, storage.as_ref(), &pricer_thread);
                         }
                     }
                 }
@@ -127,20 +137,26 @@ fn load_existing(
     hooks: &Path,
     costs: &Path,
     storage: Option<&SharedStorage>,
+    pricer: &Pricer,
 ) {
     if let Ok(entries) = std::fs::read_dir(hooks) {
         for e in entries.flatten() {
-            process_path(state, &e.path(), storage);
+            process_path(state, &e.path(), storage, pricer);
         }
     }
     if let Ok(entries) = std::fs::read_dir(costs) {
         for e in entries.flatten() {
-            process_path(state, &e.path(), storage);
+            process_path(state, &e.path(), storage, pricer);
         }
     }
 }
 
-fn process_path(state: &EventStateHandle, path: &Path, storage: Option<&SharedStorage>) {
+fn process_path(
+    state: &EventStateHandle,
+    path: &Path,
+    storage: Option<&SharedStorage>,
+    pricer: &Pricer,
+) {
     if path.extension().and_then(|e| e.to_str()) != Some("json") {
         return;
     }
@@ -150,7 +166,7 @@ fn process_path(state: &EventStateHandle, path: &Path, storage: Option<&SharedSt
         .and_then(|s| s.to_str());
     match parent_name {
         Some("hooks") => process_hook_file(state, path),
-        Some("cost-events") => process_cost_file(state, path, storage),
+        Some("cost-events") => process_cost_file(state, path, storage, pricer),
         _ => {}
     }
 }
@@ -188,7 +204,12 @@ fn process_hook_file(state: &EventStateHandle, path: &Path) {
     }
 }
 
-fn process_cost_file(state: &EventStateHandle, path: &Path, storage: Option<&SharedStorage>) {
+fn process_cost_file(
+    state: &EventStateHandle,
+    path: &Path,
+    storage: Option<&SharedStorage>,
+    pricer: &Pricer,
+) {
     let key = match path.to_str() {
         Some(p) => p.to_string(),
         None => return,
@@ -208,10 +229,19 @@ fn process_cost_file(state: &EventStateHandle, path: &Path, storage: Option<&Sha
         Ok(b) => b,
         Err(_) => return,
     };
-    let event: CostEvent = match deserialize_cost_event(&bytes) {
+    let mut event: CostEvent = match deserialize_cost_event(&bytes) {
         Some(e) => e,
         None => return,
     };
+    // Compute USD cost from tokens here (single ingestion point) so the
+    // hook subprocess stays free of config loading. Unknown models return 0.
+    event.cost_microdollars = pricer.compute_microdollars(
+        &event.model,
+        event.input_tokens,
+        event.output_tokens,
+        event.cache_read_tokens,
+        event.cache_creation_tokens,
+    );
     let Some(storage) = storage else {
         // No storage — leave file in place so a future run can ingest it.
         return;
@@ -239,6 +269,8 @@ fn deserialize_cost_event(bytes: &[u8]) -> Option<CostEvent> {
         cache_read_tokens: i64,
         cache_creation_tokens: i64,
         ts: i64,
+        #[serde(default)]
+        cost_microdollars: i64,
     }
     let w: Wire = serde_json::from_slice(bytes).ok()?;
     Some(CostEvent {
@@ -249,6 +281,7 @@ fn deserialize_cost_event(bytes: &[u8]) -> Option<CostEvent> {
         cache_read_tokens: w.cache_read_tokens,
         cache_creation_tokens: w.cache_creation_tokens,
         ts: w.ts,
+        cost_microdollars: w.cost_microdollars,
     })
 }
 
@@ -288,7 +321,7 @@ mod tests {
         fs::create_dir(&hooks).unwrap();
         let path = write_hook_file(&hooks, "sess-1", "running");
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        process_path(&state, &path, None);
+        process_path(&state, &path, None, &Pricer::with_defaults());
         let g = state.lock().unwrap();
         let entry = g.hook_status.get("sess-1").unwrap();
         assert_eq!(entry.status, SessionStatus::Running);
@@ -302,9 +335,9 @@ mod tests {
         fs::create_dir(&hooks).unwrap();
         let path = write_hook_file(&hooks, "sess-2", "not-a-real-status");
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        process_path(&state, &path, None);
+        process_path(&state, &path, None, &Pricer::with_defaults());
         let g = state.lock().unwrap();
-        assert!(g.hook_status.get("sess-2").is_none());
+        assert!(!g.hook_status.contains_key("sess-2"));
     }
 
     #[test]
@@ -316,7 +349,7 @@ mod tests {
         fs::create_dir(&costs).unwrap();
         write_hook_file(&hooks, "abc", "waiting");
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        load_existing(&state, &hooks, &costs, None);
+        load_existing(&state, &hooks, &costs, None, &Pricer::with_defaults());
         assert_eq!(
             state.lock().unwrap().hook_status.get("abc").unwrap().status,
             SessionStatus::Waiting
@@ -330,8 +363,8 @@ mod tests {
         fs::create_dir(&costs).unwrap();
         let path = write_cost_file(&costs, "sess-1", 12345);
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        process_path(&state, &path, None);
-        process_path(&state, &path, None);
+        process_path(&state, &path, None, &Pricer::with_defaults());
+        process_path(&state, &path, None, &Pricer::with_defaults());
         assert_eq!(state.lock().unwrap().seen_cost_files.len(), 1);
     }
 
@@ -350,7 +383,7 @@ mod tests {
         assert!(path.exists());
 
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        process_path(&state, &path, Some(&storage));
+        process_path(&state, &path, Some(&storage), &Pricer::with_defaults());
 
         let totals = storage
             .lock()
@@ -365,6 +398,41 @@ mod tests {
         );
     }
 
+    fn write_priced_cost_file(dir: &Path, session_id: &str, model: &str, ts: i64) -> PathBuf {
+        let path = dir.join(format!("{}_{}.json", session_id, ts));
+        let body = serde_json::json!({
+            "session_id": session_id, "model": model,
+            "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+            "cache_read_tokens": 0, "cache_creation_tokens": 0,
+            "ts": ts,
+        });
+        fs::write(&path, serde_json::to_vec(&body).unwrap()).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_process_cost_file_computes_microdollars_via_pricer() {
+        let dir = tempfile::tempdir().unwrap();
+        let costs = dir.path().join("cost-events");
+        fs::create_dir(&costs).unwrap();
+
+        let (storage, _db_dir) = test_storage();
+        storage.save_session(&make_test_session("sess-P")).unwrap();
+        let storage: SharedStorage = Arc::new(Mutex::new(storage));
+
+        let path = write_priced_cost_file(&costs, "sess-P", "claude-sonnet-4-6", 1);
+        let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
+        process_path(&state, &path, Some(&storage), &Pricer::with_defaults());
+
+        let totals = storage
+            .lock()
+            .unwrap()
+            .cost_totals_for_session("sess-P")
+            .unwrap();
+        // Sonnet 4.6: 1M in @ $3 + 1M out @ $15 = $18 = 18_000_000 microdollars
+        assert_eq!(totals.microdollars, 18_000_000);
+    }
+
     #[test]
     fn test_process_cost_file_keeps_file_when_no_storage() {
         let dir = tempfile::tempdir().unwrap();
@@ -372,7 +440,7 @@ mod tests {
         fs::create_dir(&costs).unwrap();
         let path = write_cost_file(&costs, "sess-Y", 1);
         let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
-        process_path(&state, &path, None);
+        process_path(&state, &path, None, &Pricer::with_defaults());
         assert!(
             path.exists(),
             "file must be retained when no storage is available"
@@ -389,7 +457,12 @@ mod tests {
         fs::create_dir(&hooks).unwrap();
         fs::create_dir(&costs).unwrap();
 
-        let state = spawn_in(hooks.clone(), costs, None);
+        let state = spawn_in(
+            hooks.clone(),
+            costs,
+            None,
+            Arc::new(Pricer::with_defaults()),
+        );
 
         // Give notify a moment to attach its watch.
         std::thread::sleep(Duration::from_millis(200));
