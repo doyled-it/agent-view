@@ -190,13 +190,15 @@ impl Storage {
         }
 
         // v8 -> v9: add cost_microdollars column to cost_events and backfill
-        // existing rows using the built-in default rate table.
+        // existing rows using the built-in default rate table. The watcher
+        // re-runs this with the user's config-aware Pricer at startup so any
+        // active overrides take effect on historical rows.
         if version < 9 {
             let _ = self.conn.execute(
                 "ALTER TABLE cost_events ADD COLUMN cost_microdollars INTEGER NOT NULL DEFAULT 0",
                 [],
             );
-            backfill_cost_microdollars(&self.conn)?;
+            self.recompute_cost_microdollars(&Pricer::with_defaults())?;
         }
 
         // Set schema version
@@ -207,38 +209,6 @@ impl Storage {
 
         Ok(())
     }
-}
-
-/// Recompute `cost_microdollars` for every row in `cost_events` using the
-/// built-in default rate table. Called during the v8→v9 migration; safe to
-/// rerun (writes are idempotent given the same rate table).
-fn backfill_cost_microdollars(conn: &rusqlite::Connection) -> SqlResult<()> {
-    let pricer = Pricer::with_defaults();
-    let mut stmt = conn.prepare(
-        "SELECT id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
-         FROM cost_events",
-    )?;
-    let rows: Vec<(i64, String, i64, i64, i64, i64)> = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-            ))
-        })?
-        .collect::<SqlResult<Vec<_>>>()?;
-    drop(stmt);
-    for (id, model, input, output, cache_read, cache_write) in rows {
-        let micros = pricer.compute_microdollars(&model, input, output, cache_read, cache_write);
-        conn.execute(
-            "UPDATE cost_events SET cost_microdollars = ?1 WHERE id = ?2",
-            params![micros, id],
-        )?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

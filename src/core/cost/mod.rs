@@ -2,5 +2,4 @@
 
 pub mod pricing;
 
-#[allow(unused_imports)]
 pub use pricing::{ModelRate, Pricer};

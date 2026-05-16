@@ -4,6 +4,7 @@
 use rusqlite::{params, Result as SqlResult};
 
 use super::Storage;
+use crate::core::cost::Pricer;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +84,40 @@ impl Storage {
         )?;
         Ok(())
     }
+
+    /// Recompute `cost_microdollars` for every row in `cost_events` using the
+    /// supplied rate table. Idempotent — running with the same Pricer twice
+    /// yields the same values. Used by the schema v9 migration (with the
+    /// built-in defaults) and again at watcher startup (with user overrides
+    /// from config) so that historical rows pick up rate-table changes.
+    pub fn recompute_cost_microdollars(&self, pricer: &Pricer) -> SqlResult<()> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+             FROM cost_events",
+        )?;
+        let rows: Vec<(i64, String, i64, i64, i64, i64)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })?
+            .collect::<SqlResult<Vec<_>>>()?;
+        drop(stmt);
+        for (id, model, input, output, cache_read, cache_creation) in rows {
+            let micros =
+                pricer.compute_microdollars(&model, input, output, cache_read, cache_creation);
+            self.conn.execute(
+                "UPDATE cost_events SET cost_microdollars = ?1 WHERE id = ?2",
+                params![micros, id],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -151,6 +186,36 @@ mod tests {
         storage.insert_cost_event(&e2).unwrap();
         let totals = storage.cost_totals_for_session("s1").unwrap();
         assert_eq!(totals.microdollars, 3_500_000);
+    }
+
+    #[test]
+    fn test_recompute_cost_microdollars_applies_override_pricer() {
+        use crate::core::cost::{ModelRate, Pricer};
+        let (storage, _dir) = test_storage();
+        storage.save_session(&make_test_session("s1")).unwrap();
+        // Seed a row priced at default rates.
+        let mut e = ev("s1", 1_000_000, 0, 1);
+        e.model = "claude-opus-4-7".to_string();
+        e.cost_microdollars = 15_000_000; // default Opus input rate
+        storage.insert_cost_event(&e).unwrap();
+
+        // Recompute with an override that halves Opus input.
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert(
+            "claude-opus-4-7".to_string(),
+            ModelRate {
+                input_per_mtok: 7.5,
+                output_per_mtok: 0.0,
+                cache_read_per_mtok: 0.0,
+                cache_creation_per_mtok: 0.0,
+            },
+        );
+        let pricer = Pricer::with_defaults().with_overrides(overrides);
+        storage.recompute_cost_microdollars(&pricer).unwrap();
+
+        let totals = storage.cost_totals_for_session("s1").unwrap();
+        // 1M input @ $7.5/Mtok = $7.50 = 7_500_000 microdollars
+        assert_eq!(totals.microdollars, 7_500_000);
     }
 
     #[test]

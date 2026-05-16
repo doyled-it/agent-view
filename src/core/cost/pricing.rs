@@ -11,7 +11,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// USD-per-Mtok rates for one model.
+/// USD-per-Mtok rates for one model. Field names mirror the `cost_events`
+/// storage columns (`input_tokens`, `output_tokens`, `cache_read_tokens`,
+/// `cache_creation_tokens`) so the data path uses one vocabulary end to end.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ModelRate {
     #[serde(default)]
@@ -21,24 +23,33 @@ pub struct ModelRate {
     #[serde(default)]
     pub cache_read_per_mtok: f64,
     #[serde(default)]
-    pub cache_write_per_mtok: f64,
+    pub cache_creation_per_mtok: f64,
 }
 
 impl ModelRate {
     /// Cost in microdollars for the supplied token counts at this rate.
     /// Negative inputs are clamped to zero (defensive — token columns are
     /// declared NOT NULL DEFAULT 0 so they should never be negative).
-    pub fn microdollars(&self, input: i64, output: i64, cache_read: i64, cache_write: i64) -> i64 {
+    ///
+    /// Identity: `tokens * (USD per Mtok)` is already microdollars
+    /// (1 USD/Mtok = 1 micro$/token), so we sum and round once without a
+    /// dollar intermediate.
+    pub fn microdollars(
+        &self,
+        input: i64,
+        output: i64,
+        cache_read: i64,
+        cache_creation: i64,
+    ) -> i64 {
         let i = input.max(0) as f64;
         let o = output.max(0) as f64;
         let cr = cache_read.max(0) as f64;
-        let cw = cache_write.max(0) as f64;
-        let dollars = (i * self.input_per_mtok
+        let cc = cache_creation.max(0) as f64;
+        (i * self.input_per_mtok
             + o * self.output_per_mtok
             + cr * self.cache_read_per_mtok
-            + cw * self.cache_write_per_mtok)
-            / 1_000_000.0;
-        (dollars * 1_000_000.0).round() as i64
+            + cc * self.cache_creation_per_mtok)
+            .round() as i64
     }
 }
 
@@ -93,23 +104,32 @@ impl Pricer {
         input: i64,
         output: i64,
         cache_read: i64,
-        cache_write: i64,
+        cache_creation: i64,
     ) -> i64 {
         match self.rate_for(model) {
-            Some(rate) => rate.microdollars(input, output, cache_read, cache_write),
+            Some(rate) => rate.microdollars(input, output, cache_read, cache_creation),
             None => 0,
         }
     }
 }
 
 // --- Default rate table (Anthropic public list prices, USD/Mtok) ---
+//
+// These are list-price snapshots, NOT a live feed. Refresh when Anthropic
+// changes pricing or when adding a new Claude model.
+//
+//   Snapshot date: 2026-05-15
+//   Source: https://www.anthropic.com/pricing
+//
+// Users with active overrides via `costs.pricing` are insulated from
+// staleness; default users get whatever was current at snapshot time.
 
 fn opus_4_7() -> ModelRate {
     ModelRate {
         input_per_mtok: 15.0,
         output_per_mtok: 75.0,
         cache_read_per_mtok: 1.50,
-        cache_write_per_mtok: 18.75,
+        cache_creation_per_mtok: 18.75,
     }
 }
 
@@ -118,7 +138,7 @@ fn sonnet_4_6() -> ModelRate {
         input_per_mtok: 3.0,
         output_per_mtok: 15.0,
         cache_read_per_mtok: 0.30,
-        cache_write_per_mtok: 3.75,
+        cache_creation_per_mtok: 3.75,
     }
 }
 
@@ -127,7 +147,7 @@ fn haiku_4_5() -> ModelRate {
         input_per_mtok: 1.0,
         output_per_mtok: 5.0,
         cache_read_per_mtok: 0.10,
-        cache_write_per_mtok: 1.25,
+        cache_creation_per_mtok: 1.25,
     }
 }
 
@@ -141,7 +161,7 @@ mod tests {
             input_per_mtok: 3.0,
             output_per_mtok: 15.0,
             cache_read_per_mtok: 0.0,
-            cache_write_per_mtok: 0.0,
+            cache_creation_per_mtok: 0.0,
         };
         // 1M input @ $3/Mtok = $3 = 3_000_000 microdollars
         // 100k output @ $15/Mtok = $1.50 = 1_500_000 microdollars
@@ -154,10 +174,10 @@ mod tests {
             input_per_mtok: 0.0,
             output_per_mtok: 0.0,
             cache_read_per_mtok: 0.30,
-            cache_write_per_mtok: 3.75,
+            cache_creation_per_mtok: 3.75,
         };
         // 1M cache_read @ $0.30 = $0.30 = 300_000 microdollars
-        // 1M cache_write @ $3.75 = $3.75 = 3_750_000 microdollars
+        // 1M cache_creation @ $3.75 = $3.75 = 3_750_000 microdollars
         assert_eq!(rate.microdollars(0, 0, 1_000_000, 1_000_000), 4_050_000);
     }
 
@@ -167,9 +187,23 @@ mod tests {
             input_per_mtok: 10.0,
             output_per_mtok: 10.0,
             cache_read_per_mtok: 10.0,
-            cache_write_per_mtok: 10.0,
+            cache_creation_per_mtok: 10.0,
         };
         assert_eq!(rate.microdollars(-5, -5, -5, -5), 0);
+    }
+
+    #[test]
+    fn microdollars_large_token_counts_stay_precise() {
+        // 100M input tokens @ $15/Mtok = $1500 = 1_500_000_000 microdollars.
+        // Guards against the previous formulation's divide-then-multiply
+        // float roundtrip introducing rounding drift at large magnitudes.
+        let rate = ModelRate {
+            input_per_mtok: 15.0,
+            output_per_mtok: 0.0,
+            cache_read_per_mtok: 0.0,
+            cache_creation_per_mtok: 0.0,
+        };
+        assert_eq!(rate.microdollars(100_000_000, 0, 0, 0), 1_500_000_000);
     }
 
     #[test]
@@ -207,7 +241,7 @@ mod tests {
                 input_per_mtok: 999.0,
                 output_per_mtok: 999.0,
                 cache_read_per_mtok: 0.0,
-                cache_write_per_mtok: 0.0,
+                cache_creation_per_mtok: 0.0,
             },
         );
         let p = Pricer::with_defaults().with_overrides(overrides);
@@ -229,7 +263,7 @@ mod tests {
     #[test]
     fn compute_microdollars_opus_47() {
         let p = Pricer::with_defaults();
-        // 1M in @ $15, 1M out @ $75, 1M cache_read @ $1.50, 1M cache_write @ $18.75
+        // 1M in @ $15, 1M out @ $75, 1M cache_read @ $1.50, 1M cache_creation @ $18.75
         // = $15 + $75 + $1.50 + $18.75 = $110.25 = 110_250_000 microdollars
         let got = p.compute_microdollars(
             "claude-opus-4-7",
@@ -250,7 +284,7 @@ mod tests {
                 input_per_mtok: 1.0,
                 output_per_mtok: 1.0,
                 cache_read_per_mtok: 0.0,
-                cache_write_per_mtok: 0.0,
+                cache_creation_per_mtok: 0.0,
             },
         );
         let p = Pricer::with_defaults().with_overrides(overrides);
@@ -270,7 +304,7 @@ mod tests {
                 input_per_mtok: 2.50,
                 output_per_mtok: 10.0,
                 cache_read_per_mtok: 0.0,
-                cache_write_per_mtok: 0.0,
+                cache_creation_per_mtok: 0.0,
             },
         );
         let p = Pricer::with_defaults().with_overrides(overrides);

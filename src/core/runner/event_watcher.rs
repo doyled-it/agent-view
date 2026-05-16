@@ -48,8 +48,21 @@ pub fn spawn() -> EventStateHandle {
         eprintln!("agent-view: event_watcher: ensure_event_dirs failed: {}", e);
         return Arc::new(Mutex::new(EventState::default()));
     }
+    let pricer = Arc::new(load_config().pricer());
     let storage = match Storage::open_default() {
-        Ok(s) => Some(Arc::new(Mutex::new(s))),
+        Ok(s) => {
+            // Re-price historical rows with the user's override-aware
+            // table. The v9 migration already backfilled with defaults; this
+            // catches any config-supplied overrides. Failure is non-fatal —
+            // worst case, rows keep their default-rate microdollars.
+            if let Err(e) = s.recompute_cost_microdollars(&pricer) {
+                eprintln!(
+                    "agent-view: event_watcher: cost-event recompute failed: {}; historical rows retain default-rate microdollars",
+                    e
+                );
+            }
+            Some(Arc::new(Mutex::new(s)))
+        }
         Err(e) => {
             eprintln!(
                 "agent-view: event_watcher: open_default storage failed: {}; cost events will not be persisted",
@@ -58,7 +71,6 @@ pub fn spawn() -> EventStateHandle {
             None
         }
     };
-    let pricer = Arc::new(load_config().pricer());
     spawn_in(
         paths::hooks_dir(),
         paths::cost_events_dir(),
@@ -431,6 +443,46 @@ mod tests {
             .unwrap();
         // Sonnet 4.6: 1M in @ $3 + 1M out @ $15 = $18 = 18_000_000 microdollars
         assert_eq!(totals.microdollars, 18_000_000);
+    }
+
+    #[test]
+    fn test_process_cost_file_honors_override_pricer() {
+        use crate::core::cost::ModelRate;
+        let dir = tempfile::tempdir().unwrap();
+        let costs = dir.path().join("cost-events");
+        fs::create_dir(&costs).unwrap();
+
+        let (storage, _db_dir) = test_storage();
+        storage.save_session(&make_test_session("sess-O")).unwrap();
+        let storage: SharedStorage = Arc::new(Mutex::new(storage));
+
+        // Override Sonnet to a flat $1/Mtok on input — half the default
+        // output, no cache. Confirms the watcher uses the supplied Pricer,
+        // not just defaults.
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "claude-sonnet-4-6".to_string(),
+            ModelRate {
+                input_per_mtok: 1.0,
+                output_per_mtok: 0.0,
+                cache_read_per_mtok: 0.0,
+                cache_creation_per_mtok: 0.0,
+            },
+        );
+        let pricer = Pricer::with_defaults().with_overrides(overrides);
+
+        let path = write_priced_cost_file(&costs, "sess-O", "claude-sonnet-4-6", 1);
+        let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
+        process_path(&state, &path, Some(&storage), &pricer);
+
+        let totals = storage
+            .lock()
+            .unwrap()
+            .cost_totals_for_session("sess-O")
+            .unwrap();
+        // 1M input @ $1/Mtok = $1 = 1_000_000 microdollars (output zeroed
+        // by override). The default rate would have produced 18_000_000.
+        assert_eq!(totals.microdollars, 1_000_000);
     }
 
     #[test]

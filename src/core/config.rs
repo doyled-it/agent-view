@@ -258,7 +258,7 @@ mod tests {
                         "input_per_mtok": 1.0,
                         "output_per_mtok": 2.0,
                         "cache_read_per_mtok": 0.1,
-                        "cache_write_per_mtok": 0.5
+                        "cache_creation_per_mtok": 0.5
                     }
                 }
             }
@@ -278,7 +278,7 @@ mod tests {
                 input_per_mtok: 1.0,
                 output_per_mtok: 1.0,
                 cache_read_per_mtok: 0.0,
-                cache_write_per_mtok: 0.0,
+                cache_creation_per_mtok: 0.0,
             },
         );
         let pricer = cfg.pricer();
