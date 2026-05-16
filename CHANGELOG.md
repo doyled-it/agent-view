@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.10.1] - 2026-05-16
+
+### Changed
+
+- fix(runner): codex draft and running status misreads (#54) (@doyled-it)
+
 ## [1.10.0] - 2026-05-12
 
 ### Changed
