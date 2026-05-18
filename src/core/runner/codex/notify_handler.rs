@@ -66,6 +66,7 @@ fn run_inner() -> Option<()> {
         tool_session_id: session_id.trim().to_string(),
         event: event.trim().to_string(),
         ts: chrono::Utc::now().timestamp(),
+        transcript_path: String::new(),
     };
 
     let json = serde_json::to_vec(&file).ok()?;

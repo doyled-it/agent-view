@@ -1,4 +1,8 @@
-//! Usage pane rendering (Claude token usage)
+//! Claude Code subscription quota pane.
+//!
+//! Renders the session/week/sonnet bars scraped from `claude /usage` by the
+//! hidden meta-tmux session in `core::usage`. Anthropic-specific — Codex has
+//! a sibling pane in `codex_quota_pane`.
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -10,7 +14,7 @@ use crate::app::App;
 use crate::types::UsageBucket;
 use crate::ui::theme::Theme;
 
-pub(super) fn render_usage_pane(frame: &mut Frame, area: Rect, app: &App) {
+pub(super) fn render_claude_quota_pane(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
     let usage = match app.usage_state.data {

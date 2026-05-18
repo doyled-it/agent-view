@@ -165,6 +165,22 @@ pub fn find_last_assistant_line(path: &Path) -> Option<String> {
     None
 }
 
+/// Sum of input + cache_read + cache_creation + output tokens from the most
+/// recent assistant message in this Claude transcript. Represents the
+/// approximate context size as of the last turn — strictly more accurate
+/// than the tmux footer scrape (which sees only non-cached input).
+pub fn current_context_tokens(path: &Path) -> Option<i64> {
+    let line = find_last_assistant_line(path)?;
+    let parsed: TranscriptLine = serde_json::from_str(&line).ok()?;
+    let usage = parsed.message?.usage?;
+    Some(
+        usage.input_tokens
+            + usage.output_tokens
+            + usage.cache_read_input_tokens
+            + usage.cache_creation_input_tokens,
+    )
+}
+
 fn read_tail(path: &Path) -> Option<String> {
     use std::fs::File;
     use std::io::{Read, Seek, SeekFrom};
@@ -289,6 +305,7 @@ fn run_inner() -> Option<()> {
             tool_session_id: claude_sid.trim().to_string(),
             event: payload.hook_event_name.clone(),
             ts: chrono::Utc::now().timestamp(),
+            transcript_path: payload.transcript_path.clone().unwrap_or_default(),
         };
         let json = serde_json::to_vec(&file).ok()?;
         let path = paths::hooks_dir().join(format!("{}.json", instance_id));
@@ -646,5 +663,26 @@ mod tests {
         let path = dir.path().join("t.jsonl");
         std::fs::write(&path, "{\"type\":\"user\",\"message\":{}}\n").unwrap();
         assert!(find_last_assistant_line(&path).is_none());
+    }
+
+    #[test]
+    fn claude_current_context_tokens_sums_last_assistant_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let user = r#"{"type":"user","message":{"role":"user","content":"hi"}}"#;
+        let old_asst = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":20,"cache_creation_input_tokens":10}}}"#;
+        let new_asst = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":500,"output_tokens":200,"cache_read_input_tokens":80,"cache_creation_input_tokens":40}}}"#;
+        std::fs::write(&path, format!("{}\n{}\n{}\n", user, old_asst, new_asst)).unwrap();
+
+        // Sum of last assistant: 500 + 200 + 80 + 40 = 820
+        assert_eq!(current_context_tokens(&path), Some(820));
+    }
+
+    #[test]
+    fn claude_current_context_tokens_none_when_no_assistant() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, "{\"type\":\"user\",\"message\":{}}\n").unwrap();
+        assert!(current_context_tokens(&path).is_none());
     }
 }

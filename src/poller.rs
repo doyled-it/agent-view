@@ -3,6 +3,35 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Live context-size resolver. For each tool with an authoritative source
+/// (Claude transcript JSONL, Codex rollout JSONL), returns the current
+/// context-token count. `None` for Shell or when the necessary metadata
+/// (transcript path, thread id, rollout file) isn't available yet.
+fn live_context_tokens(
+    session: &crate::types::Session,
+    hook_status: &crate::core::runner::event_watcher::EventState,
+) -> Option<i64> {
+    use crate::types::Tool;
+    match session.tool {
+        Tool::Claude => {
+            let entry = hook_status.hook_status.get(&session.id)?;
+            let transcript_path: std::path::PathBuf = entry.transcript_path.clone()?.into();
+            crate::core::runner::claude::hook_handler::current_context_tokens(&transcript_path)
+        }
+        Tool::Codex => {
+            let entry = hook_status.hook_status.get(&session.id)?;
+            let thread_id = entry.tool_session_id.as_deref()?;
+            let sessions_root = dirs::home_dir()?.join(".codex").join("sessions");
+            let rollout = crate::core::runner::codex::cost_handler::find_rollout_for_thread(
+                thread_id,
+                &sessions_root,
+            )?;
+            crate::core::runner::codex::cost_handler::current_context_tokens(&rollout)
+        }
+        _ => None,
+    }
+}
+
 /// Spawn the background status polling thread.
 pub fn spawn(
     attach_state: Arc<Mutex<crate::core::attach_state::AttachState>>,
@@ -165,30 +194,30 @@ pub fn spawn(
                     }
                 }
 
-                // Parse tokens from Claude sessions
+                // Live context-size update — runs for every tool that exposes
+                // an authoritative source (Claude transcript JSONL, Codex
+                // rollout JSONL). Falls back to no-op for Shell sessions.
                 let mut tokens_changed = false;
                 for session in &sessions {
-                    if session.tool == crate::types::Tool::Claude
-                        && !session.tmux_session.is_empty()
-                        && session.status != crate::types::SessionStatus::Stopped
-                        && !session
+                    if session.tmux_session.is_empty()
+                        || session.status == crate::types::SessionStatus::Stopped
+                        || session
                             .tmux_session
                             .starts_with(crate::core::usage::META_SESSION_PREFIX)
                     {
-                        if let Ok(output) =
-                            crate::core::tmux::capture_pane(&session.tmux_session, Some(-50), false)
-                        {
-                            if let Some(tokens) =
-                                crate::core::tokens::extract_latest_tokens(&output)
-                            {
-                                if tokens > session.tokens_used {
-                                    let diff = tokens - session.tokens_used;
-                                    if diff > 0 {
-                                        let _ = bg_storage.add_tokens(&session.id, diff);
-                                        tokens_changed = true;
-                                    }
-                                }
-                            }
+                        continue;
+                    }
+                    let Ok(state_guard) = event_state.lock() else {
+                        continue;
+                    };
+                    if let Some(tokens) = live_context_tokens(session, &state_guard) {
+                        drop(state_guard);
+                        if tokens != session.tokens_used {
+                            // Overwrite rather than incremental add: the new
+                            // source is the absolute context size, not a
+                            // monotonic counter.
+                            let _ = bg_storage.set_tokens(&session.id, tokens);
+                            tokens_changed = true;
                         }
                     }
                 }
@@ -198,4 +227,57 @@ pub fn spawn(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::runner::event_watcher::EventState;
+    use crate::types::{Session, SessionStatus, Tool};
+
+    fn make_session(id: &str, tool: Tool) -> Session {
+        Session {
+            id: id.to_string(),
+            title: String::new(),
+            project_path: String::new(),
+            group_path: String::new(),
+            order: 0,
+            command: String::new(),
+            wrapper: String::new(),
+            tool,
+            status: SessionStatus::Idle,
+            tmux_session: String::new(),
+            created_at: 0,
+            last_accessed: 0,
+            parent_session_id: String::new(),
+            worktree_path: String::new(),
+            worktree_repo: String::new(),
+            worktree_branch: String::new(),
+            tool_data: "{}".to_string(),
+            acknowledged: false,
+            notify: false,
+            follow_up: false,
+            status_changed_at: 0,
+            restart_count: 0,
+            last_started_at: 0,
+            notes: vec![],
+            status_history: vec![],
+            pinned: false,
+            tokens_used: 0,
+        }
+    }
+
+    #[test]
+    fn live_tokens_returns_none_for_shell_session() {
+        let session = make_session("s1", Tool::Shell);
+        let state = EventState::default();
+        assert!(live_context_tokens(&session, &state).is_none());
+    }
+
+    #[test]
+    fn live_tokens_returns_none_when_no_hook_status() {
+        let session = make_session("no-hooks-yet", Tool::Claude);
+        let state = EventState::default();
+        assert!(live_context_tokens(&session, &state).is_none());
+    }
 }

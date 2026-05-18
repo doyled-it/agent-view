@@ -26,6 +26,10 @@ pub struct HookStatus {
     #[allow(dead_code)] // used in tests; reserved for UI display (Task 11+)
     pub event: String,
     pub received_at: SystemTime,
+    /// Claude transcript path (when known). Used by the poller to read
+    /// the current context-size without scraping the tmux pane. `None`
+    /// for Codex and other tools that don't expose a transcript.
+    pub transcript_path: Option<String>,
 }
 
 /// Shared state owned by the watcher thread, read by the poller.
@@ -205,11 +209,17 @@ fn process_hook_file(state: &EventStateHandle, path: &Path) {
     } else {
         Some(file.tool_session_id)
     };
+    let transcript_path = if file.transcript_path.is_empty() {
+        None
+    } else {
+        Some(file.transcript_path.clone())
+    };
     let entry = HookStatus {
         status,
         tool_session_id: tool_sid,
         event: file.event,
         received_at: SystemTime::now(),
+        transcript_path,
     };
     if let Ok(mut s) = state.lock() {
         s.hook_status.insert(session_id, entry);

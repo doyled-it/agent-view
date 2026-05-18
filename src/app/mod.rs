@@ -69,6 +69,14 @@ pub struct App {
     pub routine_state: RoutineState,
     pub usage_state: UsageState,
     pub status_state: StatusPageState,
+    /// Live hook-status state from the watcher thread. `None` in tests
+    /// and during the brief window before `main` wires it in.
+    pub event_state: Option<crate::core::runner::event_watcher::EventStateHandle>,
+    /// Shared storage handle for read-only access from render code
+    /// (cost totals, etc.). Owned `Storage` continues to live in `main`
+    /// for setup-time loads.
+    pub storage: Option<crate::core::runner::event_watcher::SharedStorage>,
+    pub config: crate::core::config::AppConfig,
 }
 
 impl App {
@@ -100,6 +108,9 @@ impl App {
             routine_state: RoutineState::new(),
             usage_state: UsageState::new(),
             status_state: StatusPageState::new(),
+            event_state: None,
+            storage: None,
+            config: crate::core::config::AppConfig::default(),
         }
     }
 

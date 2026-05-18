@@ -1,11 +1,13 @@
 //! Home screen rendering — session list with status icons
 
 mod activity_feed;
+mod claude_quota_pane;
+mod codex_quota_pane;
 mod header;
 mod session_list;
+mod session_usage_pane;
 mod sparkline;
 mod status_pane;
-mod usage_pane;
 
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Style, Stylize};
@@ -47,8 +49,20 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         0
     };
+    let selected_tool = app.selected_session().map(|s| s.tool);
     let has_usage = app.usage_state.data.is_some();
-    let usage_height = if has_usage { 4u16 } else { 0 }; // 1 border + 3 rows
+    // Claude quota only renders when the meta-tmux scrape has produced
+    // data AND the selected session is Claude. Codex quota renders
+    // unconditionally for Codex sessions (it can show a placeholder while
+    // waiting for the first token_count event).
+    let quota_height = match selected_tool {
+        Some(crate::types::Tool::Claude) if has_usage => 4u16,
+        Some(crate::types::Tool::Codex) => 4u16,
+        _ => 0,
+    };
+    // Session usage pane: 1 border + up to 3 content lines (context,
+    // session totals, optional $-estimate).
+    let session_height: u16 = if selected_tool.is_some() { 4 } else { 0 };
     let status_incidents = app
         .status_state
         .data
@@ -65,12 +79,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),             // ASCII header + tab bar
-            Constraint::Min(0),                // session/routine list
-            Constraint::Length(feed_height),   // activity feed
-            Constraint::Length(usage_height),  // usage pane
-            Constraint::Length(status_height), // status pane
-            Constraint::Length(1),             // footer
+            Constraint::Length(6),              // ASCII header + tab bar
+            Constraint::Min(0),                 // session/routine list
+            Constraint::Length(feed_height),    // activity feed
+            Constraint::Length(quota_height),   // tool-specific quota pane
+            Constraint::Length(session_height), // per-session usage pane
+            Constraint::Length(status_height),  // status pane
+            Constraint::Length(1),              // footer
         ])
         .split(list_area);
 
@@ -84,11 +99,22 @@ pub fn render(frame: &mut Frame, app: &App) {
     if show_feed {
         activity_feed::render_activity_feed(frame, chunks[2], app);
     }
-    if has_usage {
-        usage_pane::render_usage_pane(frame, chunks[3], app);
+    if let Some(tool) = selected_tool {
+        match tool {
+            crate::types::Tool::Claude => {
+                if has_usage {
+                    claude_quota_pane::render_claude_quota_pane(frame, chunks[3], app);
+                }
+            }
+            crate::types::Tool::Codex => {
+                codex_quota_pane::render_codex_quota_pane(frame, chunks[3], app);
+            }
+            _ => {}
+        }
+        session_usage_pane::render_session_usage_pane(frame, chunks[4], app);
     }
     if app.status_state.data.is_some() {
-        status_pane::render_status_pane(frame, chunks[4], app);
+        status_pane::render_status_pane(frame, chunks[5], app);
     }
     if let Some(ref query) = app.search_query {
         let matches = app.search_matches();
@@ -106,9 +132,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                 Style::default().fg(app.theme.text_muted),
             ),
         ]);
-        frame.render_widget(Paragraph::new(search_line), chunks[5]);
+        frame.render_widget(Paragraph::new(search_line), chunks[6]);
     } else {
-        crate::ui::footer::render(frame, chunks[5], app);
+        crate::ui::footer::render(frame, chunks[6], app);
     }
 
     // Render detail panel when wide enough

@@ -110,6 +110,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.theme_name = theme_name;
     app.detail_mode = crate::app::DetailPanelMode::from_str(&config.detail_panel_mode);
 
+    // Wire shared handles for render code (event_state for quota panes,
+    // a second SQLite connection for read-only cost-totals lookups).
+    app.event_state = Some(event_state.clone());
+    app.config = config.clone();
+    let shared_storage_for_app: Option<crate::core::runner::event_watcher::SharedStorage> =
+        crate::core::storage::Storage::open_default()
+            .ok()
+            .map(|s| std::sync::Arc::new(std::sync::Mutex::new(s)));
+    app.storage = shared_storage_for_app;
+
     // Load sessions from storage
     app.sessions = storage.load_sessions()?;
     app.groups = storage.load_groups().unwrap_or_default();

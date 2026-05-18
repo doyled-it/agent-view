@@ -19,6 +19,13 @@ pub struct CostsConfig {
     /// rate table baked into [`Pricer::with_defaults`].
     #[serde(default)]
     pub pricing: HashMap<String, ModelRate>,
+
+    /// When true, render a labeled list-price USD estimate alongside token
+    /// counts. Defaults to false because most users are on flat-fee
+    /// subscription plans (Claude Pro/Max, Anthropic Business, Codex
+    /// preview) where the list-price number is misleading.
+    #[serde(default)]
+    pub show_list_price_estimate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +305,19 @@ mod tests {
             pricer.compute_microdollars("claude-sonnet-4-6", 1_000_000, 0, 0, 0),
             3_000_000
         );
+    }
+
+    #[test]
+    fn show_list_price_estimate_default_false() {
+        let cfg = AppConfig::default();
+        assert!(!cfg.costs.show_list_price_estimate);
+    }
+
+    #[test]
+    fn show_list_price_estimate_parses_when_true() {
+        let json = r#"{ "costs": { "show_list_price_estimate": true } }"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.costs.show_list_price_estimate);
     }
 
     #[test]

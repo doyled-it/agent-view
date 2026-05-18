@@ -324,6 +324,7 @@ mod tests {
             tool_session_id: None,
             event: "test".to_string(),
             received_at: SystemTime::now(),
+            transcript_path: None,
         }
     }
 
@@ -333,6 +334,7 @@ mod tests {
             tool_session_id: None,
             event: "test".to_string(),
             received_at: SystemTime::now() - Duration::from_secs(10),
+            transcript_path: None,
         }
     }
 

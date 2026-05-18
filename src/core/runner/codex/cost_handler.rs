@@ -217,6 +217,78 @@ pub fn parse_new_events(
     events
 }
 
+/// Rate-limit summary derived from the most recent token_count event in a
+/// rollout file. Mirrors the shape Codex writes under
+/// `payload.rate_limits` — either a primary/secondary window pair or, for
+/// credits-mode plans with no published limit, an "Unlimited (preview)"
+/// state.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct RateLimitInfo {
+    pub primary: Option<RateLimitWindow>,
+    pub secondary: Option<RateLimitWindow>,
+    /// True when the plan has credits-mode billing and no specific limit has
+    /// been published yet (e.g. Codex business preview).
+    pub unlimited_preview: bool,
+    pub plan_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct RateLimitWindow {
+    #[serde(default)]
+    pub used_percent: Option<f64>,
+    #[serde(default)]
+    pub window_minutes: Option<i64>,
+    #[serde(default)]
+    pub resets_in_seconds: Option<i64>,
+}
+
+/// Most recent rate_limits block from a token_count event. Returns None if
+/// no such event exists in the file.
+pub fn current_rate_limits(path: &Path) -> Option<RateLimitInfo> {
+    let reader = open_rollout(path, 0)?;
+    let mut latest: Option<serde_json::Value> = None;
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if parsed.get("type").and_then(|v| v.as_str()) != Some("event_msg") {
+            continue;
+        }
+        let Some(payload) = parsed.get("payload") else {
+            continue;
+        };
+        if payload.get("type").and_then(|v| v.as_str()) != Some("token_count") {
+            continue;
+        }
+        if let Some(rl) = payload.get("rate_limits") {
+            latest = Some(rl.clone());
+        }
+    }
+    let raw = latest?;
+    let primary: Option<RateLimitWindow> = raw
+        .get("primary")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let secondary: Option<RateLimitWindow> = raw
+        .get("secondary")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let has_credits = raw
+        .get("credits")
+        .and_then(|c| c.get("has_credits"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let unlimited_preview = primary.is_none() && secondary.is_none() && has_credits;
+    let plan_type = raw
+        .get("plan_type")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    Some(RateLimitInfo {
+        primary,
+        secondary,
+        unlimited_preview,
+        plan_type,
+    })
+}
+
 /// Return the `total_tokens` from the most recent `token_count` event with a
 /// non-null `total_token_usage` in this rollout file. Reads the whole file
 /// (rollouts are bounded — context-window-sized — so this is cheap). Returns
@@ -430,6 +502,28 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].model, "gpt-5.5");
         assert_eq!(events[0].input_tokens, 50);
+    }
+
+    #[test]
+    fn current_rate_limits_detects_unlimited_preview() {
+        let (_dir, path) = write_jsonl(&[
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","plan_type":"business","primary":null,"secondary":null,"credits":{"has_credits":true,"unlimited":false,"balance":null}}}}"#,
+        ]);
+        let rl = current_rate_limits(&path).unwrap();
+        assert!(rl.unlimited_preview);
+        assert!(rl.primary.is_none());
+        assert_eq!(rl.plan_type.as_deref(), Some("business"));
+    }
+
+    #[test]
+    fn current_rate_limits_parses_primary_window() {
+        let (_dir, path) = write_jsonl(&[
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","plan_type":"business","primary":{"used_percent":42.5,"window_minutes":300,"resets_in_seconds":1500},"secondary":null,"credits":{"has_credits":true,"unlimited":false,"balance":null}}}}"#,
+        ]);
+        let rl = current_rate_limits(&path).unwrap();
+        assert!(!rl.unlimited_preview);
+        assert_eq!(rl.primary.as_ref().unwrap().used_percent, Some(42.5));
+        assert_eq!(rl.primary.as_ref().unwrap().window_minutes, Some(300));
     }
 
     #[test]
