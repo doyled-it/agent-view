@@ -67,6 +67,9 @@ impl Pricer {
         rates.insert("claude-opus-4-7".to_string(), opus_4_7());
         rates.insert("claude-sonnet-4-6".to_string(), sonnet_4_6());
         rates.insert("claude-haiku-4-5".to_string(), haiku_4_5());
+        rates.insert("gpt-5-codex".to_string(), gpt_5_codex());
+        rates.insert("gpt-5.3-codex".to_string(), gpt_5_3_codex());
+        rates.insert("gpt-5.5".to_string(), gpt_5_5());
         Self { rates }
     }
 
@@ -113,13 +116,14 @@ impl Pricer {
     }
 }
 
-// --- Default rate table (Anthropic public list prices, USD/Mtok) ---
+// --- Default rate table (Anthropic + OpenAI public list prices, USD/Mtok) ---
 //
-// These are list-price snapshots, NOT a live feed. Refresh when Anthropic
-// changes pricing or when adding a new Claude model.
+// These are list-price snapshots, NOT a live feed. Refresh when providers
+// change pricing or when adding a new model.
 //
-//   Snapshot date: 2026-05-15
-//   Source: https://www.anthropic.com/pricing
+//   Snapshot date: 2026-05-18
+//   Anthropic source: https://www.anthropic.com/pricing
+//   OpenAI source:    https://developers.openai.com/api/docs/pricing
 //
 // Users with active overrides via `costs.pricing` are insulated from
 // staleness; default users get whatever was current at snapshot time.
@@ -148,6 +152,37 @@ fn haiku_4_5() -> ModelRate {
         output_per_mtok: 5.0,
         cache_read_per_mtok: 0.10,
         cache_creation_per_mtok: 1.25,
+    }
+}
+
+fn gpt_5_codex() -> ModelRate {
+    ModelRate {
+        input_per_mtok: 1.25,
+        output_per_mtok: 10.0,
+        cache_read_per_mtok: 0.125,
+        cache_creation_per_mtok: 0.0,
+    }
+}
+
+fn gpt_5_3_codex() -> ModelRate {
+    ModelRate {
+        input_per_mtok: 1.75,
+        output_per_mtok: 14.0,
+        cache_read_per_mtok: 0.175,
+        cache_creation_per_mtok: 0.0,
+    }
+}
+
+fn gpt_5_5() -> ModelRate {
+    // Standard tier (≤272K input). The >272K tier is 2x input / 1.5x output;
+    // not modeled here — context-tier pricing is rare and would require
+    // per-event input_tokens awareness. Out of scope until we see a real
+    // user hit it.
+    ModelRate {
+        input_per_mtok: 5.0,
+        output_per_mtok: 30.0,
+        cache_read_per_mtok: 0.50,
+        cache_creation_per_mtok: 0.0,
     }
 }
 
@@ -313,5 +348,42 @@ mod tests {
             p.compute_microdollars("gpt-4o", 1_000_000, 0, 0, 0),
             2_500_000
         );
+    }
+
+    #[test]
+    fn defaults_include_openai_codex_models() {
+        let p = Pricer::with_defaults();
+        assert!(p.rate_for("gpt-5-codex").is_some());
+        assert!(p.rate_for("gpt-5.3-codex").is_some());
+        assert!(p.rate_for("gpt-5.5").is_some());
+    }
+
+    #[test]
+    fn compute_microdollars_gpt_5_codex() {
+        let p = Pricer::with_defaults();
+        // 1M input @ $1.25 + 1M output @ $10 = $11.25 = 11_250_000 microdollars.
+        assert_eq!(
+            p.compute_microdollars("gpt-5-codex", 1_000_000, 1_000_000, 0, 0),
+            11_250_000
+        );
+    }
+
+    #[test]
+    fn compute_microdollars_gpt_5_5_with_cache() {
+        let p = Pricer::with_defaults();
+        // 1M input @ $5 + 1M output @ $30 + 1M cache_read @ $0.50
+        // = $35.50 = 35_500_000 microdollars.
+        assert_eq!(
+            p.compute_microdollars("gpt-5.5", 1_000_000, 1_000_000, 1_000_000, 0),
+            35_500_000
+        );
+    }
+
+    #[test]
+    fn rate_for_matches_dated_openai_suffix() {
+        let p = Pricer::with_defaults();
+        let dated = p.rate_for("gpt-5-codex-2026-04-01").unwrap();
+        let bare = p.rate_for("gpt-5-codex").unwrap();
+        assert_eq!(dated, bare);
     }
 }
