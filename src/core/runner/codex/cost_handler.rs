@@ -9,7 +9,7 @@
 #![allow(dead_code)] // module awaiting wiring in future tasks
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Cost event extracted from a Codex rollout file. Mirrors the on-disk JSON
 /// format of `core::storage::CostEvent` so it can be serialized straight to
@@ -43,7 +43,7 @@ pub struct TokenSnapshot {
 /// Per-rollout-file state persisted across runs so we don't re-emit cost
 /// events on restart. Keyed by agent-view session id, stored under
 /// `~/.agent-orchestrator/rollout-state/<id>.json`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CodexRolloutState {
     /// Byte offset to resume reading from next time.
     pub file_offset: u64,
@@ -249,6 +249,56 @@ pub fn current_context_tokens(path: &Path) -> Option<i64> {
     latest
 }
 
+/// Atomic state-file write — write to a sibling tmp then rename.
+pub fn save_rollout_state(path: &Path, state: &CodexRolloutState) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec(state).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp, &bytes)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+/// Load state; returns Default on missing-file (treated as a fresh rollout).
+/// Returns an error only for I/O failures other than NotFound, or for parse
+/// errors on a present-but-malformed file.
+pub fn load_rollout_state(path: &Path) -> std::io::Result<CodexRolloutState> {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(CodexRolloutState::default());
+        }
+        Err(e) => return Err(e),
+    };
+    serde_json::from_slice(&bytes).map_err(std::io::Error::other)
+}
+
+/// Find the rollout file for a given Codex thread id, by walking the
+/// sessions directory and matching the uuid component of each filename.
+/// Returns the path on first match. Walks recursively because the layout
+/// is `YYYY/MM/DD/rollout-*.jsonl[.zst]`.
+pub fn find_rollout_for_thread(thread_id: &str, sessions_root: &Path) -> Option<PathBuf> {
+    fn visit(dir: &Path, thread_id: &str) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(found) = visit(&path, thread_id) {
+                    return Some(found);
+                }
+            } else if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if name.starts_with("rollout-") && name.contains(thread_id) {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    }
+    visit(sessions_root, thread_id)
+}
+
 fn subtract(a: TokenSnapshot, b: TokenSnapshot) -> TokenSnapshot {
     TokenSnapshot {
         input_tokens: (a.input_tokens - b.input_tokens).max(0),
@@ -398,6 +448,64 @@ mod tests {
             r#"{"timestamp":"...","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
         ]);
         assert_eq!(current_context_tokens(&path), None);
+    }
+
+    #[test]
+    fn rollout_state_roundtrips_through_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path().join("av-sess.json");
+        let original = CodexRolloutState {
+            file_offset: 12345,
+            last_seen_model: Some("gpt-5.5".to_string()),
+            last_total_token_usage: Some(TokenSnapshot {
+                input_tokens: 100,
+                cached_input_tokens: 40,
+                output_tokens: 20,
+                reasoning_output_tokens: 5,
+                total_tokens: 120,
+            }),
+        };
+        save_rollout_state(&state_path, &original).unwrap();
+        let loaded = load_rollout_state(&state_path).unwrap();
+        assert_eq!(loaded, original);
+    }
+
+    #[test]
+    fn load_rollout_state_returns_default_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path().join("nope.json");
+        let loaded = load_rollout_state(&state_path).unwrap();
+        assert_eq!(loaded, CodexRolloutState::default());
+    }
+
+    #[test]
+    fn find_rollout_returns_matching_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let day = dir.path().join("2026").join("05").join("14");
+        std::fs::create_dir_all(&day).unwrap();
+        let target =
+            day.join("rollout-2026-05-14T22-27-25-019e289a-0f2d-73f1-94d3-d15182ff1741.jsonl");
+        std::fs::write(&target, "{}").unwrap();
+        let unrelated =
+            day.join("rollout-2026-05-14T22-30-00-deadbeef-0000-0000-0000-000000000000.jsonl");
+        std::fs::write(&unrelated, "{}").unwrap();
+
+        let found = find_rollout_for_thread("019e289a-0f2d-73f1-94d3-d15182ff1741", dir.path());
+        assert_eq!(found, Some(target));
+    }
+
+    #[test]
+    fn find_rollout_returns_none_when_no_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let day = dir.path().join("2026").join("05").join("14");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(
+            day.join("rollout-2026-05-14T22-30-00-deadbeef-0000-0000-0000-000000000000.jsonl"),
+            "{}",
+        )
+        .unwrap();
+        let found = find_rollout_for_thread("not-a-real-uuid", dir.path());
+        assert!(found.is_none());
     }
 
     #[test]

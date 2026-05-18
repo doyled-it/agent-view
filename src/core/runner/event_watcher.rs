@@ -500,6 +500,51 @@ mod tests {
     }
 
     #[test]
+    fn codex_cost_event_via_notify_lands_in_storage() {
+        // Full pipeline: write a Codex cost-event JSON (as notify_handler
+        // would) into a fake cost-events dir, run process_path through
+        // event_watcher, assert the cost_events DB row appears with
+        // microdollars computed from the gpt-5.5 default rate.
+        let dir = tempfile::tempdir().unwrap();
+        let costs = dir.path().join("cost-events");
+        fs::create_dir(&costs).unwrap();
+
+        let (storage, _db) = test_storage();
+        storage
+            .save_session(&make_test_session("av-codex"))
+            .unwrap();
+        let storage: SharedStorage = Arc::new(Mutex::new(storage));
+
+        let path = costs.join("av-codex_999.json");
+        let body = serde_json::json!({
+            "session_id": "av-codex",
+            "model": "gpt-5.5",
+            "input_tokens": 1_000_000,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "ts": 999,
+        });
+        fs::write(&path, serde_json::to_vec(&body).unwrap()).unwrap();
+
+        let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
+        process_path(&state, &path, Some(&storage), &Pricer::with_defaults());
+
+        let totals = storage
+            .lock()
+            .unwrap()
+            .cost_totals_for_session("av-codex")
+            .unwrap();
+        // gpt-5.5 input rate is $5/Mtok → 1M input = $5 = 5_000_000 microdollars.
+        assert_eq!(totals.input, 1_000_000);
+        assert_eq!(totals.microdollars, 5_000_000);
+        assert!(
+            !path.exists(),
+            "cost-event file should be removed after ingest"
+        );
+    }
+
+    #[test]
     fn test_spawn_in_consumes_new_hook_file_via_notify_thread() {
         // End-to-end: write a hook file AFTER the watcher starts, verify the
         // notify thread picks it up and mutates shared state.
