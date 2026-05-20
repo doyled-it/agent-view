@@ -181,20 +181,40 @@ pub fn current_context_tokens(path: &Path) -> Option<i64> {
     )
 }
 
-/// Detect whether a Claude transcript belongs to a session on the
-/// extended (1M) context tier rather than the default 200k. Two
-/// deterministic indicators, **either** of which proves 1M tier (since
-/// they describe values that physically can't fit in a 200k window):
+/// Detect whether a Claude session is on the extended (1M) context tier
+/// rather than the default 200k. Combines two independent signals:
 ///
-/// 1. Any assistant message where `input_tokens + cache_read_input_tokens
-///    + cache_creation_input_tokens > 200_000`.
-/// 2. Any `system/compact_boundary` message where
-///    `compactMetadata.preTokens > 200_000`.
+/// 1. **Transcript evidence** (deterministic). Any assistant turn whose
+///    `input + cache_read + cache_creation` exceeds 200_000, or any
+///    `compact_boundary` whose `compactMetadata.preTokens` exceeds
+///    200_000, proves the active model is a 1M variant — neither value
+///    can fit in a 200k window.
 ///
-/// Returns `false` for transcripts that are empty, unreadable, or genuinely
-/// fit in 200k.
+/// 2. **Claude Code project history** (heuristic). `~/.claude.json`
+///    bucket-tracks per-project usage by full model identifier including
+///    the `[1m]` tier suffix (`claude-opus-4-7[1m]`). If the session's
+///    project has any `[1m]` entry in `lastModelUsage`, the user has
+///    selected the 1M variant in this project at least once — a strong
+///    signal even before this session has crossed 200k. The user may
+///    have just `/model`-switched away, so this can lag by one selection
+///    change, but in steady state it's right.
 pub fn is_extended_context(path: &Path) -> bool {
-    const STD_LIMIT: i64 = 200_000;
+    if has_transcript_extended_evidence(path) {
+        return true;
+    }
+    if let Some(cwd) = project_cwd_from_transcript(path) {
+        if project_has_extended_context_history(&cwd) {
+            return true;
+        }
+    }
+    false
+}
+
+const STD_CONTEXT_LIMIT: i64 = 200_000;
+
+/// Walk the transcript for proof that this session must be on 1M tier.
+/// Pure transcript-only check — no `~/.claude.json` access.
+fn has_transcript_extended_evidence(path: &Path) -> bool {
     let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
@@ -217,7 +237,7 @@ pub fn is_extended_context(path: &Path) -> bool {
                     .get("cache_creation_input_tokens")
                     .and_then(|x| x.as_i64())
                     .unwrap_or(0);
-                if input + cr + cc > STD_LIMIT {
+                if input + cr + cc > STD_CONTEXT_LIMIT {
                     return true;
                 }
             }
@@ -229,7 +249,7 @@ pub fn is_extended_context(path: &Path) -> bool {
                     .pointer("/compactMetadata/preTokens")
                     .and_then(|x| x.as_i64())
                     .unwrap_or(0);
-                if pre > STD_LIMIT {
+                if pre > STD_CONTEXT_LIMIT {
                     return true;
                 }
             }
@@ -237,6 +257,61 @@ pub fn is_extended_context(path: &Path) -> bool {
         }
     }
     false
+}
+
+/// Pull the working directory out of a transcript so we can look the
+/// session up in `~/.claude.json`. The `cwd` field is present on most
+/// message types from line 1 or 2; first occurrence wins.
+pub(crate) fn project_cwd_from_transcript(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    for line in std::io::BufRead::lines(reader).map_while(Result::ok) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if let Some(cwd) = v.get("cwd").and_then(|x| x.as_str()) {
+            return Some(cwd.to_string());
+        }
+    }
+    None
+}
+
+/// Check `~/.claude.json` for any `[1m]` variant in this project's
+/// historical model usage. Claude Code records `lastModelUsage` keyed by
+/// the full model identifier including the tier suffix
+/// (`claude-opus-4-7[1m]`), so the presence of any `[1m]` key is direct
+/// evidence the user has selected the extended-context variant.
+pub(crate) fn project_has_extended_context_history(cwd: &str) -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    project_has_extended_context_history_at(&home.join(".claude.json"), cwd)
+}
+
+/// Test seam for [`project_has_extended_context_history`]: takes the
+/// `.claude.json` path explicitly so tests can write fixtures without
+/// touching the user's real home directory.
+pub(crate) fn project_has_extended_context_history_at(claude_json: &Path, cwd: &str) -> bool {
+    let Ok(bytes) = std::fs::read(claude_json) else {
+        return false;
+    };
+    let Ok(root) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    let pointer = format!("/projects/{}/lastModelUsage", json_pointer_escape(cwd));
+    let Some(usage) = root.pointer(&pointer) else {
+        return false;
+    };
+    let Some(map) = usage.as_object() else {
+        return false;
+    };
+    map.keys().any(|k| k.contains("[1m]"))
+}
+
+/// Encode a path for use as a JSON Pointer reference token. Per RFC 6901,
+/// `~` becomes `~0` and `/` becomes `~1`.
+fn json_pointer_escape(s: &str) -> String {
+    s.replace('~', "~0").replace('/', "~1")
 }
 
 fn read_tail(path: &Path) -> Option<String> {
@@ -797,5 +872,112 @@ mod tests {
         let small = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":1,"cache_creation_input_tokens":1}}}"#;
         std::fs::write(&path, format!("{}\n{}\n", other, small)).unwrap();
         assert!(!is_extended_context(&path));
+    }
+
+    #[test]
+    fn project_cwd_from_transcript_finds_first_line_with_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        // Line 1 has no cwd, line 2 does — like a real Claude transcript.
+        let body = concat!(
+            r#"{"type":"last-prompt","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"attachment","cwd":"/Users/me/work","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"user","cwd":"/Users/me/work","sessionId":"s"}"#,
+            "\n",
+        );
+        std::fs::write(&path, body).unwrap();
+        assert_eq!(
+            project_cwd_from_transcript(&path),
+            Some("/Users/me/work".to_string())
+        );
+    }
+
+    #[test]
+    fn project_cwd_from_transcript_none_when_no_cwd_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, "{\"type\":\"last-prompt\"}\n").unwrap();
+        assert_eq!(project_cwd_from_transcript(&path), None);
+    }
+
+    #[test]
+    fn project_history_detects_extended_when_lastmodelusage_has_1m_variant() {
+        // Claude Code stores `lastModelUsage` with full tier-tagged
+        // model ids. Any `[1m]` Opus entry proves the user has selected
+        // the extended-context variant for this project.
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        let body = serde_json::json!({
+            "projects": {
+                "/Users/me/work": {
+                    "lastModelUsage": {
+                        "claude-haiku-4-5-20251001": { "inputTokens": 1 },
+                        "claude-opus-4-7[1m]": { "inputTokens": 100 }
+                    }
+                }
+            }
+        });
+        std::fs::write(&claude_json, serde_json::to_vec(&body).unwrap()).unwrap();
+        assert!(project_has_extended_context_history_at(
+            &claude_json,
+            "/Users/me/work"
+        ));
+    }
+
+    #[test]
+    fn project_history_returns_false_when_only_non_1m_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        let body = serde_json::json!({
+            "projects": {
+                "/Users/me/work": {
+                    "lastModelUsage": {
+                        "claude-sonnet-4-6": { "inputTokens": 100 },
+                        "claude-haiku-4-5-20251001": { "inputTokens": 50 }
+                    }
+                }
+            }
+        });
+        std::fs::write(&claude_json, serde_json::to_vec(&body).unwrap()).unwrap();
+        assert!(!project_has_extended_context_history_at(
+            &claude_json,
+            "/Users/me/work"
+        ));
+    }
+
+    #[test]
+    fn project_history_returns_false_when_project_missing_from_claude_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        std::fs::write(
+            &claude_json,
+            serde_json::to_vec(&serde_json::json!({"projects": {}})).unwrap(),
+        )
+        .unwrap();
+        assert!(!project_has_extended_context_history_at(
+            &claude_json,
+            "/Users/me/nope"
+        ));
+    }
+
+    #[test]
+    fn project_history_handles_paths_with_dashes_via_json_pointer_escape() {
+        // Project paths in `~/.claude.json` can contain characters like
+        // dashes and dots that look weird in a JSON Pointer. The escape
+        // function handles `/` → `~1`; verify a representative cwd works.
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        let cwd = "/Users/me/projects/agent-view";
+        let body = serde_json::json!({
+            "projects": {
+                cwd: {
+                    "lastModelUsage": { "claude-opus-4-7[1m]": { "inputTokens": 1 } }
+                }
+            }
+        });
+        std::fs::write(&claude_json, serde_json::to_vec(&body).unwrap()).unwrap();
+        assert!(project_has_extended_context_history_at(&claude_json, cwd));
     }
 }
