@@ -9,7 +9,8 @@
 use super::notify;
 use crate::core::paths;
 use crate::core::runner::codex::cost_handler::{
-    find_rollout_for_thread, load_rollout_state, parse_new_events, save_rollout_state,
+    find_rollout_for_thread, is_valid_thread_id, load_rollout_state, parse_new_events,
+    save_rollout_state,
 };
 use crate::core::runner::hook_io::{
     atomic_write, read_payload_from_stdin, validate_instance_id, HookStatusFile,
@@ -107,6 +108,12 @@ pub fn handle_notify_with_paths(
     let Some(thread_id) = payload.get("thread-id").and_then(|v| v.as_str()) else {
         return;
     };
+    // Defence-in-depth: payload field is untrusted JSON. Reject anything
+    // that isn't a canonical Codex UUID before it reaches the directory
+    // walker (`find_rollout_for_thread`).
+    if !is_valid_thread_id(thread_id) {
+        return;
+    }
     let Some(rollout_path) = find_rollout_for_thread(thread_id, sessions_root) else {
         return;
     };
@@ -222,5 +229,52 @@ mod tests {
             .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
             .collect();
         assert_eq!(files.len(), 1, "second call must not re-emit");
+    }
+
+    #[test]
+    fn notify_handler_rejects_malformed_thread_id() {
+        // Hostile notify payload tries to escape ~/.codex/sessions via a
+        // traversal-shaped thread-id. The validator must short-circuit
+        // before any filesystem read.
+        let dir = tempfile::tempdir().unwrap();
+        let sessions_root = dir.path().join("codex_sessions");
+        std::fs::create_dir_all(&sessions_root).unwrap();
+        let cost_events_dir = dir.path().join("cost-events");
+        std::fs::create_dir_all(&cost_events_dir).unwrap();
+        let state_dir = dir.path().join("rollout-state");
+        std::fs::create_dir_all(&state_dir).unwrap();
+
+        for bogus in [
+            "../etc/passwd",
+            "",
+            "not-a-uuid",
+            "019e289a-0f2d-73f1-94d3-d15182ff1741/../escape",
+        ] {
+            let payload = serde_json::json!({"thread-id": bogus, "type": "agent-turn-complete"});
+            super::handle_notify_with_paths(
+                "av-sess-malformed",
+                &payload,
+                &sessions_root,
+                &cost_events_dir,
+                &state_dir,
+            );
+        }
+
+        let cost_files: Vec<_> = std::fs::read_dir(&cost_events_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(
+            cost_files.is_empty(),
+            "malformed thread-ids must not produce cost-event files"
+        );
+        let state_files: Vec<_> = std::fs::read_dir(&state_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(
+            state_files.is_empty(),
+            "malformed thread-ids must not produce rollout-state files"
+        );
     }
 }

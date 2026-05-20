@@ -6,10 +6,29 @@
 //! track the previous `total_token_usage` per-file and skip events where it
 //! hasn't advanced.
 
-#![allow(dead_code)] // module awaiting wiring in future tasks
-
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+/// Hard ceiling on a single rollout-JSONL line. Real Codex token_count
+/// payloads sit well under 4 KiB; this cap exists only to bound memory if a
+/// pathological line ever appears in the file.
+const MAX_LINE_BYTES: u64 = 1_048_576; // 1 MiB
+
+/// Strict UUID shape (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, hex). Used
+/// to validate `thread-id` values from Codex notify payloads before they
+/// flow into filesystem operations (`find_rollout_for_thread`).
+static THREAD_ID_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+        .expect("static regex must compile")
+});
+
+/// True for canonical Codex thread-ids. Rejects empty input, traversal
+/// (`..`), shell metacharacters, and anything that isn't a 36-char hex UUID.
+pub fn is_valid_thread_id(s: &str) -> bool {
+    THREAD_ID_RE.is_match(s)
+}
 
 /// Cost event extracted from a Codex rollout file. Mirrors the on-disk JSON
 /// format of `core::storage::CostEvent` so it can be serialized straight to
@@ -110,17 +129,34 @@ fn open_rollout(path: &Path, seek_offset: u64) -> Option<Box<dyn BufRead>> {
 }
 
 fn consume_lines<R: BufRead>(
-    reader: R,
+    mut reader: R,
     agent_view_session_id: &str,
     state: &mut CodexRolloutState,
 ) -> (Vec<CodexCostEvent>, u64) {
     let mut events = Vec::new();
     let mut bytes_read: u64 = 0;
-    for line_result in reader.lines() {
-        let Ok(line) = line_result else { continue };
-        // Codex rollout files are LF-only; +1 accounts for the stripped '\n'.
-        bytes_read += line.len() as u64 + 1;
-        let Ok(parsed) = serde_json::from_str::<RolloutLine>(&line) else {
+    let mut raw: Vec<u8> = Vec::with_capacity(4096);
+    loop {
+        raw.clear();
+        // `read_capped` advances the stream by exactly the number of bytes
+        // it consumed (always matches what's on disk, even if the final
+        // line has no newline) and silently drops content over the cap.
+        let (consumed, overflowed) = match read_capped(&mut reader, &mut raw, MAX_LINE_BYTES) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        if consumed == 0 {
+            break;
+        }
+        bytes_read += consumed;
+        if overflowed {
+            continue;
+        }
+        let Ok(line) = std::str::from_utf8(&raw) else {
+            continue;
+        };
+        let line = line.trim_end_matches('\n').trim_end_matches('\r');
+        let Ok(parsed) = serde_json::from_str::<RolloutLine>(line) else {
             continue;
         };
         match parsed.line_type.as_str() {
@@ -245,25 +281,25 @@ pub struct RateLimitWindow {
 /// Most recent rate_limits block from a token_count event. Returns None if
 /// no such event exists in the file.
 pub fn current_rate_limits(path: &Path) -> Option<RateLimitInfo> {
-    let reader = open_rollout(path, 0)?;
+    let mut reader = open_rollout(path, 0)?;
     let mut latest: Option<serde_json::Value> = None;
-    for line in reader.lines().map_while(Result::ok) {
-        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
+    for_each_line(&mut reader, |line| {
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) else {
+            return;
         };
         if parsed.get("type").and_then(|v| v.as_str()) != Some("event_msg") {
-            continue;
+            return;
         }
         let Some(payload) = parsed.get("payload") else {
-            continue;
+            return;
         };
         if payload.get("type").and_then(|v| v.as_str()) != Some("token_count") {
-            continue;
+            return;
         }
         if let Some(rl) = payload.get("rate_limits") {
             latest = Some(rl.clone());
         }
-    }
+    });
     let raw = latest?;
     let primary: Option<RateLimitWindow> = raw
         .get("primary")
@@ -294,31 +330,99 @@ pub fn current_rate_limits(path: &Path) -> Option<RateLimitInfo> {
 /// (rollouts are bounded — context-window-sized — so this is cheap). Returns
 /// `None` if no token_count event has been written yet.
 pub fn current_context_tokens(path: &Path) -> Option<i64> {
-    let reader = open_rollout(path, 0)?;
+    let mut reader = open_rollout(path, 0)?;
     let mut latest: Option<i64> = None;
-    for line in reader.lines().map_while(Result::ok) {
-        let Ok(parsed) = serde_json::from_str::<RolloutLine>(&line) else {
-            continue;
+    for_each_line(&mut reader, |line| {
+        let Ok(parsed) = serde_json::from_str::<RolloutLine>(line) else {
+            return;
         };
         if parsed.line_type != "event_msg" {
-            continue;
+            return;
         }
         let Some(payload) = parsed.payload else {
-            continue;
+            return;
         };
         let Ok(ev) = serde_json::from_value::<EventMsgPayload>(payload) else {
-            continue;
+            return;
         };
         if ev.payload_type != "token_count" {
-            continue;
+            return;
         }
         if let Some(info) = ev.info {
             if let Some(total) = info.total_token_usage {
                 latest = Some(total.total_tokens);
             }
         }
-    }
+    });
     latest
+}
+
+/// Iterate JSONL lines from `reader`, applying `f` to each well-formed UTF-8
+/// line under `MAX_LINE_BYTES`. Oversize lines are skipped without retaining
+/// content past the cap, so they can't OOM a render or stall the parser.
+fn for_each_line<R: BufRead, F: FnMut(&str)>(reader: &mut R, mut f: F) {
+    let mut raw: Vec<u8> = Vec::with_capacity(4096);
+    loop {
+        raw.clear();
+        let (consumed, overflowed) = match read_capped(reader, &mut raw, MAX_LINE_BYTES) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        if consumed == 0 {
+            break;
+        }
+        if overflowed {
+            continue;
+        }
+        let Ok(line) = std::str::from_utf8(&raw) else {
+            continue;
+        };
+        f(line.trim_end_matches('\n').trim_end_matches('\r'));
+    }
+}
+
+/// Read one line (up to and including the next `\n`) into `buf`. Stops
+/// writing once `buf.len()` would exceed `cap`, but keeps consuming the
+/// underlying stream until the newline or EOF so the caller's byte count
+/// remains aligned with the file on disk. Returns `(bytes_consumed,
+/// overflowed)`; `overflowed = true` means content beyond `cap` was
+/// silently discarded.
+fn read_capped<R: BufRead>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    cap: u64,
+) -> std::io::Result<(u64, bool)> {
+    let mut consumed: u64 = 0;
+    let mut overflowed = false;
+    loop {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
+            return Ok((consumed, overflowed));
+        }
+        let (slice, hit_nl) = match chunk.iter().position(|&b| b == b'\n') {
+            Some(idx) => (&chunk[..=idx], true),
+            None => (chunk, false),
+        };
+        let take = slice.len();
+        if !overflowed {
+            let new_len = buf.len() as u64 + take as u64;
+            if new_len > cap {
+                overflowed = true;
+                // Keep whatever portion fits, then stop accumulating.
+                let remaining = (cap as usize).saturating_sub(buf.len());
+                if remaining > 0 {
+                    buf.extend_from_slice(&slice[..remaining]);
+                }
+            } else {
+                buf.extend_from_slice(slice);
+            }
+        }
+        reader.consume(take);
+        consumed += take as u64;
+        if hit_nl {
+            return Ok((consumed, overflowed));
+        }
+    }
 }
 
 /// Atomic state-file write — write to a sibling tmp then rename.
@@ -347,28 +451,48 @@ pub fn load_rollout_state(path: &Path) -> std::io::Result<CodexRolloutState> {
     serde_json::from_slice(&bytes).map_err(std::io::Error::other)
 }
 
-/// Find the rollout file for a given Codex thread id, by walking the
-/// sessions directory and matching the uuid component of each filename.
-/// Returns the path on first match. Walks recursively because the layout
-/// is `YYYY/MM/DD/rollout-*.jsonl[.zst]`.
+/// Find the rollout file for a given Codex thread id, walking
+/// `YYYY/MM/DD/rollout-*.jsonl[.zst]` and returning the **most recently
+/// modified** match. Picking max-mtime (rather than first-found) handles
+/// Codex's compaction roll-forward — a session can end up with multiple
+/// files sharing the same thread-uuid, and only the newest one is being
+/// appended to. Rejects non-canonical `thread_id` shapes (defence-in-depth
+/// against a hostile notify payload).
 pub fn find_rollout_for_thread(thread_id: &str, sessions_root: &Path) -> Option<PathBuf> {
-    fn visit(dir: &Path, thread_id: &str) -> Option<PathBuf> {
-        let entries = std::fs::read_dir(dir).ok()?;
+    if !is_valid_thread_id(thread_id) {
+        return None;
+    }
+    fn visit(dir: &Path, thread_id: &str, best: &mut Option<(PathBuf, std::time::SystemTime)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                if let Some(found) = visit(&path, thread_id) {
-                    return Some(found);
-                }
-            } else if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if name.starts_with("rollout-") && name.contains(thread_id) {
-                    return Some(path);
-                }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                visit(&path, thread_id, best);
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("rollout-") || !name.contains(thread_id) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            let Ok(mtime) = meta.modified() else { continue };
+            match best {
+                None => *best = Some((path, mtime)),
+                Some((_, b_mt)) if mtime > *b_mt => *best = Some((path, mtime)),
+                _ => {}
             }
         }
-        None
     }
-    visit(sessions_root, thread_id)
+    let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
+    visit(sessions_root, thread_id, &mut best);
+    best.map(|(p, _)| p)
 }
 
 fn subtract(a: TokenSnapshot, b: TokenSnapshot) -> TokenSnapshot {
@@ -598,8 +722,107 @@ mod tests {
             "{}",
         )
         .unwrap();
-        let found = find_rollout_for_thread("not-a-real-uuid", dir.path());
+        // Use a syntactically-valid UUID that simply doesn't appear in any
+        // filename — `is_valid_thread_id` would have rejected
+        // `not-a-real-uuid` before we got near the walker.
+        let found = find_rollout_for_thread("00000000-0000-0000-0000-000000000001", dir.path());
         assert!(found.is_none());
+    }
+
+    #[test]
+    fn find_rollout_rejects_non_uuid_thread_id() {
+        // Defence-in-depth: a hostile notify payload could supply
+        // `../etc/passwd` as the thread-id. The validator short-circuits
+        // before any filesystem operation.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(find_rollout_for_thread("../etc/passwd", dir.path()).is_none());
+        assert!(find_rollout_for_thread("", dir.path()).is_none());
+        assert!(find_rollout_for_thread("not-a-uuid", dir.path()).is_none());
+    }
+
+    #[test]
+    fn is_valid_thread_id_accepts_canonical_uuids() {
+        assert!(is_valid_thread_id("019e289a-0f2d-73f1-94d3-d15182ff1741"));
+        assert!(is_valid_thread_id("ABCDEF12-0000-0000-0000-000000000000"));
+    }
+
+    #[test]
+    fn is_valid_thread_id_rejects_malformed() {
+        assert!(!is_valid_thread_id(""));
+        assert!(!is_valid_thread_id("019e289a"));
+        assert!(!is_valid_thread_id(
+            "019e289a-0f2d-73f1-94d3-d15182ff1741-extra"
+        ));
+        assert!(!is_valid_thread_id(
+            "../019e289a-0f2d-73f1-94d3-d15182ff1741"
+        ));
+        assert!(!is_valid_thread_id("019e289a/0f2d/73f1/94d3/d15182ff1741"));
+        assert!(!is_valid_thread_id("g19e289a-0f2d-73f1-94d3-d15182ff1741")); // non-hex
+    }
+
+    #[test]
+    fn find_rollout_returns_most_recent_when_multiple_match() {
+        // Codex compaction can roll a session forward into a new rollout
+        // file sharing the same thread-uuid. We need the newest match so
+        // subsequent reads don't append-replay on a stale file.
+        let dir = tempfile::tempdir().unwrap();
+        let day = dir.path().join("2026").join("05").join("14");
+        std::fs::create_dir_all(&day).unwrap();
+        let thread = "019e289a-0f2d-73f1-94d3-d15182ff1741";
+        let older = day.join(format!("rollout-2026-05-14T10-00-00-{}.jsonl", thread));
+        let newer = day.join(format!("rollout-2026-05-14T22-00-00-{}.jsonl", thread));
+        std::fs::write(&older, "{}").unwrap();
+        // Sleep briefly so the second file's mtime is strictly later. macOS
+        // and Linux both report mtime at ≥1ms granularity, so 20ms is ample.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&newer, "{}").unwrap();
+        let found = find_rollout_for_thread(thread, dir.path()).unwrap();
+        assert_eq!(found, newer, "must pick the most recently modified rollout");
+    }
+
+    #[test]
+    fn parse_bytes_read_matches_file_size_without_trailing_newline() {
+        // Final line lacks `\n` (Codex writes line-by-line; a tail read
+        // mid-write can land here). The old `lines() + len + 1` accounting
+        // would over-count by 1 and skip a byte on the next resume.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout-test.jsonl");
+        let body = concat!(
+            r#"{"type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2},"last_token_usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2}}}}"#,
+        );
+        std::fs::write(&path, body).unwrap();
+        let on_disk = std::fs::metadata(&path).unwrap().len();
+        let mut state = CodexRolloutState::default();
+        parse_new_events(&path, "av-sess", &mut state);
+        assert_eq!(
+            state.file_offset, on_disk,
+            "file_offset must match real file size, no \\n over-count"
+        );
+    }
+
+    #[test]
+    fn parse_skips_oversize_line_without_oom() {
+        // A pathologically large junk line is dropped; subsequent valid
+        // lines must still emit, and the file_offset must advance past the
+        // entire junk line.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout-test.jsonl");
+        let huge = "x".repeat((MAX_LINE_BYTES as usize) + 16);
+        let body = format!(
+            "{huge}\n{ctx}\n{tc}\n",
+            huge = huge,
+            ctx = r#"{"type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            tc = r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":3,"reasoning_output_tokens":0,"total_tokens":13},"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":3,"reasoning_output_tokens":0,"total_tokens":13}}}}"#,
+        );
+        std::fs::write(&path, &body).unwrap();
+        let on_disk = std::fs::metadata(&path).unwrap().len();
+        let mut state = CodexRolloutState::default();
+        let events = parse_new_events(&path, "av-sess", &mut state);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].input_tokens, 10);
+        assert_eq!(state.file_offset, on_disk);
     }
 
     #[test]
