@@ -6,27 +6,28 @@ use std::time::Duration;
 /// Live context-size resolver. For each tool with an authoritative source
 /// (Claude transcript JSONL, Codex rollout JSONL), returns the current
 /// context-token count. `None` for Shell or when the necessary metadata
-/// (transcript path, thread id, rollout file) isn't available yet.
+/// (transcript path, cached rollout path) isn't available yet.
+///
+/// Takes `&mut EventState` because the Codex branch consults — and may
+/// refresh — the mtime-gated rollout snapshot cache. The filesystem walk
+/// to discover a rollout path runs only on the watcher thread; this
+/// function never walks.
 fn live_context_tokens(
     session: &crate::types::Session,
-    hook_status: &crate::core::runner::event_watcher::EventState,
+    state: &mut crate::core::runner::event_watcher::EventState,
 ) -> Option<i64> {
     use crate::types::Tool;
     match session.tool {
         Tool::Claude => {
-            let entry = hook_status.hook_status.get(&session.id)?;
+            let entry = state.hook_status.get(&session.id)?;
             let transcript_path: std::path::PathBuf = entry.transcript_path.clone()?.into();
             crate::core::runner::claude::hook_handler::current_context_tokens(&transcript_path)
         }
         Tool::Codex => {
-            let entry = hook_status.hook_status.get(&session.id)?;
-            let thread_id = entry.tool_session_id.as_deref()?;
-            let sessions_root = dirs::home_dir()?.join(".codex").join("sessions");
-            let rollout = crate::core::runner::codex::cost_handler::find_rollout_for_thread(
-                thread_id,
-                &sessions_root,
-            )?;
-            crate::core::runner::codex::cost_handler::current_context_tokens(&rollout)
+            let entry = state.hook_status.get(&session.id)?;
+            let thread_id = entry.tool_session_id.clone()?;
+            let path = state.cached_rollout_path(&thread_id)?.to_path_buf();
+            state.rollout_snapshot(&path).context_tokens
         }
         _ => None,
     }
@@ -207,10 +208,10 @@ pub fn spawn(
                     {
                         continue;
                     }
-                    let Ok(state_guard) = event_state.lock() else {
+                    let Ok(mut state_guard) = event_state.lock() else {
                         continue;
                     };
-                    if let Some(tokens) = live_context_tokens(session, &state_guard) {
+                    if let Some(tokens) = live_context_tokens(session, &mut state_guard) {
                         drop(state_guard);
                         if tokens != session.tokens_used {
                             // Overwrite rather than incremental add: the new
@@ -270,14 +271,51 @@ mod tests {
     #[test]
     fn live_tokens_returns_none_for_shell_session() {
         let session = make_session("s1", Tool::Shell);
-        let state = EventState::default();
-        assert!(live_context_tokens(&session, &state).is_none());
+        let mut state = EventState::default();
+        assert!(live_context_tokens(&session, &mut state).is_none());
     }
 
     #[test]
     fn live_tokens_returns_none_when_no_hook_status() {
         let session = make_session("no-hooks-yet", Tool::Claude);
-        let state = EventState::default();
-        assert!(live_context_tokens(&session, &state).is_none());
+        let mut state = EventState::default();
+        assert!(live_context_tokens(&session, &mut state).is_none());
+    }
+
+    #[test]
+    fn live_tokens_codex_reads_from_cached_rollout_snapshot() {
+        // Codex success path: a rollout path is already in the cache (the
+        // watcher thread would have populated this via process_hook_file
+        // bootstrap). `live_context_tokens` must NOT walk the filesystem
+        // — it reads via `EventState::rollout_snapshot`.
+        use crate::core::runner::event_watcher::HookStatus;
+        use std::time::SystemTime;
+
+        let dir = tempfile::tempdir().unwrap();
+        let rollout = dir.path().join("rollout.jsonl");
+        let body = concat!(
+            r#"{"type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":150},"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":150}}}}"#,
+            "\n",
+        );
+        std::fs::write(&rollout, body).unwrap();
+
+        let thread = "019e289a-0f2d-73f1-94d3-d15182ff1741".to_string();
+        let mut state = EventState::default();
+        state.hook_status.insert(
+            "av-sess".to_string(),
+            HookStatus {
+                status: SessionStatus::Idle,
+                tool_session_id: Some(thread.clone()),
+                event: "agent-turn-complete".to_string(),
+                received_at: SystemTime::now(),
+                transcript_path: None,
+            },
+        );
+        state.record_rollout_path(&thread, rollout);
+
+        let session = make_session("av-sess", Tool::Codex);
+        assert_eq!(live_context_tokens(&session, &mut state), Some(150));
     }
 }

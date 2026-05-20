@@ -90,6 +90,12 @@ impl Storage {
     /// yields the same values. Used by the schema v9 migration (with the
     /// built-in defaults) and again at watcher startup (with user overrides
     /// from config) so that historical rows pick up rate-table changes.
+    ///
+    /// All UPDATEs run inside a single transaction so per-statement fsync
+    /// overhead doesn't dominate startup on large `cost_events` tables.
+    /// Failure rolls back: if any row's UPDATE errors out, the rate
+    /// recompute is atomic — no half-updated mixture of old and new
+    /// per-row values.
     pub fn recompute_cost_microdollars(&self, pricer: &Pricer) -> SqlResult<()> {
         let mut stmt = self.conn.prepare(
             "SELECT id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
@@ -108,15 +114,31 @@ impl Storage {
             })?
             .collect::<SqlResult<Vec<_>>>()?;
         drop(stmt);
-        for (id, model, input, output, cache_read, cache_creation) in rows {
-            let micros =
-                pricer.compute_microdollars(&model, input, output, cache_read, cache_creation);
-            self.conn.execute(
-                "UPDATE cost_events SET cost_microdollars = ?1 WHERE id = ?2",
-                params![micros, id],
-            )?;
+        if rows.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        self.conn.execute("BEGIN", [])?;
+        let result: SqlResult<()> = (|| {
+            let mut update = self
+                .conn
+                .prepare("UPDATE cost_events SET cost_microdollars = ?1 WHERE id = ?2")?;
+            for (id, model, input, output, cache_read, cache_creation) in rows {
+                let micros =
+                    pricer.compute_microdollars(&model, input, output, cache_read, cache_creation);
+                update.execute(params![micros, id])?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute("COMMIT", [])?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.conn.execute("ROLLBACK", []);
+                Err(e)
+            }
+        }
     }
 }
 
@@ -223,5 +245,53 @@ mod tests {
         let (storage, _dir) = test_storage();
         let totals = storage.cost_totals_for_session("nope").unwrap();
         assert_eq!(totals, CostTotals::default());
+    }
+
+    #[test]
+    fn test_recompute_is_atomic_across_many_rows() {
+        // The recompute MUST land its UPDATEs inside one transaction so
+        // (a) per-row fsync doesn't dominate startup on large tables and
+        // (b) every row ends up with the new rate. The 500-row count is
+        // arbitrary but large enough that a per-row commit would visibly
+        // slow the test (catches a future regression that drops the BEGIN).
+        let (storage, _dir) = test_storage();
+        storage.save_session(&make_test_session("rc")).unwrap();
+        for ts in 0..500 {
+            storage
+                .insert_cost_event(&ev("rc", 1_000_000, 0, ts))
+                .unwrap();
+        }
+        // Seed the column from defaults so we have a meaningful baseline.
+        storage
+            .recompute_cost_microdollars(&Pricer::with_defaults())
+            .unwrap();
+        // Default Opus 4.7 input rate is $15/Mtok = 15_000_000 microdollars.
+        let totals_default = storage.cost_totals_for_session("rc").unwrap();
+        assert_eq!(totals_default.microdollars, 500 * 15_000_000);
+
+        // Override to a flat $1/Mtok and recompute. All 500 rows update.
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert(
+            "claude-opus-4-7".to_string(),
+            crate::core::cost::ModelRate {
+                input_per_mtok: 1.0,
+                output_per_mtok: 0.0,
+                cache_read_per_mtok: 0.0,
+                cache_creation_per_mtok: 0.0,
+            },
+        );
+        let pricer = Pricer::with_defaults().with_overrides(overrides);
+        storage.recompute_cost_microdollars(&pricer).unwrap();
+        let totals_override = storage.cost_totals_for_session("rc").unwrap();
+        assert_eq!(totals_override.microdollars, 500 * 1_000_000);
+    }
+
+    #[test]
+    fn test_recompute_empty_table_is_no_op() {
+        let (storage, _dir) = test_storage();
+        // Should not BEGIN a transaction at all (would deadlock if buggy).
+        storage
+            .recompute_cost_microdollars(&Pricer::with_defaults())
+            .unwrap();
     }
 }
