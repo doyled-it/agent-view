@@ -103,7 +103,10 @@ pub(super) fn build_lines(
 }
 
 /// Build the "Context" row. Returns None when no token signal is available
-/// — the pane stays silent rather than showing a misleading 0% bar.
+/// — the pane stays silent rather than showing a misleading 0% bar. When
+/// the context_window is unknown (Shell, or a tool without a published
+/// limit) we render the bare token count without a percentage or bar — a
+/// 0% bar would otherwise misrepresent "no limit known" as "no usage".
 fn context_line(
     context_tokens: Option<i64>,
     context_window: Option<i64>,
@@ -113,18 +116,20 @@ fn context_line(
     let used = context_tokens?;
     let used_str = format_tokens(used);
 
-    let annotation = match context_window {
-        Some(window) if window > 0 => format!("  {} / {}", used_str, format_tokens(window)),
-        _ => format!("  {}", used_str),
+    let Some(window) = context_window.filter(|w| *w > 0) else {
+        // No window → render `Context  150k` with no bar, no percent.
+        return Some(Line::from(vec![
+            Span::styled(
+                format!(" {:<width$}", "Context", width = LABEL_WIDTH),
+                Style::default().fg(theme.text_muted),
+            ),
+            Span::styled(used_str, Style::default().fg(theme.text)),
+        ]));
     };
 
-    let pct: u8 = match context_window {
-        Some(window) if window > 0 => {
-            let raw = (used as f64 / window as f64).clamp(0.0, 1.0) * 100.0;
-            raw.round() as u8
-        }
-        _ => 0,
-    };
+    let annotation = format!("  {} / {}", used_str, format_tokens(window));
+    let raw_pct = (used as f64 / window as f64).clamp(0.0, 1.0) * 100.0;
+    let pct = raw_pct.round() as u8;
 
     // Reserve: leading-space + label + " NN%" + annotation. Bar gets the rest.
     let fixed_width = 1 + LABEL_WIDTH + PCT_WIDTH + annotation.len();
@@ -263,6 +268,23 @@ mod tests {
         let joined = lines_to_string(&lines);
         assert!(!joined.contains("Context"));
         assert!(joined.contains("Tokens"));
+    }
+
+    #[test]
+    fn build_lines_context_without_window_renders_bare_count() {
+        // Shell sessions (no published context window) used to render a
+        // misleading 0% bar. The pane now drops the bar + percentage when
+        // the window is unknown, showing only the raw token count.
+        let totals = totals(0, 0, 0, 0, 0);
+        let lines = build_lines(Some(150_000), None, &totals, false, &t(), 80);
+        let joined = lines_to_string(&lines);
+        assert!(joined.contains("Context"));
+        assert!(joined.contains("150.0k"));
+        assert!(!joined.contains("%"), "no percentage when window unknown");
+        assert!(
+            !joined.contains("\u{2588}") && !joined.contains("\u{2591}"),
+            "no bar when window unknown"
+        );
     }
 
     #[test]

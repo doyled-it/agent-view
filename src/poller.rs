@@ -308,7 +308,6 @@ mod tests {
             HookStatus {
                 status: SessionStatus::Idle,
                 tool_session_id: Some(thread.clone()),
-                event: "agent-turn-complete".to_string(),
                 received_at: SystemTime::now(),
                 transcript_path: None,
             },

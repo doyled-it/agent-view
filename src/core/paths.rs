@@ -6,30 +6,25 @@
 
 use std::path::PathBuf;
 
-#[allow(dead_code)]
 pub fn agent_orchestrator_dir() -> PathBuf {
     dirs::home_dir()
         .expect("Cannot determine home directory")
         .join(".agent-orchestrator")
 }
 
-#[allow(dead_code)]
 pub fn hooks_dir() -> PathBuf {
     agent_orchestrator_dir().join("hooks")
 }
 
-#[allow(dead_code)]
 pub fn cost_events_dir() -> PathBuf {
     agent_orchestrator_dir().join("cost-events")
 }
 
-#[allow(dead_code)]
 pub fn rollout_state_dir() -> PathBuf {
     agent_orchestrator_dir().join("rollout-state")
 }
 
 /// Ensure subdirs exist (mode 0700 on unix). Returns Ok if already present.
-#[allow(dead_code)]
 pub fn ensure_event_dirs() -> std::io::Result<()> {
     use std::fs;
     let h = hooks_dir();

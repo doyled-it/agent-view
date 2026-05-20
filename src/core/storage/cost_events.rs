@@ -6,7 +6,6 @@ use rusqlite::{params, Result as SqlResult};
 use super::Storage;
 use crate::core::cost::Pricer;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct CostEvent {
     pub session_id: String,
@@ -23,7 +22,6 @@ pub struct CostEvent {
     pub cost_microdollars: i64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CostTotals {
     pub input: i64,
@@ -34,7 +32,6 @@ pub struct CostTotals {
     pub microdollars: i64,
 }
 
-#[allow(dead_code)]
 impl Storage {
     pub fn insert_cost_event(&self, event: &CostEvent) -> SqlResult<()> {
         self.conn.execute(

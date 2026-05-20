@@ -22,13 +22,13 @@ use std::time::{Duration, SystemTime};
 
 /// In-memory hook status, derived from a hook status file. `received_at`
 /// is the wall-clock time the watcher saw the file (used for freshness
-/// checks in the poller).
+/// checks in the poller). The on-disk `HookStatusFile.event` is intentionally
+/// not mirrored here — its only consumer would be UI surfacing, and we
+/// already have `status` for the symbolic state.
 #[derive(Debug, Clone)]
 pub struct HookStatus {
     pub status: SessionStatus,
     pub tool_session_id: Option<String>,
-    #[allow(dead_code)] // used in tests; reserved for UI display (Task 11+)
-    pub event: String,
     pub received_at: SystemTime,
     /// Claude transcript path (when known). Used by the poller to read
     /// the current context-size without scraping the tmux pane. `None`
@@ -284,7 +284,6 @@ fn process_hook_file(state: &EventStateHandle, path: &Path) {
     let entry = HookStatus {
         status,
         tool_session_id: tool_sid.clone(),
-        event: file.event,
         received_at: SystemTime::now(),
         transcript_path,
     };
@@ -451,7 +450,6 @@ mod tests {
         let g = state.lock().unwrap();
         let entry = g.hook_status.get("sess-1").unwrap();
         assert_eq!(entry.status, SessionStatus::Running);
-        assert_eq!(entry.event, "Stop");
     }
 
     #[test]
