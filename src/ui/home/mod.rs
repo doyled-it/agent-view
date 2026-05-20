@@ -101,10 +101,8 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     if let Some(tool) = selected_tool {
         match tool {
-            crate::types::Tool::Claude => {
-                if has_usage {
-                    claude_quota_pane::render_claude_quota_pane(frame, chunks[3], app);
-                }
+            crate::types::Tool::Claude if has_usage => {
+                claude_quota_pane::render_claude_quota_pane(frame, chunks[3], app);
             }
             crate::types::Tool::Codex => {
                 codex_quota_pane::render_codex_quota_pane(frame, chunks[3], app);
