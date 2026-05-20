@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.11.2] - 2026-05-20
+
+### Changed
+
+- ci: explicitly install rustup target before build (#58) (@doyled-it)
+
 ## [1.11.1] - 2026-05-20
 
 ### Changed
