@@ -43,6 +43,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # Belt-and-suspenders: dtolnay/rust-toolchain@stable's `targets:` input
+      # has been observed to silently skip installing non-host targets on
+      # recent runner images (failed v1.11.0 + v1.11.1 release builds with
+      # `error[E0463]: can't find crate for 'core'`). Explicit install
+      # guarantees the target is present on every runner.
+      - name: Ensure target installed
+        run: rustup target add ${{ matrix.target }}
       - name: Install musl toolchain
         if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
