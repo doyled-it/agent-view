@@ -12,7 +12,7 @@ cargo fmt --check      # Check formatting
 cargo clippy -- -D warnings  # Lint (warnings are errors in CI)
 ```
 
-IMPORTANT: CI runs `rust:latest` which may be newer than the local toolchain. Always run `cargo clippy -- -D warnings` before pushing. If available, use `rustup run nightly cargo clippy -- -D warnings` to catch upcoming lint changes.
+The Rust toolchain is pinned in `rust-toolchain.toml` — both local and CI run the same `cargo`/`clippy`/`rustfmt`, so a green local `clippy --all-targets -- -D warnings` matches CI exactly. Bump the pin periodically (every release cycle or sooner). When you bump, run clippy + tests on a feature branch and resolve any new lints in the same PR — that surfaces new lint sets before they hit other contributors.
 
 ## Code Style
 
