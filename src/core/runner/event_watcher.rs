@@ -7,8 +7,8 @@ use crate::core::config::load_config;
 use crate::core::cost::Pricer;
 use crate::core::paths;
 use crate::core::runner::codex::cost_handler::{
-    current_context_tokens, current_rate_limits, find_rollout_for_thread, is_valid_thread_id,
-    RateLimitInfo,
+    current_context_tokens, current_context_window, current_rate_limits, find_rollout_for_thread,
+    is_valid_thread_id, RateLimitInfo,
 };
 use crate::core::runner::hook_io::HookStatusFile;
 use crate::core::storage::{CostEvent, Storage};
@@ -43,6 +43,11 @@ pub struct HookStatus {
 pub struct RolloutSnapshot {
     pub mtime: Option<SystemTime>,
     pub context_tokens: Option<i64>,
+    /// The negotiated context window size Codex published in the most
+    /// recent `token_count` event. Lets the UI display the actual model
+    /// limit (e.g. 1M for extended-context plans) instead of a hard-coded
+    /// per-tool fallback.
+    pub context_window: Option<i64>,
     pub rate_limits: Option<RateLimitInfo>,
 }
 
@@ -98,6 +103,7 @@ impl EventState {
         let snap = RolloutSnapshot {
             mtime,
             context_tokens: current_context_tokens(path),
+            context_window: current_context_window(path),
             rate_limits: current_rate_limits(path),
         };
         self.rollout_snapshots

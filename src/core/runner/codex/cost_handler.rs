@@ -106,6 +106,11 @@ struct TokenCountInfo {
     last_token_usage: Option<TokenSnapshot>,
     #[serde(default)]
     total_token_usage: Option<TokenSnapshot>,
+    /// Codex publishes the negotiated context-window size on every
+    /// `token_count` event. Optional because some payloads (especially
+    /// startup ones) omit it.
+    #[serde(default)]
+    model_context_window: Option<i64>,
 }
 
 /// Open the rollout file, transparently decompressing if the path ends in
@@ -330,8 +335,25 @@ pub fn current_rate_limits(path: &Path) -> Option<RateLimitInfo> {
 /// (rollouts are bounded — context-window-sized — so this is cheap). Returns
 /// `None` if no token_count event has been written yet.
 pub fn current_context_tokens(path: &Path) -> Option<i64> {
+    current_token_state(path).map(|s| s.total_tokens)
+}
+
+/// Return the most recent `model_context_window` Codex published in a
+/// `token_count` event. Lets the UI display the actual negotiated window
+/// (e.g. 1M for extended-context plans) instead of a hard-coded guess.
+pub fn current_context_window(path: &Path) -> Option<i64> {
+    current_token_state(path).and_then(|s| s.context_window)
+}
+
+#[derive(Debug, Default)]
+struct TokenState {
+    total_tokens: i64,
+    context_window: Option<i64>,
+}
+
+fn current_token_state(path: &Path) -> Option<TokenState> {
     let mut reader = open_rollout(path, 0)?;
-    let mut latest: Option<i64> = None;
+    let mut latest: Option<TokenState> = None;
     for_each_line(&mut reader, |line| {
         let Ok(parsed) = serde_json::from_str::<RolloutLine>(line) else {
             return;
@@ -350,7 +372,10 @@ pub fn current_context_tokens(path: &Path) -> Option<i64> {
         }
         if let Some(info) = ev.info {
             if let Some(total) = info.total_token_usage {
-                latest = Some(total.total_tokens);
+                latest = Some(TokenState {
+                    total_tokens: total.total_tokens,
+                    context_window: info.model_context_window,
+                });
             }
         }
     });
@@ -666,6 +691,28 @@ mod tests {
             r#"{"timestamp":"...","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
         ]);
         assert_eq!(current_context_tokens(&path), None);
+    }
+
+    #[test]
+    fn current_context_window_reads_from_token_count_event() {
+        // Codex publishes the negotiated window per token_count event
+        // (e.g. 258_400 in user's rollouts). The pane uses this so it
+        // never has to hardcode a per-tool fallback for Codex.
+        let (_dir, path) = write_jsonl(&[
+            r#"{"timestamp":"...","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            r#"{"timestamp":"...","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120},"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120},"model_context_window":258400}}}"#,
+        ]);
+        assert_eq!(current_context_window(&path), Some(258_400));
+    }
+
+    #[test]
+    fn current_context_window_none_when_field_absent() {
+        // Startup-style token_count events sometimes omit the window.
+        let (_dir, path) = write_jsonl(&[
+            r#"{"timestamp":"...","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            r#"{"timestamp":"...","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2},"last_token_usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2}}}}"#,
+        ]);
+        assert_eq!(current_context_window(&path), None);
     }
 
     #[test]
