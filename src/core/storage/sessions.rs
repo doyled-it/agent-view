@@ -250,10 +250,10 @@ impl Storage {
         Ok(())
     }
 
-    /// Add tokens to a session's token count
-    pub fn add_tokens(&self, id: &str, tokens: i64) -> SqlResult<()> {
+    /// Replace the token count (used by the poller's live context-size update).
+    pub fn set_tokens(&self, id: &str, tokens: i64) -> SqlResult<()> {
         self.conn.execute(
-            "UPDATE sessions SET tokens_used = tokens_used + ?1 WHERE id = ?2",
+            "UPDATE sessions SET tokens_used = ?1 WHERE id = ?2",
             params![tokens, id],
         )?;
         Ok(())
@@ -474,16 +474,14 @@ mod tests {
     }
 
     #[test]
-    fn test_add_tokens() {
+    fn test_set_tokens_overwrites() {
         let (storage, _dir) = test_storage();
-        let session = make_test_session("s1");
+        let mut session = make_test_session("s1");
+        session.tokens_used = 999;
         storage.save_session(&session).unwrap();
-
-        storage.add_tokens("s1", 1000).unwrap();
-        storage.add_tokens("s1", 2500).unwrap();
-
+        storage.set_tokens("s1", 5000).unwrap();
         let loaded = storage.get_session("s1").unwrap().unwrap();
-        assert_eq!(loaded.tokens_used, 3500);
+        assert_eq!(loaded.tokens_used, 5000);
     }
 
     #[test]

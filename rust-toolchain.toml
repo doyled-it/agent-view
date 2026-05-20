@@ -1,0 +1,16 @@
+# Pin the Rust toolchain so local and CI run identical clippy lint sets.
+# When CI's `dtolnay/rust-toolchain@stable` step (or `rust:latest` in any
+# downstream image) reads this file it overrides its own version selector,
+# so this is the single source of truth.
+#
+# Bumping policy: refresh to the latest stable on a regular cadence (every
+# release cycle or sooner). Bumping early surfaces new clippy lints on a
+# feature branch instead of as a surprise on the next contributor's first
+# push. To bump: edit the channel below, run
+# `cargo clippy --all-targets -- -D warnings` and `cargo test`, fix or
+# allow any new lints in the same PR.
+
+[toolchain]
+channel = "1.95"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

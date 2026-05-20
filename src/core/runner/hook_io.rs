@@ -29,6 +29,11 @@ pub struct HookStatusFile {
     pub tool_session_id: String,
     pub event: String,
     pub ts: i64, // unix seconds
+    /// Claude transcript path (when known). Empty for Codex / non-Claude
+    /// runners. Consumed by `event_watcher` to surface to UI panes that
+    /// read the transcript directly (e.g. live context-size).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub transcript_path: String,
 }
 
 /// Validate an `AGENT_VIEW_SESSION_ID` env value. Returns `true` if safe to
@@ -144,6 +149,7 @@ mod tests {
             tool_session_id: String::new(),
             event: "turn.started".to_string(),
             ts: 1700000000,
+            transcript_path: String::new(),
         };
         let json = serde_json::to_string(&file).unwrap();
         assert!(!json.contains("tool_session_id"), "got: {}", json);

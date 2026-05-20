@@ -11,6 +11,7 @@
 //! template/literal allowlist (`{feature}`, `@filename`) is kept as a
 //! defensive fallback for cases where ANSI capture fails.
 
+pub mod cost_handler;
 pub mod hooks;
 pub mod notify;
 pub mod notify_handler;

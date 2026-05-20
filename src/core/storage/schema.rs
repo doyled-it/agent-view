@@ -2,8 +2,9 @@ use rusqlite::params;
 use rusqlite::Result as SqlResult;
 
 use super::Storage;
+use crate::core::cost::Pricer;
 
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 impl Storage {
     pub fn migrate(&self) -> SqlResult<()> {
@@ -188,6 +189,18 @@ impl Storage {
             )?;
         }
 
+        // v8 -> v9: add cost_microdollars column to cost_events and backfill
+        // existing rows using the built-in default rate table. The watcher
+        // re-runs this with the user's config-aware Pricer at startup so any
+        // active overrides take effect on historical rows.
+        if version < 9 {
+            let _ = self.conn.execute(
+                "ALTER TABLE cost_events ADD COLUMN cost_microdollars INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            self.recompute_cost_microdollars(&Pricer::with_defaults())?;
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -222,7 +235,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("8".to_string()));
+        assert_eq!(version, Some("9".to_string()));
     }
 
     #[test]
@@ -230,7 +243,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("8".to_string()));
+        assert_eq!(version, Some("9".to_string()));
     }
 
     #[test]
@@ -352,6 +365,87 @@ mod tests {
     fn test_v8_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("8".to_string()));
+        assert_eq!(version, Some("9".to_string()));
+    }
+
+    #[test]
+    fn test_v9_cost_microdollars_column_exists() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO sessions (id, title, project_path, created_at)
+                 VALUES ('s1', 't', '/tmp', 0)",
+                [],
+            )
+            .unwrap();
+        // Inserting with explicit cost_microdollars value should succeed,
+        // proving the column is present after migration.
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO cost_events
+                    (session_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ts, cost_microdollars)
+                 VALUES ('s1', 'claude-opus-4-7', 1, 2, 0, 0, 0, 12345)",
+                [],
+            )
+            .unwrap();
+        let micros: i64 = storage
+            .conn()
+            .query_row(
+                "SELECT cost_microdollars FROM cost_events WHERE session_id = 's1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(micros, 12345);
+    }
+
+    #[test]
+    fn test_v9_backfills_existing_rows() {
+        // Simulate the pre-v9 state: a cost_events row that lacks
+        // cost_microdollars. We do this by manually downgrading the schema
+        // version after migrate() and re-running it, but the cleaner approach
+        // is to insert with cost_microdollars=0 (the default) and confirm
+        // a fresh `migrate()` call recomputes it.
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO sessions (id, title, project_path, created_at)
+                 VALUES ('s1', 't', '/tmp', 0)",
+                [],
+            )
+            .unwrap();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO cost_events
+                    (session_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ts, cost_microdollars)
+                 VALUES ('s1', 'claude-opus-4-7', 1000000, 1000000, 0, 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+        // Force a re-run of the backfill by rolling schema_version back and
+        // re-migrating. The backfill is idempotent — calling it again
+        // recomputes microdollars on the existing rows.
+        storage
+            .conn()
+            .execute(
+                "UPDATE metadata SET value = '8' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        storage.migrate().unwrap();
+        let micros: i64 = storage
+            .conn()
+            .query_row(
+                "SELECT cost_microdollars FROM cost_events WHERE session_id = 's1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // 1M input @ $15 + 1M output @ $75 = $90 = 90_000_000 microdollars
+        assert_eq!(micros, 90_000_000);
     }
 }

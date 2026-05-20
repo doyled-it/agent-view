@@ -165,6 +165,155 @@ pub fn find_last_assistant_line(path: &Path) -> Option<String> {
     None
 }
 
+/// Sum of input + cache_read + cache_creation + output tokens from the most
+/// recent assistant message in this Claude transcript. Represents the
+/// approximate context size as of the last turn — strictly more accurate
+/// than the tmux footer scrape (which sees only non-cached input).
+pub fn current_context_tokens(path: &Path) -> Option<i64> {
+    let line = find_last_assistant_line(path)?;
+    let parsed: TranscriptLine = serde_json::from_str(&line).ok()?;
+    let usage = parsed.message?.usage?;
+    Some(
+        usage.input_tokens
+            + usage.output_tokens
+            + usage.cache_read_input_tokens
+            + usage.cache_creation_input_tokens,
+    )
+}
+
+/// Detect whether a Claude session is on the extended (1M) context tier
+/// rather than the default 200k. Combines two independent signals:
+///
+/// 1. **Transcript evidence** (deterministic). Any assistant turn whose
+///    `input + cache_read + cache_creation` exceeds 200_000, or any
+///    `compact_boundary` whose `compactMetadata.preTokens` exceeds
+///    200_000, proves the active model is a 1M variant — neither value
+///    can fit in a 200k window.
+///
+/// 2. **Claude Code project history** (heuristic). `~/.claude.json`
+///    bucket-tracks per-project usage by full model identifier including
+///    the `[1m]` tier suffix (`claude-opus-4-7[1m]`). If the session's
+///    project has any `[1m]` entry in `lastModelUsage`, the user has
+///    selected the 1M variant in this project at least once — a strong
+///    signal even before this session has crossed 200k. The user may
+///    have just `/model`-switched away, so this can lag by one selection
+///    change, but in steady state it's right.
+pub fn is_extended_context(path: &Path) -> bool {
+    if has_transcript_extended_evidence(path) {
+        return true;
+    }
+    if let Some(cwd) = project_cwd_from_transcript(path) {
+        if project_has_extended_context_history(&cwd) {
+            return true;
+        }
+    }
+    false
+}
+
+const STD_CONTEXT_LIMIT: i64 = 200_000;
+
+/// Walk the transcript for proof that this session must be on 1M tier.
+/// Pure transcript-only check — no `~/.claude.json` access.
+fn has_transcript_extended_evidence(path: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let reader = std::io::BufReader::new(file);
+    for line in std::io::BufRead::lines(reader).map_while(Result::ok) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        match v.get("type").and_then(|x| x.as_str()) {
+            Some("assistant") => {
+                let Some(u) = v.pointer("/message/usage") else {
+                    continue;
+                };
+                let input = u.get("input_tokens").and_then(|x| x.as_i64()).unwrap_or(0);
+                let cr = u
+                    .get("cache_read_input_tokens")
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0);
+                let cc = u
+                    .get("cache_creation_input_tokens")
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0);
+                if input + cr + cc > STD_CONTEXT_LIMIT {
+                    return true;
+                }
+            }
+            Some("system") => {
+                if v.get("subtype").and_then(|x| x.as_str()) != Some("compact_boundary") {
+                    continue;
+                }
+                let pre = v
+                    .pointer("/compactMetadata/preTokens")
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0);
+                if pre > STD_CONTEXT_LIMIT {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Pull the working directory out of a transcript so we can look the
+/// session up in `~/.claude.json`. The `cwd` field is present on most
+/// message types from line 1 or 2; first occurrence wins.
+pub(crate) fn project_cwd_from_transcript(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    for line in std::io::BufRead::lines(reader).map_while(Result::ok) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if let Some(cwd) = v.get("cwd").and_then(|x| x.as_str()) {
+            return Some(cwd.to_string());
+        }
+    }
+    None
+}
+
+/// Check `~/.claude.json` for any `[1m]` variant in this project's
+/// historical model usage. Claude Code records `lastModelUsage` keyed by
+/// the full model identifier including the tier suffix
+/// (`claude-opus-4-7[1m]`), so the presence of any `[1m]` key is direct
+/// evidence the user has selected the extended-context variant.
+pub(crate) fn project_has_extended_context_history(cwd: &str) -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    project_has_extended_context_history_at(&home.join(".claude.json"), cwd)
+}
+
+/// Test seam for [`project_has_extended_context_history`]: takes the
+/// `.claude.json` path explicitly so tests can write fixtures without
+/// touching the user's real home directory.
+pub(crate) fn project_has_extended_context_history_at(claude_json: &Path, cwd: &str) -> bool {
+    let Ok(bytes) = std::fs::read(claude_json) else {
+        return false;
+    };
+    let Ok(root) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    let pointer = format!("/projects/{}/lastModelUsage", json_pointer_escape(cwd));
+    let Some(usage) = root.pointer(&pointer) else {
+        return false;
+    };
+    let Some(map) = usage.as_object() else {
+        return false;
+    };
+    map.keys().any(|k| k.contains("[1m]"))
+}
+
+/// Encode a path for use as a JSON Pointer reference token. Per RFC 6901,
+/// `~` becomes `~0` and `/` becomes `~1`.
+fn json_pointer_escape(s: &str) -> String {
+    s.replace('~', "~0").replace('/', "~1")
+}
+
 fn read_tail(path: &Path) -> Option<String> {
     use std::fs::File;
     use std::io::{Read, Seek, SeekFrom};
@@ -210,6 +359,10 @@ pub fn cost_event_from_transcript_line(
         cache_read_tokens: usage.cache_read_input_tokens,
         cache_creation_tokens: usage.cache_creation_input_tokens,
         ts: ts_nanos,
+        // Microdollars are computed at ingest time by `event_watcher`, not
+        // here — the hook subprocess deliberately stays free of config
+        // loading and rate tables.
+        cost_microdollars: 0,
     })
 }
 
@@ -285,6 +438,7 @@ fn run_inner() -> Option<()> {
             tool_session_id: claude_sid.trim().to_string(),
             event: payload.hook_event_name.clone(),
             ts: chrono::Utc::now().timestamp(),
+            transcript_path: payload.transcript_path.clone().unwrap_or_default(),
         };
         let json = serde_json::to_vec(&file).ok()?;
         let path = paths::hooks_dir().join(format!("{}.json", instance_id));
@@ -359,7 +513,7 @@ fn run_inner() -> Option<()> {
 impl Serialize for CostEvent {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut st = s.serialize_struct("CostEvent", 7)?;
+        let mut st = s.serialize_struct("CostEvent", 8)?;
         st.serialize_field("session_id", &self.session_id)?;
         st.serialize_field("model", &self.model)?;
         st.serialize_field("input_tokens", &self.input_tokens)?;
@@ -367,6 +521,7 @@ impl Serialize for CostEvent {
         st.serialize_field("cache_read_tokens", &self.cache_read_tokens)?;
         st.serialize_field("cache_creation_tokens", &self.cache_creation_tokens)?;
         st.serialize_field("ts", &self.ts)?;
+        st.serialize_field("cost_microdollars", &self.cost_microdollars)?;
         st.end()
     }
 }
@@ -641,5 +796,188 @@ mod tests {
         let path = dir.path().join("t.jsonl");
         std::fs::write(&path, "{\"type\":\"user\",\"message\":{}}\n").unwrap();
         assert!(find_last_assistant_line(&path).is_none());
+    }
+
+    #[test]
+    fn claude_current_context_tokens_sums_last_assistant_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let user = r#"{"type":"user","message":{"role":"user","content":"hi"}}"#;
+        let old_asst = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":20,"cache_creation_input_tokens":10}}}"#;
+        let new_asst = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":500,"output_tokens":200,"cache_read_input_tokens":80,"cache_creation_input_tokens":40}}}"#;
+        std::fs::write(&path, format!("{}\n{}\n{}\n", user, old_asst, new_asst)).unwrap();
+
+        // Sum of last assistant: 500 + 200 + 80 + 40 = 820
+        assert_eq!(current_context_tokens(&path), Some(820));
+    }
+
+    #[test]
+    fn claude_current_context_tokens_none_when_no_assistant() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, "{\"type\":\"user\",\"message\":{}}\n").unwrap();
+        assert!(current_context_tokens(&path).is_none());
+    }
+
+    #[test]
+    fn is_extended_context_false_for_standard_session() {
+        // All assistant messages stay comfortably under 200k.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let a1 = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":50,"cache_read_input_tokens":80000,"cache_creation_input_tokens":2000}}}"#;
+        let a2 = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":300,"cache_read_input_tokens":120000,"cache_creation_input_tokens":3000}}}"#;
+        std::fs::write(&path, format!("{}\n{}\n", a1, a2)).unwrap();
+        assert!(!is_extended_context(&path));
+    }
+
+    #[test]
+    fn is_extended_context_true_when_assistant_usage_exceeds_200k() {
+        // Any single turn over 200k of input+cache_read+cache_creation
+        // proves the model has more than a 200k window.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let a = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":610,"cache_read_input_tokens":682574,"cache_creation_input_tokens":724}}}"#;
+        std::fs::write(&path, format!("{}\n", a)).unwrap();
+        assert!(is_extended_context(&path));
+    }
+
+    #[test]
+    fn is_extended_context_true_when_compact_boundary_pre_tokens_exceeds_200k() {
+        // After a manual compaction the assistant usage may drop back below
+        // 200k, but the compact_boundary record preserves the proof.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let compact = r#"{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":977821,"postTokens":18776}}"#;
+        let small_after = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":10,"output_tokens":50,"cache_read_input_tokens":18000,"cache_creation_input_tokens":700}}}"#;
+        std::fs::write(&path, format!("{}\n{}\n", compact, small_after)).unwrap();
+        assert!(is_extended_context(&path));
+    }
+
+    #[test]
+    fn is_extended_context_false_for_empty_or_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.jsonl");
+        assert!(!is_extended_context(&missing));
+        let empty = dir.path().join("empty.jsonl");
+        std::fs::write(&empty, "").unwrap();
+        assert!(!is_extended_context(&empty));
+    }
+
+    #[test]
+    fn is_extended_context_ignores_other_system_subtypes() {
+        // Random system messages must not be probed for compactMetadata.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let other = r#"{"type":"system","subtype":"local_command","content":"<local-command-stdout></local-command-stdout>"}"#;
+        let small = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":1,"cache_creation_input_tokens":1}}}"#;
+        std::fs::write(&path, format!("{}\n{}\n", other, small)).unwrap();
+        assert!(!is_extended_context(&path));
+    }
+
+    #[test]
+    fn project_cwd_from_transcript_finds_first_line_with_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        // Line 1 has no cwd, line 2 does — like a real Claude transcript.
+        let body = concat!(
+            r#"{"type":"last-prompt","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"attachment","cwd":"/Users/me/work","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"user","cwd":"/Users/me/work","sessionId":"s"}"#,
+            "\n",
+        );
+        std::fs::write(&path, body).unwrap();
+        assert_eq!(
+            project_cwd_from_transcript(&path),
+            Some("/Users/me/work".to_string())
+        );
+    }
+
+    #[test]
+    fn project_cwd_from_transcript_none_when_no_cwd_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, "{\"type\":\"last-prompt\"}\n").unwrap();
+        assert_eq!(project_cwd_from_transcript(&path), None);
+    }
+
+    #[test]
+    fn project_history_detects_extended_when_lastmodelusage_has_1m_variant() {
+        // Claude Code stores `lastModelUsage` with full tier-tagged
+        // model ids. Any `[1m]` Opus entry proves the user has selected
+        // the extended-context variant for this project.
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        let body = serde_json::json!({
+            "projects": {
+                "/Users/me/work": {
+                    "lastModelUsage": {
+                        "claude-haiku-4-5-20251001": { "inputTokens": 1 },
+                        "claude-opus-4-7[1m]": { "inputTokens": 100 }
+                    }
+                }
+            }
+        });
+        std::fs::write(&claude_json, serde_json::to_vec(&body).unwrap()).unwrap();
+        assert!(project_has_extended_context_history_at(
+            &claude_json,
+            "/Users/me/work"
+        ));
+    }
+
+    #[test]
+    fn project_history_returns_false_when_only_non_1m_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        let body = serde_json::json!({
+            "projects": {
+                "/Users/me/work": {
+                    "lastModelUsage": {
+                        "claude-sonnet-4-6": { "inputTokens": 100 },
+                        "claude-haiku-4-5-20251001": { "inputTokens": 50 }
+                    }
+                }
+            }
+        });
+        std::fs::write(&claude_json, serde_json::to_vec(&body).unwrap()).unwrap();
+        assert!(!project_has_extended_context_history_at(
+            &claude_json,
+            "/Users/me/work"
+        ));
+    }
+
+    #[test]
+    fn project_history_returns_false_when_project_missing_from_claude_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        std::fs::write(
+            &claude_json,
+            serde_json::to_vec(&serde_json::json!({"projects": {}})).unwrap(),
+        )
+        .unwrap();
+        assert!(!project_has_extended_context_history_at(
+            &claude_json,
+            "/Users/me/nope"
+        ));
+    }
+
+    #[test]
+    fn project_history_handles_paths_with_dashes_via_json_pointer_escape() {
+        // Project paths in `~/.claude.json` can contain characters like
+        // dashes and dots that look weird in a JSON Pointer. The escape
+        // function handles `/` → `~1`; verify a representative cwd works.
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        let cwd = "/Users/me/projects/agent-view";
+        let body = serde_json::json!({
+            "projects": {
+                cwd: {
+                    "lastModelUsage": { "claude-opus-4-7[1m]": { "inputTokens": 1 } }
+                }
+            }
+        });
+        std::fs::write(&claude_json, serde_json::to_vec(&body).unwrap()).unwrap();
+        assert!(project_has_extended_context_history_at(&claude_json, cwd));
     }
 }
