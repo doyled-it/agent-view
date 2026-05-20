@@ -181,6 +181,64 @@ pub fn current_context_tokens(path: &Path) -> Option<i64> {
     )
 }
 
+/// Detect whether a Claude transcript belongs to a session on the
+/// extended (1M) context tier rather than the default 200k. Two
+/// deterministic indicators, **either** of which proves 1M tier (since
+/// they describe values that physically can't fit in a 200k window):
+///
+/// 1. Any assistant message where `input_tokens + cache_read_input_tokens
+///    + cache_creation_input_tokens > 200_000`.
+/// 2. Any `system/compact_boundary` message where
+///    `compactMetadata.preTokens > 200_000`.
+///
+/// Returns `false` for transcripts that are empty, unreadable, or genuinely
+/// fit in 200k.
+pub fn is_extended_context(path: &Path) -> bool {
+    const STD_LIMIT: i64 = 200_000;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let reader = std::io::BufReader::new(file);
+    for line in std::io::BufRead::lines(reader).map_while(Result::ok) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        match v.get("type").and_then(|x| x.as_str()) {
+            Some("assistant") => {
+                let Some(u) = v.pointer("/message/usage") else {
+                    continue;
+                };
+                let input = u.get("input_tokens").and_then(|x| x.as_i64()).unwrap_or(0);
+                let cr = u
+                    .get("cache_read_input_tokens")
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0);
+                let cc = u
+                    .get("cache_creation_input_tokens")
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0);
+                if input + cr + cc > STD_LIMIT {
+                    return true;
+                }
+            }
+            Some("system") => {
+                if v.get("subtype").and_then(|x| x.as_str()) != Some("compact_boundary") {
+                    continue;
+                }
+                let pre = v
+                    .pointer("/compactMetadata/preTokens")
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0);
+                if pre > STD_LIMIT {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn read_tail(path: &Path) -> Option<String> {
     use std::fs::File;
     use std::io::{Read, Seek, SeekFrom};
@@ -684,5 +742,60 @@ mod tests {
         let path = dir.path().join("t.jsonl");
         std::fs::write(&path, "{\"type\":\"user\",\"message\":{}}\n").unwrap();
         assert!(current_context_tokens(&path).is_none());
+    }
+
+    #[test]
+    fn is_extended_context_false_for_standard_session() {
+        // All assistant messages stay comfortably under 200k.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let a1 = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":50,"cache_read_input_tokens":80000,"cache_creation_input_tokens":2000}}}"#;
+        let a2 = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":300,"cache_read_input_tokens":120000,"cache_creation_input_tokens":3000}}}"#;
+        std::fs::write(&path, format!("{}\n{}\n", a1, a2)).unwrap();
+        assert!(!is_extended_context(&path));
+    }
+
+    #[test]
+    fn is_extended_context_true_when_assistant_usage_exceeds_200k() {
+        // Any single turn over 200k of input+cache_read+cache_creation
+        // proves the model has more than a 200k window.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let a = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":610,"cache_read_input_tokens":682574,"cache_creation_input_tokens":724}}}"#;
+        std::fs::write(&path, format!("{}\n", a)).unwrap();
+        assert!(is_extended_context(&path));
+    }
+
+    #[test]
+    fn is_extended_context_true_when_compact_boundary_pre_tokens_exceeds_200k() {
+        // After a manual compaction the assistant usage may drop back below
+        // 200k, but the compact_boundary record preserves the proof.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let compact = r#"{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":977821,"postTokens":18776}}"#;
+        let small_after = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":10,"output_tokens":50,"cache_read_input_tokens":18000,"cache_creation_input_tokens":700}}}"#;
+        std::fs::write(&path, format!("{}\n{}\n", compact, small_after)).unwrap();
+        assert!(is_extended_context(&path));
+    }
+
+    #[test]
+    fn is_extended_context_false_for_empty_or_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.jsonl");
+        assert!(!is_extended_context(&missing));
+        let empty = dir.path().join("empty.jsonl");
+        std::fs::write(&empty, "").unwrap();
+        assert!(!is_extended_context(&empty));
+    }
+
+    #[test]
+    fn is_extended_context_ignores_other_system_subtypes() {
+        // Random system messages must not be probed for compactMetadata.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let other = r#"{"type":"system","subtype":"local_command","content":"<local-command-stdout></local-command-stdout>"}"#;
+        let small = r#"{"type":"assistant","message":{"model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":1,"cache_creation_input_tokens":1}}}"#;
+        std::fs::write(&path, format!("{}\n{}\n", other, small)).unwrap();
+        assert!(!is_extended_context(&path));
     }
 }

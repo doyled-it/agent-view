@@ -310,6 +310,7 @@ mod tests {
                 tool_session_id: Some(thread.clone()),
                 received_at: SystemTime::now(),
                 transcript_path: None,
+                claude_context_window: None,
             },
         );
         state.record_rollout_path(&thread, rollout);

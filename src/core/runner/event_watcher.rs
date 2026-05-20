@@ -34,6 +34,13 @@ pub struct HookStatus {
     /// the current context-size without scraping the tmux pane. `None`
     /// for Codex and other tools that don't expose a transcript.
     pub transcript_path: Option<String>,
+    /// For Claude sessions: the inferred context window (200_000 or
+    /// 1_000_000) based on a one-shot walk of the transcript at hook
+    /// time. Sticky once promoted to 1M, so a post-compaction transcript
+    /// that briefly looks like 200k doesn't demote the bar. `None` for
+    /// non-Claude sessions or when the transcript hasn't been observed
+    /// yet.
+    pub claude_context_window: Option<i64>,
 }
 
 /// Per-rollout-file snapshot used to keep the UI render path off the
@@ -287,11 +294,35 @@ fn process_hook_file(state: &EventStateHandle, path: &Path) {
     } else {
         Some(file.transcript_path.clone())
     };
+    // Infer the Claude context-window tier from the transcript on the
+    // watcher thread (never the render path). Sticky-up: once an earlier
+    // hook saw >200k evidence, keep the 1M decision even if a later walk
+    // happens not to find any (e.g. immediately after compaction).
+    let claude_context_window = if let Some(tp) = transcript_path.as_deref() {
+        let prev = state.lock().ok().and_then(|s| {
+            s.hook_status
+                .get(&session_id)
+                .and_then(|h| h.claude_context_window)
+        });
+        match prev {
+            Some(w) if w >= 1_000_000 => Some(1_000_000),
+            _ => {
+                if crate::core::runner::claude::hook_handler::is_extended_context(Path::new(tp)) {
+                    Some(1_000_000)
+                } else {
+                    Some(200_000)
+                }
+            }
+        }
+    } else {
+        None
+    };
     let entry = HookStatus {
         status,
         tool_session_id: tool_sid.clone(),
         received_at: SystemTime::now(),
         transcript_path,
+        claude_context_window,
     };
     // Bootstrap the rollout-path cache for Codex sessions. Identifying
     // tool from the watcher alone is heuristic — `is_valid_thread_id`

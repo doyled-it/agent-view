@@ -46,16 +46,20 @@ pub(super) fn render_session_usage_pane(frame: &mut Frame, area: Rect, app: &App
         .and_then(|s| s.cost_totals_for_session(&session.id).ok())
         .unwrap_or_default();
     let context_tokens = Some(session.tokens_used).filter(|&n| n > 0);
-    // For Codex we read the negotiated window straight out of the rollout
-    // snapshot (Codex publishes `model_context_window` per token_count
-    // event). For Claude we infer the tier from observed usage because the
-    // transcript doesn't expose the `extended-context-1m-*` beta header.
-    let codex_window = if matches!(session.tool, crate::types::Tool::Codex) {
-        codex_window_for_session(app, &session.id)
-    } else {
-        None
+    // Tool-specific window resolution:
+    //  - Codex publishes `model_context_window` per token_count event in
+    //    the rollout; the watcher's snapshot cache exposes it.
+    //  - Claude doesn't expose the extended-context beta header, but its
+    //    transcript contains deterministic indicators (assistant usage
+    //    sums, compact_boundary preTokens) that prove 1M tier. The watcher
+    //    pre-computes this once per hook update and stashes the result on
+    //    `HookStatus.claude_context_window` so render reads from cache.
+    let cached_window = match session.tool {
+        crate::types::Tool::Codex => codex_window_for_session(app, &session.id),
+        crate::types::Tool::Claude => claude_window_for_session(app, &session.id),
+        _ => None,
     };
-    let context_window = codex_window.or_else(|| context_window_for(&session.tool, context_tokens));
+    let context_window = cached_window.or_else(|| context_window_for(&session.tool));
     let show_dollars = app.config.costs.show_list_price_estimate;
 
     let lines = build_lines(
@@ -190,23 +194,13 @@ fn bar_color(theme: &Theme, percent: u8) -> Color {
     }
 }
 
-/// Fallback context window when the actual model limit isn't observable.
-/// Codex sessions never reach this branch (their rollouts publish
-/// `model_context_window` directly).
-///
-/// Claude transcripts don't expose the `extended-context-1m-*` beta
-/// header, so we infer the tier from observed usage: any session whose
-/// current context already exceeds 200 k must be on the 1 M variant. The
-/// threshold is intentionally generous (>200k, not ≥200k) so a session
-/// sitting near 200k doesn't flip-flop between tiers as `cache_read`
-/// fluctuates turn-to-turn.
-fn context_window_for(tool: &crate::types::Tool, context_tokens: Option<i64>) -> Option<i64> {
+/// Fallback context window for cold sessions where the cache hasn't been
+/// populated yet (no hook fired since startup). 200k is the safe Claude
+/// default; Codex falls back to 200k too — the real Codex value comes from
+/// the rollout the moment the first notify fires.
+fn context_window_for(tool: &crate::types::Tool) -> Option<i64> {
     match tool {
-        crate::types::Tool::Claude => match context_tokens {
-            Some(n) if n > 200_000 => Some(1_000_000),
-            _ => Some(200_000),
-        },
-        crate::types::Tool::Codex => Some(200_000),
+        crate::types::Tool::Claude | crate::types::Tool::Codex => Some(200_000),
         _ => None,
     }
 }
@@ -221,6 +215,18 @@ fn codex_window_for_session(app: &App, session_id: &str) -> Option<i64> {
     let thread = entry.tool_session_id.clone()?;
     let path = state.cached_rollout_path(&thread)?.to_path_buf();
     state.rollout_snapshot(&path).context_window
+}
+
+/// Resolve the Claude context window for a session from the hook-status
+/// cache. The watcher walks the transcript once per hook update to detect
+/// 1M vs 200k; the render path just reads `HookStatus.claude_context_window`.
+fn claude_window_for_session(app: &App, session_id: &str) -> Option<i64> {
+    let handle = app.event_state.as_ref()?;
+    let state = handle.lock().ok()?;
+    state
+        .hook_status
+        .get(session_id)
+        .and_then(|h| h.claude_context_window)
 }
 
 #[cfg(test)]
@@ -342,46 +348,29 @@ mod tests {
     }
 
     #[test]
-    fn context_window_claude_defaults_to_200k() {
-        // Cold session (no observed tokens) or a session well below 200k:
-        // standard tier, 200k window.
+    fn context_window_fallback_is_200k() {
+        // Before the watcher has observed a hook event the cache is empty;
+        // the pane falls back to 200k for Claude and Codex, None for Shell.
         assert_eq!(
-            context_window_for(&crate::types::Tool::Claude, None),
+            context_window_for(&crate::types::Tool::Claude),
             Some(200_000)
         );
         assert_eq!(
-            context_window_for(&crate::types::Tool::Claude, Some(50_000)),
+            context_window_for(&crate::types::Tool::Codex),
             Some(200_000)
         );
-        assert_eq!(
-            context_window_for(&crate::types::Tool::Claude, Some(200_000)),
-            Some(200_000)
-        );
+        assert_eq!(context_window_for(&crate::types::Tool::Shell), None);
     }
 
     #[test]
-    fn context_window_claude_promotes_to_1m_when_observed_over_200k() {
-        // The transcript doesn't expose the extended-context beta header.
-        // A session that's actually past 200k must be on the 1M variant —
-        // promote the displayed window so the percentage stays meaningful.
-        assert_eq!(
-            context_window_for(&crate::types::Tool::Claude, Some(200_001)),
-            Some(1_000_000)
-        );
-        assert_eq!(
-            context_window_for(&crate::types::Tool::Claude, Some(683_000)),
-            Some(1_000_000)
-        );
-    }
-
-    #[test]
-    fn build_lines_renders_1m_window_for_extended_context_claude() {
+    fn build_lines_renders_1m_window_when_supplied() {
         // Regression for the live-test bug: a Claude session at ~386k
-        // tokens showed `100% (386k / 200k)` because we hardcoded 200k.
-        // With the tier inference, the bar must read ~39% / 1M instead.
+        // tokens showed `100% (386k / 200k)` because we hardcoded the
+        // pane's window. With a 1M window supplied (as
+        // `claude_window_for_session` returns when the transcript triggers
+        // `is_extended_context`), the bar reads ~39% / 1M instead.
         let totals = totals(0, 0, 0, 0, 0);
-        let window = context_window_for(&crate::types::Tool::Claude, Some(386_000)).unwrap();
-        let lines = build_lines(Some(386_000), Some(window), &totals, false, &t(), 80);
+        let lines = build_lines(Some(386_000), Some(1_000_000), &totals, false, &t(), 80);
         let joined = lines_to_string(&lines);
         assert!(joined.contains("386.0k / 1.0M"));
         assert!(joined.contains(" 39%"));

@@ -324,6 +324,7 @@ mod tests {
             tool_session_id: None,
             received_at: SystemTime::now(),
             transcript_path: None,
+            claude_context_window: None,
         }
     }
 
@@ -333,6 +334,7 @@ mod tests {
             tool_session_id: None,
             received_at: SystemTime::now() - Duration::from_secs(10),
             transcript_path: None,
+            claude_context_window: None,
         }
     }
 
