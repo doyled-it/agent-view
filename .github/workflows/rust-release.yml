@@ -30,7 +30,11 @@ jobs:
             os: ubuntu-24.04-arm
             artifact: agent-view-linux-arm64-musl
           - target: x86_64-apple-darwin
-            os: macos-13
+            # Cross-compile from Apple Silicon. `macos-13` (the last Intel
+            # runner) has chronic ~50min queue waits on the free public
+            # tier; `macos-latest` with `rustup target add x86_64-apple-darwin`
+            # (the step below) produces an x86_64 binary in ~2min.
+            os: macos-latest
             artifact: agent-view-darwin-x64
           - target: aarch64-apple-darwin
             os: macos-latest
