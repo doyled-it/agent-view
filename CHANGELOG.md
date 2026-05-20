@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.11.1] - 2026-05-20
+
+### Changed
+
+- ci: native-only release matrix across 6 Linux/macOS targets (#56) (@doyled-it)
+
 ## [1.11.0] - 2026-05-20
 
 ### Changed
