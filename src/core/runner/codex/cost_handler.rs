@@ -771,11 +771,18 @@ mod tests {
         let thread = "019e289a-0f2d-73f1-94d3-d15182ff1741";
         let older = day.join(format!("rollout-2026-05-14T10-00-00-{}.jsonl", thread));
         let newer = day.join(format!("rollout-2026-05-14T22-00-00-{}.jsonl", thread));
+        // Force `newer.mtime > older.mtime` deterministically rather than
+        // relying on a sleep race. APFS reports mtime at ms granularity in
+        // theory but in practice a busy CI runner can produce ties.
         std::fs::write(&older, "{}").unwrap();
-        // Sleep briefly so the second file's mtime is strictly later. macOS
-        // and Linux both report mtime at ≥1ms granularity, so 20ms is ample.
-        std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(&newer, "{}").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&newer)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
         let found = find_rollout_for_thread(thread, dir.path()).unwrap();
         assert_eq!(found, newer, "must pick the most recently modified rollout");
     }
