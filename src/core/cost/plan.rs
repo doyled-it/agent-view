@@ -8,21 +8,16 @@ use serde::{Deserialize, Serialize};
 
 /// Subscription tier for a single runner. `Api` means "no plan — bill at
 /// API rates"; the dashboard's Saved row is suppressed for Api runners.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Plan {
+    #[default]
     Api,
     Pro,
     #[serde(rename = "max-5x")]
     Max5x,
     #[serde(rename = "max-20x")]
     Max20x,
-}
-
-impl Default for Plan {
-    fn default() -> Self {
-        Plan::Api
-    }
 }
 
 /// Flat-rate plan limits — `None` for `Plan::Api`.
@@ -112,7 +107,11 @@ mod tests {
         // 1 week of $80 API at Pro: plan-pro-rated = $20 * 7/30.4 ≈ $4.61.
         // saved ≈ $80 - $4.61 = $75.39 = 75_394_736 microdollars (±1 rounding).
         let saved = Plan::Pro.saved_vs_api(80_000_000, 7.0).unwrap();
-        assert!((75_300_000..=75_500_000).contains(&saved), "saved={}", saved);
+        assert!(
+            (75_300_000..=75_500_000).contains(&saved),
+            "saved={}",
+            saved
+        );
     }
 
     #[test]
@@ -121,9 +120,6 @@ mod tests {
             serde_json::from_str::<Plan>(r#""max-5x""#).unwrap(),
             Plan::Max5x
         );
-        assert_eq!(
-            serde_json::from_str::<Plan>(r#""api""#).unwrap(),
-            Plan::Api
-        );
+        assert_eq!(serde_json::from_str::<Plan>(r#""api""#).unwrap(), Plan::Api);
     }
 }

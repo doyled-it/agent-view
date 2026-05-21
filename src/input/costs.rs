@@ -2,7 +2,6 @@
 //! else falls through to the global keymap.
 
 use crate::app::App;
-use crate::core::cost::CostPeriod;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Returns true when the key was fully handled here and should NOT
@@ -24,6 +23,7 @@ pub fn handle_costs_key(app: &mut App, key: KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::cost::CostPeriod;
     use crossterm::event::KeyEvent;
 
     fn make_app() -> App {

@@ -20,9 +20,7 @@ pub fn build_summary_lines<'a>(
     theme: &'a Theme,
 ) -> Vec<Line<'a>> {
     let api_label_style = Style::default().fg(theme.text_muted);
-    let value_style = Style::default()
-        .fg(theme.text)
-        .add_modifier(Modifier::BOLD);
+    let value_style = Style::default().fg(theme.text).add_modifier(Modifier::BOLD);
 
     let mut lines = vec![Line::from(vec![
         Span::styled("API-rate cost      ", api_label_style),
@@ -74,10 +72,11 @@ fn plan_label(plan: Plan) -> &'static str {
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let summary = match &app.storage {
-        Some(s) => match s.lock().ok().and_then(|guard| guard.cost_summary(app.cost_period).ok()) {
-            Some(s) => s,
-            None => CostSummary::default(),
-        },
+        Some(s) => s
+            .lock()
+            .ok()
+            .and_then(|guard| guard.cost_summary(app.cost_period).ok())
+            .unwrap_or_default(),
         None => CostSummary::default(),
     };
     let plan = app
@@ -114,7 +113,9 @@ mod tests {
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect();
-        assert!(rendered.iter().any(|s: &String| s.contains("API-rate cost")));
+        assert!(rendered
+            .iter()
+            .any(|s: &String| s.contains("API-rate cost")));
         assert!(!rendered.iter().any(|s: &String| s.contains("Plan cost")));
         assert!(!rendered.iter().any(|s: &String| s.contains("Saved")));
     }

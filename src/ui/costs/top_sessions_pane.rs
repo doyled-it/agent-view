@@ -71,7 +71,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
     let now = Local::now().timestamp();
     let lines = build_top_session_lines(&rows, now, &app.theme);
-    let block = Block::default().borders(Borders::ALL).title(" Top sessions ");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Top sessions ");
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -112,11 +114,7 @@ mod tests {
             last_event_ts_unix: 1000,
         }];
         let lines = build_top_session_lines(&rows, 11_800, &t);
-        let s: String = lines[0]
-            .spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect();
+        let s: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(s.contains("agent-view/main"));
         assert!(s.contains("$18.40"));
         assert!(s.contains("3h ago"));

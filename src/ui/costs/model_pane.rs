@@ -85,11 +85,7 @@ mod tests {
         ];
         let lines = build_model_lines(&models, &t);
         assert_eq!(lines.len(), 2);
-        let first: String = lines[0]
-            .spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect();
+        let first: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(first.contains("claude-opus-4-7"));
         assert!(first.contains("$38.41"));
     }
@@ -98,7 +94,9 @@ mod tests {
     fn long_model_name_truncates() {
         assert_eq!(truncate("short", 22), "short");
         assert_eq!(
-            truncate("very-very-very-long-model-name-here", 22).chars().count(),
+            truncate("very-very-very-long-model-name-here", 22)
+                .chars()
+                .count(),
             22
         );
     }

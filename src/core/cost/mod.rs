@@ -1,14 +1,16 @@
 //! Cost computation: pricing tables, USD/microdollar arithmetic.
 
-pub mod pricing;
-pub mod plan;
-pub mod credits;
 pub mod aggregation;
+pub mod credits;
+pub mod plan;
+pub mod pricing;
 
-pub use pricing::{ModelRate, Pricer};
-pub use plan::{Plan, PlanLimits};
-pub use credits::{compute_credits, rate_for, ClaudeRate};
 pub use aggregation::{CostPeriod, CostSummary, ModelCost, RunnerCost, SessionCost};
+#[allow(unused_imports)]
+pub use credits::{compute_credits, rate_for, ClaudeRate};
+#[allow(unused_imports)]
+pub use plan::{Plan, PlanLimits};
+pub use pricing::{ModelRate, Pricer};
 
 /// Format microdollars as `$NN.NN` (USD, two decimals). Single source of
 /// truth so the cost panes can't drift on formatting.

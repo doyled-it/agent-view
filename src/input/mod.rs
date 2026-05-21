@@ -44,10 +44,11 @@ pub fn handle_main_key(
         }
     }
 
-    if app.active_tab == crate::app::ActiveTab::Costs && app.overlay == crate::app::Overlay::None {
-        if costs::handle_costs_key(app, key) {
-            return Ok(());
-        }
+    if app.active_tab == crate::app::ActiveTab::Costs
+        && app.overlay == crate::app::Overlay::None
+        && costs::handle_costs_key(app, key)
+    {
+        return Ok(());
     }
 
     match (key.modifiers, key.code) {

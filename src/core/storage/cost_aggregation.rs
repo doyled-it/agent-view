@@ -120,7 +120,7 @@ impl Storage {
         }
 
         let mut out: Vec<RunnerCost> = by_tool.into_values().collect();
-        out.sort_by(|a, b| b.microdollars.cmp(&a.microdollars));
+        out.sort_by_key(|r| std::cmp::Reverse(r.microdollars));
         Ok(out)
     }
 
@@ -305,11 +305,7 @@ mod tests {
     #[test]
     fn top_sessions_sorts_by_cost_desc_with_limit() {
         let (_d, s) = fresh_storage();
-        for (i, micro) in [
-            ("a", 10_000_000),
-            ("b", 50_000_000),
-            ("c", 25_000_000),
-        ] {
+        for (i, micro) in [("a", 10_000_000), ("b", 50_000_000), ("c", 25_000_000)] {
             make_session(&s, i, "claude", i);
             s.insert_cost_event(&CostEvent {
                 session_id: i.into(),

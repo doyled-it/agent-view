@@ -36,11 +36,7 @@ pub fn build_runner_lines<'a>(
                 .map(|c| format!("  {} credits", compact_int(c)))
                 .unwrap_or_default();
             Line::from(vec![
-                Span::raw(format!(
-                    "{:<8} ({:>5})  ",
-                    tool_label(r.tool),
-                    plan_str
-                )),
+                Span::raw(format!("{:<8} ({:>5})  ", tool_label(r.tool), plan_str)),
                 Span::raw(render_usd(r.microdollars)),
                 Span::raw(credit_str),
             ])
@@ -148,7 +144,13 @@ mod tests {
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect();
-        assert!(strs[0].contains("Claude") && strs[0].contains("Pro") && strs[0].contains("90.4M credits"));
-        assert!(strs[1].contains("Codex") && strs[1].contains("API") && !strs[1].contains("credits"));
+        assert!(
+            strs[0].contains("Claude")
+                && strs[0].contains("Pro")
+                && strs[0].contains("90.4M credits")
+        );
+        assert!(
+            strs[1].contains("Codex") && strs[1].contains("API") && !strs[1].contains("credits")
+        );
     }
 }
