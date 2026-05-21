@@ -63,7 +63,9 @@ pub fn handle_main_key(
             crate::app::ActiveTab::Routines => {
                 app.overlay = crate::app::Overlay::NewRoutine(crate::app::NewRoutineForm::new());
             }
-            crate::app::ActiveTab::Costs => {} // TODO: handled in Task 8/15
+            crate::app::ActiveTab::Costs => {
+                // No-op on Costs tab.
+            }
         },
         (KeyModifiers::SHIFT, KeyCode::Char('N')) => {
             if let Some(session) = app.selected_session() {
