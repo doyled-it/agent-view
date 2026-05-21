@@ -40,8 +40,12 @@ pub fn render(frame: &mut Frame, app: &App) {
             (area, None)
         };
 
+    // Session-scoped chrome (activity feed, quota, usage, status) is
+    // suppressed on the Costs tab — that view owns its full body area.
+    let on_costs_tab = app.active_tab == crate::app::ActiveTab::Costs;
+
     // Layout: header, body, activity feed, usage pane, footer
-    let show_feed = app.activity.show_feed && !app.activity.feed.is_empty();
+    let show_feed = !on_costs_tab && app.activity.show_feed && !app.activity.feed.is_empty();
     let feed_height = if show_feed {
         // 1 for border + 1 per event, capped at 8 lines total
         let events = app.activity.feed.len().min(7) as u16;
@@ -49,8 +53,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         0
     };
-    let selected_tool = app.selected_session().map(|s| s.tool);
-    let has_usage = app.usage_state.data.is_some();
+    let selected_tool = if on_costs_tab {
+        None
+    } else {
+        app.selected_session().map(|s| s.tool)
+    };
+    let has_usage = !on_costs_tab && app.usage_state.data.is_some();
     // Claude quota only renders when the meta-tmux scrape has produced
     // data AND the selected session is Claude. Codex quota renders
     // unconditionally for Codex sessions (it can show a placeholder while
@@ -69,7 +77,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         .as_ref()
         .map(|s| s.incidents.len())
         .unwrap_or(0);
-    let status_height = if app.status_state.data.is_some() {
+    let status_height = if !on_costs_tab && app.status_state.data.is_some() {
         // 1 border + 1 description + min(incidents, 3)
         2u16 + (status_incidents.min(3) as u16)
     } else {
@@ -112,7 +120,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
         session_usage_pane::render_session_usage_pane(frame, chunks[4], app);
     }
-    if app.status_state.data.is_some() {
+    if !on_costs_tab && app.status_state.data.is_some() {
         status_pane::render_status_pane(frame, chunks[5], app);
     }
     if let Some(ref query) = app.search_query {
