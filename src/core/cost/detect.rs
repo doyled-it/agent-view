@@ -11,27 +11,61 @@
 use crate::core::cost::Plan;
 use std::path::Path;
 
-/// Resolve a Claude `Plan` for the current user, reading
-/// `~/.claude.json` `oauthAccount.userRateLimitTier`. Returns `None`
-/// when the file is missing, unreadable, or names an unknown tier.
-///
-/// The userRateLimitTier reflects per-user billing tier even on Team
-/// accounts (where the org pays but each seat has individual limits),
-/// so it's the right signal for credit-pacing math.
-pub fn detect_claude_plan() -> Option<Plan> {
-    detect_claude_plan_at(&dirs::home_dir()?.join(".claude.json"))
+/// Detected account state from `~/.claude.json`. Both fields are
+/// independently optional so a partial detection (e.g. unknown tier but
+/// known org type) still lets the UI add some context.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClaudeAccount {
+    /// Effective per-user plan tier, mapped from `userRateLimitTier`.
+    pub plan: Option<Plan>,
+    /// Organization kind from `oauthAccount.organizationType`
+    /// (e.g. `"claude_team"`, `"individual"`). Surfaced verbatim so
+    /// new types Anthropic ships don't silently disappear.
+    pub org_type: Option<String>,
+}
+
+impl ClaudeAccount {
+    /// True when this account is a Team org (rather than an individual
+    /// subscription). Used by the renderer to add a "Team" suffix.
+    pub fn is_team(&self) -> bool {
+        self.org_type.as_deref() == Some("claude_team")
+    }
+}
+
+/// Resolve Claude account state for the current user, reading
+/// `~/.claude.json`. Returns an empty `ClaudeAccount` when the file is
+/// missing or unreadable.
+pub fn detect_claude_account() -> ClaudeAccount {
+    dirs::home_dir()
+        .map(|h| detect_claude_account_at(&h.join(".claude.json")))
+        .unwrap_or_default()
 }
 
 /// Testable variant — takes the path explicitly so fixtures don't need
 /// to write to the real `~/.claude.json`.
-pub fn detect_claude_plan_at(path: &Path) -> Option<Plan> {
-    let bytes = std::fs::read(path).ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let tier = json
-        .get("oauthAccount")?
-        .get("userRateLimitTier")?
-        .as_str()?;
-    tier_to_plan(tier)
+pub fn detect_claude_account_at(path: &Path) -> ClaudeAccount {
+    let Ok(bytes) = std::fs::read(path) else {
+        return ClaudeAccount::default();
+    };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return ClaudeAccount::default();
+    };
+    let oauth = json.get("oauthAccount");
+    let plan = oauth
+        .and_then(|o| o.get("userRateLimitTier"))
+        .and_then(|v| v.as_str())
+        .and_then(tier_to_plan);
+    let org_type = oauth
+        .and_then(|o| o.get("organizationType"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    ClaudeAccount { plan, org_type }
+}
+
+/// Plan-only convenience wrapper. Kept so existing call sites that only
+/// care about the credit-math tier don't have to thread a struct.
+pub fn detect_claude_plan() -> Option<Plan> {
+    detect_claude_account().plan
 }
 
 /// Map a `userRateLimitTier` string from Claude Code's oauth state to
@@ -70,44 +104,57 @@ mod tests {
                 }
             }"#,
         );
-        assert_eq!(detect_claude_plan_at(f.path()), Some(Plan::Max5x));
+        let acct = detect_claude_account_at(f.path());
+        assert_eq!(acct.plan, Some(Plan::Max5x));
+        assert_eq!(acct.org_type.as_deref(), Some("claude_team"));
+        assert!(acct.is_team());
     }
 
     #[test]
-    fn detects_pro_tier() {
-        let f = write_fixture(r#"{"oauthAccount":{"userRateLimitTier":"default_claude_pro"}}"#);
-        assert_eq!(detect_claude_plan_at(f.path()), Some(Plan::Pro));
+    fn detects_pro_tier_individual_account() {
+        let f = write_fixture(
+            r#"{"oauthAccount":{"organizationType":"individual","userRateLimitTier":"default_claude_pro"}}"#,
+        );
+        let acct = detect_claude_account_at(f.path());
+        assert_eq!(acct.plan, Some(Plan::Pro));
+        assert!(!acct.is_team());
     }
 
     #[test]
     fn detects_max_20x_tier() {
         let f = write_fixture(r#"{"oauthAccount":{"userRateLimitTier":"default_claude_max_20x"}}"#);
-        assert_eq!(detect_claude_plan_at(f.path()), Some(Plan::Max20x));
+        assert_eq!(detect_claude_account_at(f.path()).plan, Some(Plan::Max20x));
     }
 
     #[test]
-    fn unknown_tier_returns_none() {
-        let f = write_fixture(r#"{"oauthAccount":{"userRateLimitTier":"experimental_foo"}}"#);
-        assert_eq!(detect_claude_plan_at(f.path()), None);
-    }
-
-    #[test]
-    fn missing_file_returns_none() {
-        assert_eq!(
-            detect_claude_plan_at(Path::new("/nonexistent/path/.claude.json")),
-            None
+    fn unknown_tier_returns_none_plan_but_keeps_org() {
+        let f = write_fixture(
+            r#"{"oauthAccount":{"organizationType":"claude_team","userRateLimitTier":"experimental_foo"}}"#,
         );
+        let acct = detect_claude_account_at(f.path());
+        assert_eq!(acct.plan, None);
+        assert!(acct.is_team());
     }
 
     #[test]
-    fn missing_oauth_account_returns_none() {
+    fn missing_file_returns_default() {
+        let acct = detect_claude_account_at(Path::new("/nonexistent/path/.claude.json"));
+        assert_eq!(acct, ClaudeAccount::default());
+    }
+
+    #[test]
+    fn missing_oauth_account_returns_default() {
         let f = write_fixture(r#"{"otherKey":"value"}"#);
-        assert_eq!(detect_claude_plan_at(f.path()), None);
+        assert_eq!(detect_claude_account_at(f.path()), ClaudeAccount::default());
     }
 
     #[test]
-    fn missing_tier_field_returns_none() {
-        let f = write_fixture(r#"{"oauthAccount":{"organizationName":"MITRE"}}"#);
-        assert_eq!(detect_claude_plan_at(f.path()), None);
+    fn missing_tier_field_keeps_org_type() {
+        let f = write_fixture(
+            r#"{"oauthAccount":{"organizationType":"claude_team","organizationName":"MITRE"}}"#,
+        );
+        let acct = detect_claude_account_at(f.path());
+        assert_eq!(acct.plan, None);
+        assert!(acct.is_team());
     }
 }

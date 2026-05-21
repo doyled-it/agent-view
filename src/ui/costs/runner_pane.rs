@@ -42,7 +42,7 @@ pub fn build_runner_lines<'a>(
                 .map(|c| format!("  {} credits", compact_int(c)))
                 .unwrap_or_default();
             Line::from(vec![
-                Span::raw(format!("{:<8} ({:>7})  ", tool_label(r.tool), plan_str)),
+                Span::raw(format!("{:<8} ({:<14})  ", tool_label(r.tool), plan_str)),
                 Span::raw(render_usd(r.microdollars)),
                 Span::raw(credit_str),
             ])
@@ -89,6 +89,22 @@ fn plan_short(plan: crate::core::cost::Plan) -> &'static str {
     }
 }
 
+/// Build the display label for the Claude row from a detected account.
+/// Returns `None` when neither tier nor org type are known (so the
+/// renderer falls back to "API"). Output examples:
+///   - Max5x personal → "Max5x"
+///   - Max5x team     → "Max5x · Team"
+///   - Unknown tier on team account → "Team"
+fn claude_label_from_account(acct: &crate::core::cost::ClaudeAccount) -> Option<String> {
+    let tier = acct.plan.map(plan_short);
+    match (tier, acct.is_team()) {
+        (Some(t), true) => Some(format!("{} · Team", t)),
+        (Some(t), false) => Some(t.to_string()),
+        (None, true) => Some("Team".to_string()),
+        (None, false) => None,
+    }
+}
+
 fn compact_int(n: i64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
@@ -109,9 +125,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         None => Vec::new(),
     };
     // Runtime-detected per-runner plan labels for rows where the user
-    // hasn't pinned a value in `costs.plan`. Currently sourced from:
+    // hasn't pinned a value in `costs.plan`. Sourced from:
     //   - Codex: `rate_limits.plan_type` in any cached rollout snapshot.
-    //   - Claude: `oauthAccount.userRateLimitTier` in `~/.claude.json`.
+    //   - Claude: `oauthAccount` in `~/.claude.json` — tier maps to a
+    //     Plan, organizationType adds a "Team" suffix when applicable.
     let mut detected: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     if let Some(state) = &app.event_state {
         if let Ok(guard) = state.lock() {
@@ -120,8 +137,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             }
         }
     }
-    if let Some(plan) = crate::core::cost::detect_claude_plan() {
-        detected.insert("claude".to_string(), plan_short(plan).to_string());
+    let claude_acct = crate::core::cost::detect_claude_account();
+    if let Some(label) = claude_label_from_account(&claude_acct) {
+        detected.insert("claude".to_string(), label);
     }
     let lines = build_runner_lines(&rows, &app.config.costs.plan, &detected, &app.theme);
     let block = Block::default().borders(Borders::ALL).title(" Per-runner ");
@@ -233,5 +251,41 @@ mod tests {
             .collect();
         assert!(s.contains("Pro"));
         assert!(!s.contains("Business"));
+    }
+
+    #[test]
+    fn claude_label_individual_max5x() {
+        let acct = crate::core::cost::ClaudeAccount {
+            plan: Some(crate::core::cost::Plan::Max5x),
+            org_type: Some("individual".to_string()),
+        };
+        assert_eq!(claude_label_from_account(&acct).as_deref(), Some("Max5x"));
+    }
+
+    #[test]
+    fn claude_label_team_max5x_includes_team_suffix() {
+        let acct = crate::core::cost::ClaudeAccount {
+            plan: Some(crate::core::cost::Plan::Max5x),
+            org_type: Some("claude_team".to_string()),
+        };
+        assert_eq!(
+            claude_label_from_account(&acct).as_deref(),
+            Some("Max5x · Team")
+        );
+    }
+
+    #[test]
+    fn claude_label_team_unknown_tier_falls_back_to_team_only() {
+        let acct = crate::core::cost::ClaudeAccount {
+            plan: None,
+            org_type: Some("claude_team".to_string()),
+        };
+        assert_eq!(claude_label_from_account(&acct).as_deref(), Some("Team"));
+    }
+
+    #[test]
+    fn claude_label_empty_account_returns_none() {
+        let acct = crate::core::cost::ClaudeAccount::default();
+        assert_eq!(claude_label_from_account(&acct), None);
     }
 }
