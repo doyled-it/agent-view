@@ -6,7 +6,7 @@ Run multiple AI coding agents in parallel and manage them from a single terminal
 
 Forked from [Frayo44/agent-view](https://github.com/Frayo44/agent-view) (the original TypeScript implementation) and rewritten in Rust. The TypeScript version with additional features is preserved on the [`legacy/typescript`](https://github.com/doyled-it/agent-view/tree/legacy/typescript) branch.
 
-Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command. Note: advanced features like status detection, token tracking, and smart notifications are optimized for **Claude Code** -- other tools get basic session management.
+Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command. Hook-driven status detection is wired up for Claude Code, Codex CLI, and Gemini CLI; OpenCode and custom commands get basic session management. Token tracking is currently Claude-only.
 
 ## Supported Platforms
 

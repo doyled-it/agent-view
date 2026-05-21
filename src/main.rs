@@ -45,6 +45,10 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Internal: invoked by Gemini CLI hooks. Reads JSON payload from
+    /// stdin, writes a hook status file to ~/.agent-orchestrator/hooks/
+    /// keyed by AGENT_VIEW_SESSION_ID. Always exits 0.
+    GeminiHook,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,6 +62,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if matches!(cli.command, Some(Commands::CodexNotify { .. })) {
         crate::core::runner::codex::notify_handler::run();
+        return Ok(());
+    }
+
+    if matches!(cli.command, Some(Commands::GeminiHook)) {
+        crate::core::runner::gemini::hook_handler::run();
         return Ok(());
     }
 

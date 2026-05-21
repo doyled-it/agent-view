@@ -35,10 +35,6 @@ pub static OPENCODE: FallbackRunner = FallbackRunner {
     name: "opencode",
     launch: "opencode",
 };
-pub static GEMINI: FallbackRunner = FallbackRunner {
-    name: "gemini",
-    launch: "gemini",
-};
 pub static CUSTOM: FallbackRunner = FallbackRunner {
     name: "custom",
     launch: "bash",

@@ -6,6 +6,7 @@ pub mod claude;
 pub mod codex;
 pub mod event_watcher;
 pub mod fallback;
+pub mod gemini;
 pub mod hook_io;
 pub mod osc_title;
 pub mod shell;
@@ -82,7 +83,7 @@ pub fn runner_for(tool: Tool) -> &'static dyn Runner {
         Tool::Claude => &claude::ClaudeRunner,
         Tool::Codex => &codex::CodexRunner,
         Tool::Opencode => &fallback::OPENCODE,
-        Tool::Gemini => &fallback::GEMINI,
+        Tool::Gemini => &gemini::GeminiRunner,
         Tool::Custom => &fallback::CUSTOM,
         Tool::Shell => &shell::ShellRunner,
     }
@@ -225,7 +226,7 @@ mod tests {
             let s = runner_for(tool).parse_status("ctrl+c to interrupt");
             assert!(
                 !s.is_busy,
-                "fallback runner should not detect Claude patterns ({:?})",
+                "non-Claude runner should not detect Claude patterns ({:?})",
                 tool
             );
             assert!(!s.has_idle_prompt);
@@ -436,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_fallback_runners_report_not_implemented() {
-        for tool in [Tool::Opencode, Tool::Gemini, Tool::Custom] {
+        for tool in [Tool::Opencode, Tool::Custom] {
             assert!(
                 !runner_for(tool).is_implemented(),
                 "{:?} should still be a fallback at this stage",
@@ -446,10 +447,11 @@ mod tests {
     }
 
     #[test]
-    fn test_implemented_tools_includes_claude_codex_and_shell() {
+    fn test_implemented_tools_includes_claude_codex_gemini_and_shell() {
+        // Order follows Tool::ALL: Claude, Gemini, Codex, ..., Shell.
         assert_eq!(
             implemented_tools(),
-            vec![Tool::Claude, Tool::Codex, Tool::Shell]
+            vec![Tool::Claude, Tool::Gemini, Tool::Codex, Tool::Shell]
         );
     }
 
@@ -469,5 +471,14 @@ mod tests {
         assert_eq!(r.launch_command(), Some("codex"));
         assert!(r.is_implemented());
         assert_eq!(r.tool_data_session_id_key(), "codex_session_id");
+    }
+
+    #[test]
+    fn test_runner_for_gemini_returns_gemini_runner() {
+        let r = runner_for(Tool::Gemini);
+        assert_eq!(r.name(), "gemini");
+        assert_eq!(r.launch_command(), Some("gemini"));
+        assert!(r.is_implemented());
+        assert_eq!(r.tool_data_session_id_key(), "gemini_session_id");
     }
 }
