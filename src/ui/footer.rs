@@ -78,6 +78,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ]
                 }
             }
+            crate::app::ActiveTab::Costs => vec![], // TODO: handled in Task 15
         },
         Overlay::NewSession(_) => {
             vec![

@@ -464,6 +464,7 @@ pub fn handle_move_key(
                                 storage.load_routines().unwrap_or_default();
                             app.rebuild_routine_list_rows();
                         }
+                        crate::app::ActiveTab::Costs => {} // TODO: handled in Task 8/15
                     }
                     app.toast.message = Some(format!("Moved to {}", name));
                     app.toast.expire =

@@ -31,6 +31,7 @@ pub use state::UsageState;
 pub enum ActiveTab {
     Sessions,
     Routines,
+    Costs,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +67,7 @@ pub struct App {
     pub detail_mode: DetailPanelMode,
     pub preview: PreviewState,
     pub active_tab: ActiveTab,
+    pub cost_period: crate::core::cost::CostPeriod,
     pub routine_state: RoutineState,
     pub usage_state: UsageState,
     pub status_state: StatusPageState,
@@ -105,6 +107,7 @@ impl App {
             detail_mode: DetailPanelMode::Metadata,
             preview: PreviewState::new(),
             active_tab: ActiveTab::Sessions,
+            cost_period: crate::core::cost::CostPeriod::Week,
             routine_state: RoutineState::new(),
             usage_state: UsageState::new(),
             status_state: StatusPageState::new(),
@@ -243,7 +246,8 @@ impl App {
                 }
                 ActiveTab::Routines
             }
-            ActiveTab::Routines => ActiveTab::Sessions,
+            ActiveTab::Routines => ActiveTab::Costs,
+            ActiveTab::Costs => ActiveTab::Sessions,
         };
     }
 
@@ -692,7 +696,15 @@ mod tests {
         app.toggle_tab();
         assert_eq!(app.active_tab, ActiveTab::Routines);
         app.toggle_tab();
+        assert_eq!(app.active_tab, ActiveTab::Costs);
+        app.toggle_tab();
         assert_eq!(app.active_tab, ActiveTab::Sessions);
+    }
+
+    #[test]
+    fn cost_period_defaults_to_week() {
+        let app = App::new(false);
+        assert_eq!(app.cost_period, crate::core::cost::CostPeriod::Week);
     }
 
     #[test]
