@@ -443,11 +443,11 @@ fn run_tui(
                             crate::input::routine::handle_new_routine_key(&mut app, key, &storage);
                         }
                         crate::app::Overlay::RoutineWarning => match key.code {
-                            crossterm::event::KeyCode::Enter => {
+                            crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Tab => {
                                 app.routine_state.tab_warning_shown = true;
                                 app.overlay = crate::app::Overlay::None;
                             }
-                            crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Tab => {
+                            crossterm::event::KeyCode::Esc => {
                                 app.overlay = crate::app::Overlay::None;
                                 app.active_tab = crate::app::ActiveTab::Sessions;
                             }
