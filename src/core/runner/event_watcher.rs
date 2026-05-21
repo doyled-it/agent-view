@@ -117,6 +117,17 @@ impl EventState {
             .insert(path.to_path_buf(), snap.clone());
         snap
     }
+
+    /// Walks cached rollout snapshots for any non-empty `plan_type` string
+    /// (e.g. "business"). Used by the Costs tab to label the Codex row
+    /// when the user hasn't explicitly configured `costs.plan.codex`.
+    /// Snapshots without a parsed `rate_limits` block are skipped.
+    pub fn detected_codex_plan(&self) -> Option<String> {
+        self.rollout_snapshots
+            .values()
+            .filter_map(|snap| snap.rate_limits.as_ref()?.plan_type.clone())
+            .find(|s| !s.is_empty())
+    }
 }
 
 pub type EventStateHandle = Arc<Mutex<EventState>>;

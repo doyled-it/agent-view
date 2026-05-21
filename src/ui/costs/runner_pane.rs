@@ -15,6 +15,7 @@ use crate::ui::theme::Theme;
 pub fn build_runner_lines<'a>(
     runners: &[RunnerCost],
     plan_map: &std::collections::HashMap<String, crate::core::cost::Plan>,
+    detected_labels: &std::collections::HashMap<String, String>,
     theme: &'a Theme,
 ) -> Vec<Line<'a>> {
     if runners.is_empty() {
@@ -26,22 +27,35 @@ pub fn build_runner_lines<'a>(
     runners
         .iter()
         .map(|r| {
-            let plan_str = plan_map
-                .get(tool_key(r.tool))
-                .copied()
-                .map(plan_short)
-                .unwrap_or("API");
+            // Resolution order: explicit config plan > runtime-detected label
+            // (e.g. Codex `plan_type: "business"`) > literal "API".
+            let key = tool_key(r.tool);
+            let plan_str: String = if let Some(plan) = plan_map.get(key).copied() {
+                plan_short(plan).to_string()
+            } else if let Some(label) = detected_labels.get(key) {
+                title_case(label)
+            } else {
+                "API".to_string()
+            };
             let credit_str = r
                 .credits
                 .map(|c| format!("  {} credits", compact_int(c)))
                 .unwrap_or_default();
             Line::from(vec![
-                Span::raw(format!("{:<8} ({:>5})  ", tool_label(r.tool), plan_str)),
+                Span::raw(format!("{:<8} ({:>7})  ", tool_label(r.tool), plan_str)),
                 Span::raw(render_usd(r.microdollars)),
                 Span::raw(credit_str),
             ])
         })
         .collect()
+}
+
+fn title_case(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn tool_label(t: Tool) -> &'static str {
@@ -94,7 +108,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .unwrap_or_default(),
         None => Vec::new(),
     };
-    let lines = build_runner_lines(&rows, &app.config.costs.plan, &app.theme);
+    // Runtime-detected per-runner plan labels (Codex `plan_type` etc.) for
+    // rows where the user hasn't pinned a value in `costs.plan`.
+    let mut detected: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Some(state) = &app.event_state {
+        if let Ok(guard) = state.lock() {
+            if let Some(plan) = guard.detected_codex_plan() {
+                detected.insert("codex".to_string(), plan);
+            }
+        }
+    }
+    let lines = build_runner_lines(&rows, &app.config.costs.plan, &detected, &app.theme);
     let block = Block::default().borders(Borders::ALL).title(" Per-runner ");
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -108,7 +132,7 @@ mod tests {
     #[test]
     fn empty_runners_shows_no_events_message() {
         let t = Theme::dark();
-        let lines = build_runner_lines(&[], &HashMap::new(), &t);
+        let lines = build_runner_lines(&[], &HashMap::new(), &HashMap::new(), &t);
         let rendered: String = lines[0]
             .spans
             .iter()
@@ -139,7 +163,7 @@ mod tests {
         ];
         let mut plan_map = HashMap::new();
         plan_map.insert("claude".into(), crate::core::cost::Plan::Pro);
-        let lines = build_runner_lines(&runners, &plan_map, &t);
+        let lines = build_runner_lines(&runners, &plan_map, &HashMap::new(), &t);
         let strs: Vec<String> = lines
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -152,5 +176,57 @@ mod tests {
         assert!(
             strs[1].contains("Codex") && strs[1].contains("API") && !strs[1].contains("credits")
         );
+    }
+
+    #[test]
+    fn detected_label_shown_when_no_config_plan_set() {
+        // No `costs.plan.codex` configured but the runtime detected
+        // `plan_type: "business"` from a rollout snapshot. The row should
+        // show "Business" instead of the misleading "API".
+        let t = Theme::dark();
+        let runners = vec![RunnerCost {
+            tool: Tool::Codex,
+            microdollars: 5_130_000,
+            input_tokens: 0,
+            output_tokens: 0,
+            credits: None,
+        }];
+        let mut detected = HashMap::new();
+        detected.insert("codex".to_string(), "business".to_string());
+        let lines = build_runner_lines(&runners, &HashMap::new(), &detected, &t);
+        let s: String = lines[0]
+            .spans
+            .iter()
+            .map(|sp| sp.content.as_ref())
+            .collect();
+        assert!(s.contains("Codex"));
+        assert!(s.contains("Business"));
+        assert!(!s.contains("API"));
+    }
+
+    #[test]
+    fn config_plan_wins_over_detected_label() {
+        // When both a config Plan and a detected string are present, the
+        // explicit config value takes precedence.
+        let t = Theme::dark();
+        let runners = vec![RunnerCost {
+            tool: Tool::Codex,
+            microdollars: 5_130_000,
+            input_tokens: 0,
+            output_tokens: 0,
+            credits: None,
+        }];
+        let mut plan_map = HashMap::new();
+        plan_map.insert("codex".into(), crate::core::cost::Plan::Pro);
+        let mut detected = HashMap::new();
+        detected.insert("codex".to_string(), "business".to_string());
+        let lines = build_runner_lines(&runners, &plan_map, &detected, &t);
+        let s: String = lines[0]
+            .spans
+            .iter()
+            .map(|sp| sp.content.as_ref())
+            .collect();
+        assert!(s.contains("Pro"));
+        assert!(!s.contains("Business"));
     }
 }
