@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.11.3] - 2026-05-21
+
+### Changed
+
+- ci: build x86_64-apple-darwin via cross-compile from macos-latest (#59) (@doyled-it)
+
 ## [1.11.2] - 2026-05-20
 
 ### Changed
