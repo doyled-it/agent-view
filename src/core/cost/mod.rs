@@ -2,12 +2,14 @@
 
 pub mod aggregation;
 pub mod credits;
+pub mod detect;
 pub mod plan;
 pub mod pricing;
 
 pub use aggregation::{CostPeriod, CostSummary, ModelCost, RunnerCost, SessionCost};
 #[allow(unused_imports)]
 pub use credits::{compute_credits, rate_for, ClaudeRate};
+pub use detect::detect_claude_plan;
 #[allow(unused_imports)]
 pub use plan::{Plan, PlanLimits};
 pub use pricing::{ModelRate, Pricer};

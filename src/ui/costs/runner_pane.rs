@@ -108,8 +108,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .unwrap_or_default(),
         None => Vec::new(),
     };
-    // Runtime-detected per-runner plan labels (Codex `plan_type` etc.) for
-    // rows where the user hasn't pinned a value in `costs.plan`.
+    // Runtime-detected per-runner plan labels for rows where the user
+    // hasn't pinned a value in `costs.plan`. Currently sourced from:
+    //   - Codex: `rate_limits.plan_type` in any cached rollout snapshot.
+    //   - Claude: `oauthAccount.userRateLimitTier` in `~/.claude.json`.
     let mut detected: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     if let Some(state) = &app.event_state {
         if let Ok(guard) = state.lock() {
@@ -117,6 +119,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 detected.insert("codex".to_string(), plan);
             }
         }
+    }
+    if let Some(plan) = crate::core::cost::detect_claude_plan() {
+        detected.insert("claude".to_string(), plan_short(plan).to_string());
     }
     let lines = build_runner_lines(&rows, &app.config.costs.plan, &detected, &app.theme);
     let block = Block::default().borders(Borders::ALL).title(" Per-runner ");

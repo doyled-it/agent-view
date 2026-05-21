@@ -79,12 +79,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .unwrap_or_default(),
         None => CostSummary::default(),
     };
+    // Plan resolution: explicit config wins; otherwise fall back to the
+    // auto-detected tier from `~/.claude.json`; otherwise treat as API.
     let plan = app
         .config
         .costs
         .plan
         .get("claude")
         .copied()
+        .or_else(crate::core::cost::detect_claude_plan)
         .unwrap_or_default();
     let lines = build_summary_lines(&summary, app.cost_period, plan, &app.theme);
     let block = Block::default().borders(Borders::ALL).title(" Summary ");
