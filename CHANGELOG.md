@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.12.0] - 2026-05-21
+
+### Changed
+
+- feat(runner): GeminiRunner — replace Tool::Gemini fallback with hook-driven runner (#57) (@doyled-it)
+
 ## [1.11.3] - 2026-05-21
 
 ### Changed
