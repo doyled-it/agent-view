@@ -595,7 +595,9 @@ fn run_tui(
                         }
                     }
                 }
-                crate::app::ActiveTab::Costs => {} // TODO: handled in Task 8/15
+                crate::app::ActiveTab::Costs => {
+                    // No preview capture on Costs tab.
+                }
                 crate::app::ActiveTab::Routines => {
                     let should_capture = app
                         .preview

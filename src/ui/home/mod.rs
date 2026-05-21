@@ -95,7 +95,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         crate::app::ActiveTab::Routines => {
             crate::ui::routines::render_routine_list(frame, chunks[1], app)
         }
-        crate::app::ActiveTab::Costs => {} // TODO: handled in Task 8/15
+        crate::app::ActiveTab::Costs => {
+            crate::ui::costs::render_costs_tab(frame, chunks[1], app)
+        }
     }
     if show_feed {
         activity_feed::render_activity_feed(frame, chunks[2], app);
@@ -181,7 +183,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                     _ => {}
                 }
             }
-            crate::app::ActiveTab::Costs => {} // TODO: handled in Task 8/15
+            crate::app::ActiveTab::Costs => {
+                // Costs tab has no per-item detail panel.
+            }
         }
     }
 
