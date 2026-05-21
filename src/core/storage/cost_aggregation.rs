@@ -82,7 +82,8 @@ impl Storage {
                ce.model, \
                SUM(ce.cost_microdollars) AS microdollars, \
                SUM(ce.input_tokens) AS input_tokens, \
-               SUM(ce.output_tokens) AS output_tokens \
+               SUM(ce.output_tokens) AS output_tokens, \
+               SUM(ce.cache_creation_tokens) AS cache_creation_tokens \
              FROM cost_events ce \
              LEFT JOIN sessions s ON s.id = ce.session_id \
              WHERE ce.ts >= ?1 \
@@ -95,15 +96,16 @@ impl Storage {
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
                 r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
             ))
         })?;
 
         use std::collections::BTreeMap;
         let mut by_tool: BTreeMap<Tool, RunnerCost> = BTreeMap::new();
         for row in rows {
-            let (tool_str, model, micro, input, output) = row?;
+            let (tool_str, model, micro, input, output, cache_write) = row?;
             let tool = Tool::from_str(&tool_str);
-            let credits = compute_credits(&model, input, output);
+            let credits = compute_credits(&model, input, output, cache_write);
             let entry = by_tool.entry(tool).or_insert_with(|| RunnerCost {
                 tool,
                 microdollars: 0,
@@ -130,7 +132,8 @@ impl Storage {
             "SELECT model, \
                     SUM(cost_microdollars) AS micro, \
                     SUM(input_tokens) AS input, \
-                    SUM(output_tokens) AS output \
+                    SUM(output_tokens) AS output, \
+                    SUM(cache_creation_tokens) AS cache_write \
              FROM cost_events WHERE ts >= ?1 \
              GROUP BY model ORDER BY micro DESC",
         )?;
@@ -140,8 +143,9 @@ impl Storage {
                 let micro: i64 = r.get(1)?;
                 let input: i64 = r.get(2)?;
                 let output: i64 = r.get(3)?;
+                let cache_write: i64 = r.get(4)?;
                 Ok(ModelCost {
-                    credits: compute_credits(&model, input, output),
+                    credits: compute_credits(&model, input, output, cache_write),
                     model,
                     microdollars: micro,
                 })
