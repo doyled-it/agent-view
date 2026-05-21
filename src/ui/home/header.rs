@@ -64,6 +64,18 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &App) {
                 muted_style
             },
         ),
+        Span::styled(" ", muted_style),
+        Span::styled(
+            " Costs ",
+            if active_tab == ActiveTab::Costs {
+                Style::default()
+                    .fg(theme.selected_item_text)
+                    .bg(theme.primary)
+                    .bold()
+            } else {
+                muted_style
+            },
+        ),
         Span::styled(
             format!("  v{}", version),
             Style::default().fg(theme.text_muted),
