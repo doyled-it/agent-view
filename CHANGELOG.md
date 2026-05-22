@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.0] - 2026-05-22
+
+### Changed
+
+- feat(cost): top-level Costs tab with per-runner / per-model / top-sessions breakdowns (#60) (@doyled-it)
+
 ## [1.12.0] - 2026-05-21
 
 ### Changed
