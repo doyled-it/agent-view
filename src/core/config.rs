@@ -1,6 +1,6 @@
 //! Configuration loading from ~/.agent-view/config.json
 
-use crate::core::cost::{ModelRate, Pricer};
+use crate::core::cost::{ModelRate, Plan, Pricer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -26,6 +26,11 @@ pub struct CostsConfig {
     /// preview) where the list-price number is misleading.
     #[serde(default)]
     pub show_list_price_estimate: bool,
+
+    /// Per-runner subscription plan keyed by tool name ("claude" /
+    /// "codex" / "gemini"). Missing keys default to `Plan::Api`.
+    #[serde(default)]
+    pub plan: HashMap<String, Plan>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,5 +341,26 @@ mod tests {
         assert_eq!(restored.theme, config.theme);
         assert_eq!(restored.default_group, config.default_group);
         assert_eq!(restored.notifications.sound, config.notifications.sound);
+    }
+}
+
+#[cfg(test)]
+mod plan_config_tests {
+    use super::*;
+    use crate::core::cost::Plan;
+
+    #[test]
+    fn parses_per_runner_plan_map() {
+        let json = r#"{"costs":{"plan":{"claude":"pro","codex":"api","gemini":"max-5x"}}}"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.costs.plan.get("claude"), Some(&Plan::Pro));
+        assert_eq!(cfg.costs.plan.get("codex"), Some(&Plan::Api));
+        assert_eq!(cfg.costs.plan.get("gemini"), Some(&Plan::Max5x));
+    }
+
+    #[test]
+    fn missing_plan_map_defaults_to_empty() {
+        let cfg: AppConfig = serde_json::from_str("{}").unwrap();
+        assert!(cfg.costs.plan.is_empty());
     }
 }

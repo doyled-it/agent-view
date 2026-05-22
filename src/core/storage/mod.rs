@@ -5,6 +5,7 @@ use rusqlite::{Connection, Result as SqlResult};
 use std::fs;
 use std::path::Path;
 
+mod cost_aggregation;
 mod cost_events;
 mod groups;
 mod meta;

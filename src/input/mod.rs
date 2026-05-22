@@ -1,3 +1,4 @@
+pub mod costs;
 pub mod export;
 pub mod overlay;
 pub mod routine;
@@ -43,6 +44,13 @@ pub fn handle_main_key(
         }
     }
 
+    if app.active_tab == crate::app::ActiveTab::Costs
+        && app.overlay == crate::app::Overlay::None
+        && costs::handle_costs_key(app, key)
+    {
+        return Ok(());
+    }
+
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
             app.should_quit = true;
@@ -62,6 +70,9 @@ pub fn handle_main_key(
             }
             crate::app::ActiveTab::Routines => {
                 app.overlay = crate::app::Overlay::NewRoutine(crate::app::NewRoutineForm::new());
+            }
+            crate::app::ActiveTab::Costs => {
+                // No-op on Costs tab.
             }
         },
         (KeyModifiers::SHIFT, KeyCode::Char('N')) => {

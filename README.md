@@ -72,6 +72,28 @@ A usage pane at the bottom of the screen shows your Claude account rate limits w
 
 This works by running a hidden tmux session that periodically queries Claude's `/usage` command. The hidden session is automatically created on startup and cleaned up on exit -- it does not appear in the session list.
 
+### Cost Dashboard
+
+Press `Tab` until you reach the **Costs** tab to see an aggregated breakdown of `cost_events` across all sessions:
+
+- API-rate cost for the selected period (Today / This week / This month / All time)
+- For Claude Pro/Max subscribers: pro-rated plan cost and "Saved vs. API" line. Configure via `costs.plan` in `~/.agent-view/config.json`:
+
+  ```json
+  {
+    "costs": {
+      "plan": {
+        "claude": "pro"
+      }
+    }
+  }
+  ```
+
+  Accepted values: `api`, `pro`, `max-5x`, `max-20x`. Codex and Gemini default to `api` regardless of config.
+- Per-runner totals (Claude/Codex/Gemini), per-model breakdown, top 10 most-expensive sessions.
+
+Use `←` / `→` to rotate the time period.
+
 ### Scheduled Routines
 
 Routines let you schedule recurring tasks that run automatically via system-level jobs (macOS LaunchAgent). Press `Tab` to switch to the Routines tab.

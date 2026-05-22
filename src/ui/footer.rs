@@ -78,6 +78,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     ]
                 }
             }
+            crate::app::ActiveTab::Costs => vec![
+                ("\u{2190}/\u{2192}", "period"),
+                ("Tab", "sessions"),
+                ("?", "help"),
+            ],
         },
         Overlay::NewSession(_) => {
             vec![
