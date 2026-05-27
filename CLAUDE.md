@@ -5,19 +5,22 @@ Rust/ratatui terminal UI for managing AI coding agent sessions via tmux.
 ## Build & Test
 
 ```bash
-cargo build            # Debug build
-cargo build --release  # Release build
-cargo test             # Run all tests
-cargo fmt --check      # Check formatting
-cargo clippy -- -D warnings  # Lint (warnings are errors in CI)
+cargo fmt --check                                      # Check formatting
+cargo clippy --all-targets --all-features -- -D warnings  # Lint all targets/features
+cargo test --all-features                              # Run all tests/features
+cargo build --release --all-features                   # Release build
 ```
 
-The Rust toolchain is pinned in `rust-toolchain.toml` — both local and CI run the same `cargo`/`clippy`/`rustfmt`, so a green local `clippy --all-targets -- -D warnings` matches CI exactly. Bump the pin periodically (every release cycle or sooner). When you bump, run clippy + tests on a feature branch and resolve any new lints in the same PR — that surfaces new lint sets before they hit other contributors.
+The Rust toolchain is pinned in `rust-toolchain.toml` — both local and CI run the same `cargo`/`clippy`/`rustfmt`, so a green local `cargo clippy --all-targets --all-features -- -D warnings` matches CI exactly. Bump the pin periodically (every release cycle or sooner). When you bump, run clippy + tests on a feature branch and resolve any new lints in the same PR — that surfaces new lint sets before they hit other contributors.
+
+`AGENTS.md`, `.pre-commit-config.yaml`, GitHub Actions, and GitLab CI should
+stay in sync with the commands above. If one command changes, update all four
+places in the same commit.
 
 ## Code Style
 
-- Run `cargo fmt` and `cargo clippy -- -D warnings` before every commit
-- Pre-commit hooks enforce fmt and clippy — do not skip with `--no-verify`
+- Run `pre-commit run --all-files` before every commit when available; otherwise run the four commands above directly.
+- Pre-commit hooks mirror CI — do not skip with `--no-verify`
 - Prefer match guards over if-blocks inside match arms (clippy `collapsible_match`)
 
 ## Architecture

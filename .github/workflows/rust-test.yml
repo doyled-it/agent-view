@@ -26,7 +26,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
     name: Test
@@ -44,7 +44,7 @@ jobs:
       - name: Install tmux (macOS)
         if: runner.os == 'macOS'
         run: brew install tmux || true
-      - run: cargo test
+      - run: cargo test --all-features
 
   build:
     name: Build Release
@@ -53,4 +53,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
+      - run: cargo build --release --all-features
