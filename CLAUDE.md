@@ -13,14 +13,16 @@ cargo build --release --all-features                   # Release build
 
 The Rust toolchain is pinned in `rust-toolchain.toml` — both local and CI run the same `cargo`/`clippy`/`rustfmt`, so a green local `cargo clippy --all-targets --all-features -- -D warnings` matches CI exactly. Bump the pin periodically (every release cycle or sooner). When you bump, run clippy + tests on a feature branch and resolve any new lints in the same PR — that surfaces new lint sets before they hit other contributors.
 
-`AGENTS.md`, `.pre-commit-config.yaml`, GitHub Actions, and GitLab CI should
-stay in sync with the commands above. If one command changes, update all four
+`AGENTS.md`, `prek.toml`, GitHub Actions, and GitLab CI should stay in sync
+with the commands above. If one command changes, update all four
 places in the same commit.
 
 ## Code Style
 
-- Run `pre-commit run --all-files` before every commit when available; otherwise run the four commands above directly.
-- Pre-commit hooks mirror CI — do not skip with `--no-verify`
+- Use `prek` as the Rust-native hook runner for `prek.toml`.
+- Install hooks with `cargo install --locked prek && prek install`.
+- Run `prek run --all-files` before every commit when available; otherwise run the four commands above directly.
+- Hooks mirror CI — do not skip with `--no-verify`
 - Prefer match guards over if-blocks inside match arms (clippy `collapsible_match`)
 
 ## Architecture

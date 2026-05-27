@@ -6,7 +6,7 @@ architecture instructions.
 
 ## Required Local Gates
 
-Run the same commands as CI and pre-commit before committing or pushing:
+Run the same commands as CI and hooks before committing or pushing:
 
 ```bash
 cargo fmt --check
@@ -15,8 +15,18 @@ cargo test --all-features
 cargo build --release --all-features
 ```
 
-If `pre-commit` is installed, `pre-commit run --all-files` runs these same
-checks.
+Use `prek` as the Rust-native hook runner:
+
+```bash
+cargo install --locked prek
+prek install
+prek run --all-files
+```
+
+Cargo does not have a Poetry/uv-style developer dependency group for standalone
+tools; `[dev-dependencies]` are for crates linked into tests/examples/benches.
+Keep `prek` as a local developer tool and keep `prek.toml` as the tracked hook
+configuration.
 
 ## Repository Notes
 
