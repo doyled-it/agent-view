@@ -88,6 +88,8 @@ pub fn attach_inspect_session_sync(session_name: &str, run_id: &str) -> TmuxResu
         ])
         .output();
 
+    let _text_style_guard = super::terminal::normalize_text_styles_for_attached_client();
+
     // Attach — blocks until detach
     let result = Command::new("tmux")
         .args(["attach-session", "-t", session_name])

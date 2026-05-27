@@ -3,6 +3,7 @@
 mod attach;
 mod error;
 mod inspect;
+mod terminal;
 
 pub use attach::attach_session_sync;
 pub use error::{TmuxError, TmuxResult};

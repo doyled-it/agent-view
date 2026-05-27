@@ -35,24 +35,13 @@ fn convert_core_style(s: ratatui_core::style::Style) -> Style {
     if let Some(fg) = s.fg {
         out = out.fg(convert_core_color(fg));
     }
-    if let Some(bg) = s.bg {
-        out = out.bg(convert_core_color(bg));
-    }
     if s.add_modifier.contains(ratatui_core::style::Modifier::BOLD) {
         out = out.bold();
-    }
-    if s.add_modifier
-        .contains(ratatui_core::style::Modifier::ITALIC)
-    {
-        out = out.italic();
     }
     if s.add_modifier
         .contains(ratatui_core::style::Modifier::UNDERLINED)
     {
         out = out.underlined();
-    }
-    if s.add_modifier.contains(ratatui_core::style::Modifier::DIM) {
-        out = out.dim();
     }
     if s.add_modifier
         .contains(ratatui_core::style::Modifier::CROSSED_OUT)
@@ -80,4 +69,69 @@ pub(super) fn convert_core_line(l: ratatui_core::text::Line<'_>) -> Line<'_> {
             .map(convert_core_span)
             .collect::<Vec<_>>(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Modifier;
+    use ratatui_core::style::Modifier as CoreModifier;
+    use ratatui_core::style::{Color as CoreColor, Style as CoreStyle};
+    use ratatui_core::text::{Line as CoreLine, Span as CoreSpan};
+
+    fn converted_background(bg: CoreColor) -> Option<Color> {
+        let source = CoreLine::from(vec![CoreSpan::styled(
+            "output",
+            CoreStyle::default().fg(CoreColor::White).bg(bg),
+        )]);
+
+        let converted = convert_core_line(source);
+        let span = &converted.spans[0];
+        assert_eq!(span.style.fg, Some(Color::White));
+        span.style.bg
+    }
+
+    #[test]
+    fn drops_default_black_backgrounds_from_preview_spans() {
+        for bg in [
+            CoreColor::Black,
+            CoreColor::Indexed(0),
+            CoreColor::Rgb(0, 0, 0),
+        ] {
+            assert_eq!(converted_background(bg), None);
+        }
+    }
+
+    #[test]
+    fn drops_colored_backgrounds_from_preview_spans() {
+        assert_eq!(converted_background(CoreColor::Red), None);
+    }
+
+    #[test]
+    fn drops_dim_modifier_from_preview_spans() {
+        let source = CoreLine::from(vec![CoreSpan::styled(
+            "output",
+            CoreStyle::default().add_modifier(CoreModifier::DIM | CoreModifier::BOLD),
+        )]);
+
+        let converted = convert_core_line(source);
+        let modifiers = converted.spans[0].style.add_modifier;
+
+        assert!(!modifiers.contains(Modifier::DIM));
+        assert!(modifiers.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn drops_italic_modifier_from_preview_spans() {
+        let source = CoreLine::from(vec![CoreSpan::styled(
+            "recap",
+            CoreStyle::default().add_modifier(CoreModifier::ITALIC | CoreModifier::BOLD),
+        )]);
+
+        let converted = convert_core_line(source);
+        let modifiers = converted.spans[0].style.add_modifier;
+
+        assert!(!modifiers.contains(Modifier::ITALIC));
+        assert!(modifiers.contains(Modifier::BOLD));
+    }
 }
