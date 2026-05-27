@@ -13,7 +13,7 @@ pub(super) fn render_activity_feed(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let block = Block::default()
         .title(" Activity ")
-        .title_style(Style::default().fg(theme.text_muted))
+        .title_style(super::pane_title_style(theme))
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.border));
 
