@@ -146,6 +146,29 @@ cargo build --release
 cp target/release/agent-view ~/.local/bin/
 ```
 
+## Contributing
+
+This repo uses the Rust-native hook runner [`prek`](https://github.com/j178/prek)
+with the tracked native `prek.toml` config. Cargo does not have a Poetry/uv-style
+developer dependency group for standalone tools; `[dev-dependencies]` are for
+crates linked into tests/examples/benches. Install `prek` as a local developer
+tool instead:
+
+```bash
+cargo install --locked prek
+prek install
+prek run --all-files
+```
+
+The hook config mirrors CI and runs:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+cargo build --release --all-features
+```
+
 ### Uninstall
 
 ```bash

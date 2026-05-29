@@ -16,6 +16,7 @@ use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Overlay};
+use crate::ui::theme::Theme;
 
 /// Main render function for the home screen
 pub fn render(frame: &mut Frame, app: &App) {
@@ -231,5 +232,169 @@ pub fn render(frame: &mut Frame, app: &App) {
             crate::ui::overlay::render_routine_warning(frame, area, &app.theme);
         }
         Overlay::None => {}
+    }
+}
+
+fn pane_title_style(theme: &Theme) -> Style {
+    Style::default().fg(theme.primary).bold()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::style::Modifier;
+    use ratatui::Terminal;
+
+    use crate::app::App;
+    use crate::core::groups::ListRow;
+    use crate::types::{
+        ActivityEvent, Group, Session, SessionStatus, StatusIndicator, StatusPageData, Tool,
+        UsageBucket, UsageData,
+    };
+
+    fn make_session(tool: Tool) -> Session {
+        Session {
+            id: "session-1".to_string(),
+            title: "agent-view".to_string(),
+            project_path: "/tmp".to_string(),
+            group_path: "active".to_string(),
+            order: 0,
+            command: String::new(),
+            wrapper: String::new(),
+            tool,
+            status: SessionStatus::Idle,
+            tmux_session: "agent-view".to_string(),
+            created_at: 0,
+            last_accessed: 0,
+            parent_session_id: String::new(),
+            worktree_path: String::new(),
+            worktree_repo: String::new(),
+            worktree_branch: String::new(),
+            tool_data: "{}".to_string(),
+            acknowledged: false,
+            notify: false,
+            follow_up: false,
+            status_changed_at: 0,
+            restart_count: 0,
+            last_started_at: 0,
+            notes: vec![],
+            status_history: vec![],
+            pinned: false,
+            tokens_used: 0,
+        }
+    }
+
+    fn app_with_selected_session(tool: Tool) -> App {
+        let mut app = App::new(false);
+        app.groups = vec![Group {
+            path: "active".to_string(),
+            name: "Active".to_string(),
+            expanded: true,
+            order: 0,
+            default_path: String::new(),
+        }];
+        app.sessions = vec![make_session(tool)];
+        app.rebuild_list_rows();
+        app.selected_index = app
+            .list_rows
+            .iter()
+            .position(|row| matches!(row, ListRow::Session(_)))
+            .expect("test app should include a session row");
+        app
+    }
+
+    fn render_panel(render: impl FnOnce(&mut ratatui::Frame, Rect)) -> Buffer {
+        let backend = TestBackend::new(48, 4);
+        let mut terminal = Terminal::new(backend).expect("test backend should initialize");
+        terminal
+            .draw(|frame| render(frame, frame.area()))
+            .expect("panel should render");
+        terminal.backend().buffer().clone()
+    }
+
+    fn assert_title_uses_primary_bold(buffer: &Buffer, title: &str, app: &App) {
+        let area = buffer.area;
+        let (x_start, y_start) = (0..area.height)
+            .find_map(|y| {
+                (0..=area.width.saturating_sub(title.len() as u16))
+                    .find(|&x| {
+                        title.chars().enumerate().all(|(offset, ch)| {
+                            buffer
+                                .cell((x + offset as u16, y))
+                                .is_some_and(|cell| cell.symbol() == ch.to_string())
+                        })
+                    })
+                    .map(|x| (x, y))
+            })
+            .unwrap_or_else(|| panic!("expected title {title:?} in rendered buffer"));
+
+        for (offset, ch) in title.chars().enumerate() {
+            if ch == ' ' {
+                continue;
+            }
+            let cell = buffer
+                .cell((x_start + offset as u16, y_start))
+                .expect("title cell should exist");
+            assert_eq!(cell.fg, app.theme.primary, "title {title:?} foreground");
+            assert!(
+                cell.modifier.contains(Modifier::BOLD),
+                "title {title:?} should be bold"
+            );
+        }
+    }
+
+    #[test]
+    fn bottom_left_panel_titles_match_detail_panel_title_style() {
+        let mut app = app_with_selected_session(Tool::Codex);
+        app.push_activity(ActivityEvent {
+            session_title: "agent-view".to_string(),
+            new_status: SessionStatus::Running,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        });
+        app.status_state.data = Some(StatusPageData {
+            indicator: StatusIndicator::None,
+            description: "all systems operational".to_string(),
+            incidents: vec![],
+            last_updated: 0,
+        });
+
+        let activity = render_panel(|frame, area| {
+            activity_feed::render_activity_feed(frame, area, &app);
+        });
+        assert_title_uses_primary_bold(&activity, "Activity", &app);
+
+        let codex_quota = render_panel(|frame, area| {
+            codex_quota_pane::render_codex_quota_pane(frame, area, &app);
+        });
+        assert_title_uses_primary_bold(&codex_quota, "Codex Quota", &app);
+
+        let session_usage = render_panel(|frame, area| {
+            session_usage_pane::render_session_usage_pane(frame, area, &app);
+        });
+        assert_title_uses_primary_bold(&session_usage, "Session", &app);
+
+        let status = render_panel(|frame, area| {
+            status_pane::render_status_pane(frame, area, &app);
+        });
+        assert_title_uses_primary_bold(&status, "Claude Status", &app);
+
+        let mut claude_app = app_with_selected_session(Tool::Claude);
+        claude_app.usage_state.data = Some(UsageData {
+            session: Some(UsageBucket {
+                label: "session".to_string(),
+                percent: 10,
+                resets: "12pm (America/Los_Angeles)".to_string(),
+            }),
+            week_all: None,
+            week_sonnet: None,
+            last_updated: chrono::Utc::now().timestamp_millis(),
+        });
+        let claude_usage = render_panel(|frame, area| {
+            claude_quota_pane::render_claude_quota_pane(frame, area, &claude_app);
+        });
+        assert_title_uses_primary_bold(&claude_usage, "Usage", &claude_app);
     }
 }

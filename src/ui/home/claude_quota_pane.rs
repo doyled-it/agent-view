@@ -35,7 +35,7 @@ pub(super) fn render_claude_quota_pane(frame: &mut Frame, area: Rect, app: &App)
 
     let block = Block::default()
         .title(title)
-        .title_style(Style::default().fg(theme.text_muted))
+        .title_style(super::pane_title_style(theme))
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.border));
 

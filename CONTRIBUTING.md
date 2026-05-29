@@ -6,16 +6,16 @@ Thanks for your interest in contributing! Agent View is a Rust/ratatui terminal 
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (stable toolchain; CI uses `rust:latest`)
+- [Rust](https://rustup.rs/) (the toolchain is pinned in `rust-toolchain.toml`)
 - [tmux](https://github.com/tmux/tmux)
-- [pre-commit](https://pre-commit.com/) (`pip install pre-commit` or `brew install pre-commit`)
+- [prek](https://github.com/j178/prek) (`cargo install --locked prek`)
 
 ### Setup
 
 ```bash
 git clone https://github.com/doyled-it/agent-view.git
 cd agent-view
-pre-commit install
+prek install
 cargo build
 cargo test
 ```
@@ -26,22 +26,29 @@ cargo test
 2. **Make your changes.** Keep commits focused and follow the commit-message conventions below.
 3. **Run the full check locally** before pushing:
    ```bash
-   cargo fmt
-   cargo clippy -- -D warnings
-   cargo test
+   cargo fmt --check
+   cargo clippy --all-targets --all-features -- -D warnings
+   cargo test --all-features
+   cargo build --release --all-features
    ```
-   CI runs `rust:latest`, which may be newer than your local toolchain. If you have nightly available, `rustup run nightly cargo clippy -- -D warnings` catches upcoming lint changes.
+   These are the same commands run by `prek run --all-files` and CI.
 4. **Push your branch and open a pull request** against `main`. Fill out the PR template.
 5. **Apply a version label** (see below) so the release automation can pick the right semver bump on merge.
 
-### Pre-commit Hooks
+### Commit Hooks
 
-The repository uses [pre-commit](https://pre-commit.com/) with hooks for `cargo fmt` and `cargo clippy`. Do **not** bypass hooks with `--no-verify` -- if a hook fails, fix the underlying issue and commit again.
+The repository uses [prek](https://github.com/j178/prek) with the tracked native
+`prek.toml` config. Cargo does not have a Poetry/uv-style developer dependency
+group for standalone tools; `[dev-dependencies]` are for crates linked into
+tests/examples/benches. Keep `prek` installed as a local developer tool.
+
+Do **not** bypass hooks with `--no-verify` -- if a hook fails, fix the
+underlying issue and commit again.
 
 ## Code Style
 
 - `cargo fmt` is the source of truth for formatting.
-- `cargo clippy -- -D warnings` must be clean; warnings are errors in CI.
+- `cargo clippy --all-targets --all-features -- -D warnings` must be clean; warnings are errors in CI.
 - Prefer match guards over `if`-blocks inside match arms (clippy `collapsible_match`).
 - Keep layer boundaries intact:
   - `src/core/` -- business logic, storage, tmux integration. No UI imports.
