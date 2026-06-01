@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.1] - 2026-06-01
+
+### Changed
+
+- fix(ui): align Codex quota pane body inset (#63) (@doyled-it)
+
 ## [1.13.0] - 2026-05-22
 
 ### Changed
