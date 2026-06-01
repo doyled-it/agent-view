@@ -49,7 +49,7 @@ pub(super) fn build_quota_lines(
     info: Option<&RateLimitInfo>,
     theme: &crate::ui::theme::Theme,
 ) -> Vec<Line<'static>> {
-    match info {
+    let lines = match info {
         None => vec![Line::from(Span::styled(
             "No quota data yet — session has not produced a token_count event.",
             Style::default().fg(theme.text_muted),
@@ -70,7 +70,19 @@ pub(super) fn build_quota_lines(
             )),
         ],
         Some(rl) => render_windows(rl, theme),
-    }
+    };
+
+    inset_body_lines(lines)
+}
+
+fn inset_body_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|mut line| {
+            line.spans.insert(0, Span::raw(" "));
+            line
+        })
+        .collect()
 }
 
 fn render_windows(rl: &RateLimitInfo, theme: &crate::ui::theme::Theme) -> Vec<Line<'static>> {
@@ -123,12 +135,37 @@ mod tests {
         s
     }
 
+    fn line_to_string(line: &Line) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
     #[test]
     fn build_quota_lines_none_renders_placeholder() {
         let theme = Theme::dark();
         let out = build_quota_lines(None, &theme);
         let joined = lines_to_string(&out);
         assert!(joined.contains("No quota data yet"));
+    }
+
+    #[test]
+    fn build_quota_lines_reserves_body_inset() {
+        let theme = Theme::dark();
+        let info = RateLimitInfo {
+            primary: None,
+            secondary: None,
+            unlimited_preview: true,
+            plan_type: Some("business".to_string()),
+        };
+
+        let out = build_quota_lines(Some(&info), &theme);
+
+        assert!(out
+            .iter()
+            .map(line_to_string)
+            .all(|line| line.starts_with(' ')));
     }
 
     #[test]
