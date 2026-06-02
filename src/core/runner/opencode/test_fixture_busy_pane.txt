@@ -1,0 +1,5 @@
+opencode 1.2.6
+
+> inspect the repo
+
+● working (2s, esc to interrupt)

@@ -1,0 +1,6 @@
+OpenCode wants permission to run a shell command:
+
+ls -la /tmp
+
+> 1. Allow once
+  2. Deny
