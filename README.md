@@ -6,7 +6,7 @@ Run multiple AI coding agents in parallel and manage them from a single terminal
 
 Forked from [Frayo44/agent-view](https://github.com/Frayo44/agent-view) (the original TypeScript implementation) and rewritten in Rust. The TypeScript version with additional features is preserved on the [`legacy/typescript`](https://github.com/doyled-it/agent-view/tree/legacy/typescript) branch.
 
-Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command. Hook-driven status detection is wired up for Claude Code, Codex CLI, and Gemini CLI; OpenCode and custom commands get basic session management. Token tracking is currently Claude-only.
+Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command. Tool-specific status detection is wired up for Claude Code, Codex CLI, Gemini CLI, and OpenCode; custom commands get basic session management. Token tracking is currently Claude-only.
 
 ## Supported Platforms
 
@@ -63,6 +63,8 @@ Agent View monitors sessions and shows real-time status:
 | Stopped | Session was stopped manually |
 | Crashed | tmux session is no longer running |
 | Error | Something went wrong |
+
+Claude Code, Codex CLI, Gemini CLI, and OpenCode use runner-specific hooks, pane parsing, or both to surface these states. Custom commands use basic tmux lifecycle detection.
 
 Sessions are sorted with the most attention-needing states first (Crashed, Waiting, Draft, Paused), so anything wanting your eyes floats to the top of the list.
 
