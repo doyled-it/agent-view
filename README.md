@@ -66,6 +66,15 @@ Agent View monitors sessions and shows real-time status:
 
 Claude Code, Codex CLI, Gemini CLI, and OpenCode use runner-specific hooks, pane parsing, or both to surface these states. Custom commands use basic tmux lifecycle detection.
 
+For OpenCode, Agent View installs a global plugin at
+`~/.config/opencode/plugins/agent-view.js` that forwards `session.created`,
+`session.status`, `session.idle`, `session.compacted`, `session.error`,
+`permission.asked`, `permission.updated`, and `permission.replied`.
+`session.status` maps busy, active, or running to Running; idle to Idle; and
+retry or error to Error. Permission asked or updated maps to Waiting, and
+permission replied maps back to Running. Pane parsing still covers idle, busy,
+waiting, exited, and draft states when hook data is absent.
+
 Sessions are sorted with the most attention-needing states first (Crashed, Waiting, Draft, Paused), so anything wanting your eyes floats to the top of the list.
 
 ### Account Usage Tracking
