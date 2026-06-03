@@ -273,6 +273,27 @@ pub fn handle_main_key(
                 }
             }
         }
+        (KeyModifiers::NONE, KeyCode::Char('w')) => {
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.user_waiting;
+                let id = session.id.clone();
+                let title = session.title.clone();
+                let _ = storage.set_user_waiting(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.groups = storage.load_groups().unwrap_or_default();
+                    app.rebuild_list_rows();
+                }
+                let msg = if new_val {
+                    format!("Waiting on: {}", title)
+                } else {
+                    format!("No longer waiting: {}", title)
+                };
+                app.toast.message = Some(msg);
+                app.toast.expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            }
+        }
         (KeyModifiers::NONE, KeyCode::Char('e')) => {
             if let Some(session) = app.selected_session() {
                 if !session.tmux_session.is_empty() {

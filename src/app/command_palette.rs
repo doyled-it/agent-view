@@ -23,6 +23,7 @@ pub enum CommandAction {
     MoveSession,
     ToggleNotify,
     ToggleFollowUp,
+    ToggleUserWaiting,
     ExportLog,
     CreateGroup,
     DeleteGroup,
@@ -92,6 +93,11 @@ impl CommandPalette {
                 label: "Toggle Follow-up".to_string(),
                 key_hint: "i".to_string(),
                 action: CommandAction::ToggleFollowUp,
+            },
+            CommandItem {
+                label: "Toggle Waiting Marker".to_string(),
+                key_hint: "w".to_string(),
+                action: CommandAction::ToggleUserWaiting,
             },
             CommandItem {
                 label: "Export Log".to_string(),

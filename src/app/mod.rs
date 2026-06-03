@@ -358,6 +358,7 @@ mod tests {
             acknowledged: false,
             notify: false,
             follow_up: false,
+            user_waiting: false,
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,
@@ -631,6 +632,16 @@ mod tests {
     fn test_command_palette_default_shows_all_items() {
         let palette = CommandPalette::new();
         assert_eq!(palette.filtered.len(), palette.items.len());
+    }
+
+    #[test]
+    fn test_command_palette_includes_waiting_marker_toggle() {
+        let palette = CommandPalette::new();
+        assert!(palette.items.iter().any(|item| {
+            item.label == "Toggle Waiting Marker"
+                && item.key_hint == "w"
+                && item.action == CommandAction::ToggleUserWaiting
+        }));
     }
 
     #[test]

@@ -221,6 +221,17 @@ pub fn execute_command_action(
                 }
             }
         }
+        CommandAction::ToggleUserWaiting => {
+            if let Some(session) = app.selected_session() {
+                let new_val = !session.user_waiting;
+                let id = session.id.clone();
+                let _ = storage.set_user_waiting(&id, new_val);
+                if let Ok(sessions) = storage.load_sessions() {
+                    app.sessions = sessions;
+                    app.rebuild_list_rows();
+                }
+            }
+        }
         CommandAction::ExportLog => {
             if let Some(session) = app.selected_session() {
                 if !session.tmux_session.is_empty() {

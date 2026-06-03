@@ -14,9 +14,9 @@ impl Storage {
                 created_at, last_accessed,
                 parent_session_id, worktree_path, worktree_repo, worktree_branch,
                 tool_data, acknowledged,
-                notify, follow_up, status_changed_at, restart_count, status_history,
+                notify, follow_up, user_waiting, status_changed_at, restart_count, status_history,
                 pinned, tokens_used, last_started_at, notes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
             params![
                 session.id,
                 session.title,
@@ -38,6 +38,7 @@ impl Storage {
                 session.acknowledged as i32,
                 session.notify as i32,
                 session.follow_up as i32,
+                session.user_waiting as i32,
                 session.status_changed_at,
                 session.restart_count,
                 session.status_history_json(),
@@ -58,7 +59,7 @@ impl Storage {
                     created_at, last_accessed,
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
-                    notify, follow_up, status_changed_at, restart_count, status_history,
+                    notify, follow_up, user_waiting, status_changed_at, restart_count, status_history,
                     pinned, tokens_used, last_started_at, notes
              FROM sessions ORDER BY sort_order",
         )?;
@@ -66,8 +67,8 @@ impl Storage {
         let rows = stmt.query_map([], |row| {
             let tool_str: String = row.get(7)?;
             let status_str: String = row.get(8)?;
-            let history_json: String = row.get(22)?;
-            let status_changed_at: i64 = row.get(20)?;
+            let history_json: String = row.get(23)?;
+            let status_changed_at: i64 = row.get(21)?;
             let created_at: i64 = row.get(10)?;
 
             Ok(Session {
@@ -91,14 +92,15 @@ impl Storage {
                 acknowledged: row.get::<_, i32>(17)? == 1,
                 notify: row.get::<_, i32>(18)? == 1,
                 follow_up: row.get::<_, i32>(19)? == 1,
+                user_waiting: row.get::<_, i32>(20)? == 1,
                 status_changed_at: if status_changed_at > 0 {
                     status_changed_at
                 } else {
                     created_at
                 },
-                restart_count: row.get(21)?,
+                restart_count: row.get(22)?,
                 last_started_at: {
-                    let v: i64 = row.get(25).unwrap_or(0);
+                    let v: i64 = row.get(26).unwrap_or(0);
                     if v > 0 {
                         v
                     } else {
@@ -106,12 +108,12 @@ impl Storage {
                     }
                 },
                 notes: {
-                    let json: String = row.get(26).unwrap_or_else(|_| "[]".to_string());
+                    let json: String = row.get(27).unwrap_or_else(|_| "[]".to_string());
                     serde_json::from_str(&json).unwrap_or_default()
                 },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
-                pinned: row.get::<_, i32>(23)? == 1,
-                tokens_used: row.get(24)?,
+                pinned: row.get::<_, i32>(24)? == 1,
+                tokens_used: row.get(25)?,
             })
         })?;
 
@@ -126,7 +128,7 @@ impl Storage {
                     created_at, last_accessed,
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
                     tool_data, acknowledged,
-                    notify, follow_up, status_changed_at, restart_count, status_history,
+                    notify, follow_up, user_waiting, status_changed_at, restart_count, status_history,
                     pinned, tokens_used, last_started_at, notes
              FROM sessions WHERE id = ?1",
         )?;
@@ -134,8 +136,8 @@ impl Storage {
         let result = stmt.query_row(params![id], |row| {
             let tool_str: String = row.get(7)?;
             let status_str: String = row.get(8)?;
-            let history_json: String = row.get(22)?;
-            let status_changed_at: i64 = row.get(20)?;
+            let history_json: String = row.get(23)?;
+            let status_changed_at: i64 = row.get(21)?;
             let created_at: i64 = row.get(10)?;
 
             Ok(Session {
@@ -159,14 +161,15 @@ impl Storage {
                 acknowledged: row.get::<_, i32>(17)? == 1,
                 notify: row.get::<_, i32>(18)? == 1,
                 follow_up: row.get::<_, i32>(19)? == 1,
+                user_waiting: row.get::<_, i32>(20)? == 1,
                 status_changed_at: if status_changed_at > 0 {
                     status_changed_at
                 } else {
                     created_at
                 },
-                restart_count: row.get(21)?,
+                restart_count: row.get(22)?,
                 last_started_at: {
-                    let v: i64 = row.get(25).unwrap_or(0);
+                    let v: i64 = row.get(26).unwrap_or(0);
                     if v > 0 {
                         v
                     } else {
@@ -174,12 +177,12 @@ impl Storage {
                     }
                 },
                 notes: {
-                    let json: String = row.get(26).unwrap_or_else(|_| "[]".to_string());
+                    let json: String = row.get(27).unwrap_or_else(|_| "[]".to_string());
                     serde_json::from_str(&json).unwrap_or_default()
                 },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
-                pinned: row.get::<_, i32>(23)? == 1,
-                tokens_used: row.get(24)?,
+                pinned: row.get::<_, i32>(24)? == 1,
+                tokens_used: row.get(25)?,
             })
         });
 
@@ -237,6 +240,15 @@ impl Storage {
         self.conn.execute(
             "UPDATE sessions SET follow_up = ?1 WHERE id = ?2",
             params![follow_up as i32, id],
+        )?;
+        Ok(())
+    }
+
+    /// Toggle or set the operator waiting marker.
+    pub fn set_user_waiting(&self, id: &str, user_waiting: bool) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE sessions SET user_waiting = ?1 WHERE id = ?2",
+            params![user_waiting as i32, id],
         )?;
         Ok(())
     }
@@ -407,6 +419,21 @@ mod tests {
         storage.set_notify("s1", false).unwrap();
         let loaded = storage.get_session("s1").unwrap().unwrap();
         assert!(!loaded.notify);
+    }
+
+    #[test]
+    fn test_set_user_waiting() {
+        let (storage, _dir) = test_storage();
+        let session = make_test_session("s1");
+        storage.save_session(&session).unwrap();
+
+        storage.set_user_waiting("s1", true).unwrap();
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert!(loaded.user_waiting);
+
+        storage.set_user_waiting("s1", false).unwrap();
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert!(!loaded.user_waiting);
     }
 
     #[test]
