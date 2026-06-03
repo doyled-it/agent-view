@@ -201,6 +201,13 @@ pub(super) fn render_metadata(frame: &mut Frame, area: Rect, session: &Session, 
         ]));
     }
 
+    if session.user_waiting {
+        lines.push(Line::from(vec![
+            Span::styled("Waiting: ", Style::default().fg(theme.text_muted)),
+            Span::styled("marked", Style::default().fg(theme.secondary)),
+        ]));
+    }
+
     if session.restart_count > 0 {
         lines.push(Line::from(vec![
             Span::styled("Restarts: ", Style::default().fg(theme.text_muted)),

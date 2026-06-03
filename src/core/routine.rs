@@ -280,6 +280,7 @@ pub fn build_promoted_session(
         acknowledged: false,
         notify: false,
         follow_up: false,
+        user_waiting: false,
         status_changed_at: now,
         restart_count: 0,
         last_started_at: now,

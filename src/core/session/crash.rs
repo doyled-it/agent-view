@@ -47,6 +47,7 @@ mod tests {
             acknowledged: false,
             notify: false,
             follow_up: false,
+            user_waiting: false,
             status_changed_at: 0,
             restart_count: 0,
             last_started_at: 0,

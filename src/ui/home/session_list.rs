@@ -102,8 +102,13 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                 ListRow::Session(session) => {
                     let is_bulk_selected = app.bulk.selected.contains(&session.id);
                     let status_color = status_color(theme, session.status);
-                    let notify_indicator = if session.notify { "\u{266A}" } else { " " };
+                    let notify_indicator = if session.notify { " \u{266A}" } else { "  " };
                     let follow_up_indicator = if session.follow_up { "\u{2691}" } else { " " };
+                    let user_waiting_indicator = if session.user_waiting {
+                        " \u{23F1}"
+                    } else {
+                        "  "
+                    };
                     let pin_indicator = if session.pinned { "\u{25B4}" } else { " " };
                     let age = format_age(session.last_started_at);
                     let sparkline =
@@ -132,7 +137,8 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     // Calculate left content width to determine padding
                     let left_width = left_prefix.chars().count()
                         + 1 // follow_up_indicator
-                        + 1 // notify_indicator
+                        + 2 // notify_indicator
+                        + 2 // user_waiting_indicator
                         + status_str.chars().count()
                         + session.title.chars().count()
                         + 2 // "  " gap
@@ -149,6 +155,7 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                         Span::styled(left_prefix, Style::default().fg(theme.accent)),
                         Span::styled(follow_up_indicator, Style::default().fg(theme.warning)),
                         Span::styled(notify_indicator, Style::default().fg(theme.info)),
+                        Span::styled(user_waiting_indicator, Style::default().fg(theme.secondary)),
                         Span::styled(status_str, Style::default().fg(status_color)),
                         Span::styled(
                             session.title.clone(),
@@ -273,5 +280,38 @@ mod tests {
                 assert_ne!(colors[i], colors[j]);
             }
         }
+    }
+
+    #[test]
+    fn test_session_list_renders_user_waiting_indicator() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut session = crate::core::storage::test_helpers::make_test_session("s1");
+        session.title = "Waiting Session".to_string();
+        session.follow_up = true;
+        session.notify = true;
+        session.user_waiting = true;
+
+        let mut app = crate::app::App::new(false);
+        app.sessions = vec![session];
+        app.rebuild_list_rows();
+        app.selected_index = 1;
+
+        let backend = TestBackend::new(80, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_session_list(frame, frame.area(), &app))
+            .unwrap();
+
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(rendered.contains('⏱'), "got: {}", rendered);
+        assert!(rendered.contains("⚑ ♪ ⏱"), "got: {}", rendered);
     }
 }

@@ -4,7 +4,7 @@ use rusqlite::Result as SqlResult;
 use super::Storage;
 use crate::core::cost::Pricer;
 
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 impl Storage {
     pub fn migrate(&self) -> SqlResult<()> {
@@ -201,6 +201,14 @@ impl Storage {
             self.recompute_cost_microdollars(&Pricer::with_defaults())?;
         }
 
+        // v9 -> v10: user marker for sessions the operator is waiting on.
+        if version < 10 {
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN user_waiting INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -235,7 +243,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("9".to_string()));
+        assert_eq!(version, Some("10".to_string()));
     }
 
     #[test]
@@ -243,7 +251,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("9".to_string()));
+        assert_eq!(version, Some("10".to_string()));
     }
 
     #[test]
@@ -362,10 +370,10 @@ mod tests {
     }
 
     #[test]
-    fn test_v8_schema_version() {
+    fn test_current_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("9".to_string()));
+        assert_eq!(version, Some("10".to_string()));
     }
 
     #[test]
@@ -447,5 +455,29 @@ mod tests {
             .unwrap();
         // 1M input @ $15 + 1M output @ $75 = $90 = 90_000_000 microdollars
         assert_eq!(micros, 90_000_000);
+    }
+
+    #[test]
+    fn test_v10_user_waiting_column_exists() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO sessions (id, title, project_path, created_at, user_waiting)
+                 VALUES ('test', 'Test', '/tmp', 0, 1)",
+                [],
+            )
+            .unwrap();
+
+        let user_waiting: i32 = storage
+            .conn()
+            .query_row(
+                "SELECT user_waiting FROM sessions WHERE id = 'test'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(user_waiting, 1);
     }
 }

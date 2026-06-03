@@ -105,6 +105,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             binding("e", "Export log", key_style, desc_style),
             binding("!", "Notifications", key_style, desc_style),
             binding("i", "Follow-up flag", key_style, desc_style),
+            binding("w", "Waiting marker", key_style, desc_style),
             binding("p", "Pin/unpin", key_style, desc_style),
             binding("S", "Cycle sort", key_style, desc_style),
             binding("Ctrl+K", "Command palette", key_style, desc_style),
