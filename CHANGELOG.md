@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.14.0] - 2026-06-03
+
+### Changed
+
+- feat(runner): add OpenCode runner (#64) (@doyled-it)
+
 ## [1.13.1] - 2026-06-01
 
 ### Changed
