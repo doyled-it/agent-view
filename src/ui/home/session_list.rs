@@ -102,7 +102,7 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                 ListRow::Session(session) => {
                     let is_bulk_selected = app.bulk.selected.contains(&session.id);
                     let status_color = status_color(theme, session.status);
-                    let notify_indicator = if session.notify { "\u{266A}" } else { " " };
+                    let notify_indicator = if session.notify { " \u{266A}" } else { "  " };
                     let follow_up_indicator = if session.follow_up { "\u{2691}" } else { " " };
                     let user_waiting_indicator = if session.user_waiting {
                         " \u{23F1}"
@@ -137,7 +137,7 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     // Calculate left content width to determine padding
                     let left_width = left_prefix.chars().count()
                         + 1 // follow_up_indicator
-                        + 1 // notify_indicator
+                        + 2 // notify_indicator
                         + 2 // user_waiting_indicator
                         + status_str.chars().count()
                         + session.title.chars().count()
@@ -312,6 +312,6 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         assert!(rendered.contains('⏱'), "got: {}", rendered);
-        assert!(rendered.contains("⚑♪ ⏱"), "got: {}", rendered);
+        assert!(rendered.contains("⚑ ♪ ⏱"), "got: {}", rendered);
     }
 }
