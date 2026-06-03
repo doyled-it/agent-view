@@ -105,9 +105,9 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     let notify_indicator = if session.notify { "\u{266A}" } else { " " };
                     let follow_up_indicator = if session.follow_up { "\u{2691}" } else { " " };
                     let user_waiting_indicator = if session.user_waiting {
-                        "\u{23F1}"
+                        " \u{23F1}"
                     } else {
-                        " "
+                        "  "
                     };
                     let pin_indicator = if session.pinned { "\u{25B4}" } else { " " };
                     let age = format_age(session.last_started_at);
@@ -138,7 +138,7 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     let left_width = left_prefix.chars().count()
                         + 1 // follow_up_indicator
                         + 1 // notify_indicator
-                        + 1 // user_waiting_indicator
+                        + 2 // user_waiting_indicator
                         + status_str.chars().count()
                         + session.title.chars().count()
                         + 2 // "  " gap
@@ -289,6 +289,8 @@ mod tests {
 
         let mut session = crate::core::storage::test_helpers::make_test_session("s1");
         session.title = "Waiting Session".to_string();
+        session.follow_up = true;
+        session.notify = true;
         session.user_waiting = true;
 
         let mut app = crate::app::App::new(false);
@@ -310,5 +312,6 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         assert!(rendered.contains('⏱'), "got: {}", rendered);
+        assert!(rendered.contains("⚑♪ ⏱"), "got: {}", rendered);
     }
 }
