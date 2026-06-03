@@ -1,0 +1,3 @@
+opencode session ended
+
+Run `opencode --session ses_01HV7Y5P7RE4Q3H8M9K0N2ABCD` to continue.

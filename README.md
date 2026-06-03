@@ -6,7 +6,7 @@ Run multiple AI coding agents in parallel and manage them from a single terminal
 
 Forked from [Frayo44/agent-view](https://github.com/Frayo44/agent-view) (the original TypeScript implementation) and rewritten in Rust. The TypeScript version with additional features is preserved on the [`legacy/typescript`](https://github.com/doyled-it/agent-view/tree/legacy/typescript) branch.
 
-Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command. Hook-driven status detection is wired up for Claude Code, Codex CLI, and Gemini CLI; OpenCode and custom commands get basic session management. Token tracking is currently Claude-only.
+Works with **Claude Code**, **Gemini CLI**, **OpenCode**, **Codex CLI**, and any custom command. Tool-specific status detection is wired up for Claude Code, Codex CLI, Gemini CLI, and OpenCode; custom commands get basic session management. Token tracking is currently Claude-only.
 
 ## Supported Platforms
 
@@ -63,6 +63,17 @@ Agent View monitors sessions and shows real-time status:
 | Stopped | Session was stopped manually |
 | Crashed | tmux session is no longer running |
 | Error | Something went wrong |
+
+Claude Code, Codex CLI, Gemini CLI, and OpenCode use runner-specific hooks, pane parsing, or both to surface these states. Custom commands use basic tmux lifecycle detection.
+
+For OpenCode, Agent View installs a global plugin at
+`~/.config/opencode/plugins/agent-view.js` that forwards `session.created`,
+`session.status`, `session.idle`, `session.compacted`, `session.error`,
+`permission.asked`, `permission.updated`, and `permission.replied`.
+`session.status` maps busy, active, or running to Running; idle to Idle; and
+retry or error to Error. Permission asked or updated maps to Waiting, and
+permission replied maps back to Running. Pane parsing still covers idle, busy,
+waiting, exited, and draft states when hook data is absent.
 
 Sessions are sorted with the most attention-needing states first (Crashed, Waiting, Draft, Paused), so anything wanting your eyes floats to the top of the list.
 

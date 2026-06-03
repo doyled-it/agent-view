@@ -49,6 +49,15 @@ enum Commands {
     /// stdin, writes a hook status file to ~/.agent-orchestrator/hooks/
     /// keyed by AGENT_VIEW_SESSION_ID. Always exits 0.
     GeminiHook,
+    /// Internal: invoked by OpenCode plugin events. Reads JSON payload from
+    /// argv or stdin, writes a hook status file to ~/.agent-orchestrator/hooks/
+    /// keyed by AGENT_VIEW_SESSION_ID. Always exits 0.
+    OpencodeHook {
+        /// Normalized OpenCode event payload. The plugin passes this
+        /// positionally; stdin is also accepted for manual testing.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,6 +76,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if matches!(cli.command, Some(Commands::GeminiHook)) {
         crate::core::runner::gemini::hook_handler::run();
+        return Ok(());
+    }
+
+    if let Some(Commands::OpencodeHook { args }) = &cli.command {
+        crate::core::runner::opencode::hook_handler::run(args);
         return Ok(());
     }
 

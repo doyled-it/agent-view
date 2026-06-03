@@ -8,6 +8,7 @@ pub mod event_watcher;
 pub mod fallback;
 pub mod gemini;
 pub mod hook_io;
+pub mod opencode;
 pub mod osc_title;
 pub mod shell;
 
@@ -82,7 +83,7 @@ pub fn runner_for(tool: Tool) -> &'static dyn Runner {
     match tool {
         Tool::Claude => &claude::ClaudeRunner,
         Tool::Codex => &codex::CodexRunner,
-        Tool::Opencode => &fallback::OPENCODE,
+        Tool::Opencode => &opencode::OpencodeRunner,
         Tool::Gemini => &gemini::GeminiRunner,
         Tool::Custom => &fallback::CUSTOM,
         Tool::Shell => &shell::ShellRunner,
@@ -437,21 +438,24 @@ mod tests {
 
     #[test]
     fn test_fallback_runners_report_not_implemented() {
-        for tool in [Tool::Opencode, Tool::Custom] {
-            assert!(
-                !runner_for(tool).is_implemented(),
-                "{:?} should still be a fallback at this stage",
-                tool
-            );
-        }
+        assert!(
+            !runner_for(Tool::Custom).is_implemented(),
+            "Custom should still be a fallback at this stage"
+        );
     }
 
     #[test]
-    fn test_implemented_tools_includes_claude_codex_gemini_and_shell() {
-        // Order follows Tool::ALL: Claude, Gemini, Codex, ..., Shell.
+    fn test_implemented_tools_includes_claude_opencode_gemini_codex_and_shell() {
+        // Order follows Tool::ALL: Claude, OpenCode, Gemini, Codex, ..., Shell.
         assert_eq!(
             implemented_tools(),
-            vec![Tool::Claude, Tool::Gemini, Tool::Codex, Tool::Shell]
+            vec![
+                Tool::Claude,
+                Tool::Opencode,
+                Tool::Gemini,
+                Tool::Codex,
+                Tool::Shell
+            ]
         );
     }
 
@@ -471,6 +475,15 @@ mod tests {
         assert_eq!(r.launch_command(), Some("codex"));
         assert!(r.is_implemented());
         assert_eq!(r.tool_data_session_id_key(), "codex_session_id");
+    }
+
+    #[test]
+    fn test_runner_for_opencode_returns_opencode_runner() {
+        let r = runner_for(Tool::Opencode);
+        assert_eq!(r.name(), "opencode");
+        assert_eq!(r.launch_command(), Some("opencode"));
+        assert!(r.is_implemented());
+        assert_eq!(r.tool_data_session_id_key(), "opencode_session_id");
     }
 
     #[test]
