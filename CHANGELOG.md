@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.15.0] - 2026-06-03
+
+### Changed
+
+- feat(sessions): add waiting marker (#65) (@doyled-it)
+
 ## [1.14.0] - 2026-06-03
 
 ### Changed
