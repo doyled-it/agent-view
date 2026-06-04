@@ -47,6 +47,8 @@ pub struct AppConfig {
     pub detail_panel_mode: String,
     #[serde(default)]
     pub costs: CostsConfig,
+    #[serde(default)]
+    pub mcp_profiles: Vec<crate::core::mcp::McpProfile>,
 }
 
 impl AppConfig {
@@ -82,6 +84,7 @@ impl Default for AppConfig {
             notifications: NotificationConfig::default(),
             detail_panel_mode: default_detail_panel_mode(),
             costs: CostsConfig::default(),
+            mcp_profiles: Vec::new(),
         }
     }
 }
@@ -174,6 +177,33 @@ mod tests {
     }
 
     #[test]
+    fn mcp_profiles_default_empty() {
+        let cfg = AppConfig::default();
+        assert!(cfg.mcp_profiles.is_empty());
+    }
+
+    #[test]
+    fn mcp_profiles_parses_mcp_profiles_from_config() {
+        let json = r#"{
+            "mcp_profiles": [{
+                "id": "rust",
+                "name": "Rust",
+                "selection": {
+                    "profile_id": "rust",
+                    "servers": [
+                        { "id": "GitLabMITRE", "enabled": true, "selected_tools": ["create_issue"] },
+                        { "id": "browser", "enabled": false }
+                    ]
+                }
+            }]
+        }"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.mcp_profiles.len(), 1);
+        assert_eq!(cfg.mcp_profiles[0].id, "rust");
+        assert_eq!(cfg.mcp_profiles[0].selection.servers.len(), 2);
+    }
+
+    #[test]
     fn test_parse_partial_config_uses_defaults() {
         let json = r#"{ "theme": "light" }"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
@@ -248,6 +278,7 @@ mod tests {
             notifications: NotificationConfig { sound: true },
             detail_panel_mode: "preview".to_string(),
             costs: CostsConfig::default(),
+            mcp_profiles: Vec::new(),
         };
 
         // Write manually using save_config logic (bypass the hardcoded path)
@@ -334,6 +365,7 @@ mod tests {
             notifications: NotificationConfig { sound: false },
             detail_panel_mode: "both".to_string(),
             costs: CostsConfig::default(),
+            mcp_profiles: Vec::new(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: AppConfig = serde_json::from_str(&json).unwrap();
