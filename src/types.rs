@@ -288,6 +288,7 @@ pub struct Session {
     pub worktree_repo: String,
     pub worktree_branch: String,
     pub tool_data: String,
+    pub mcp_selection: crate::core::mcp::McpSelection,
     pub acknowledged: bool,
     pub notify: bool,
     pub follow_up: bool,
@@ -308,6 +309,10 @@ impl Session {
 
     pub fn notes_json(&self) -> String {
         serde_json::to_string(&self.notes).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    pub fn mcp_selection_json(&self) -> String {
+        serde_json::to_string(&self.mcp_selection).unwrap_or_else(|_| "{}".to_string())
     }
 }
 
@@ -366,6 +371,7 @@ pub struct SessionCreateOptions {
     pub group_path: Option<String>,
     pub tool: Tool,
     pub command: Option<String>,
+    pub mcp_selection: Option<crate::core::mcp::McpSelection>,
     /// Worktree to create alongside this session; `None` means no worktree.
     pub worktree: Option<WorktreeCreateOptions>,
 }
@@ -596,6 +602,7 @@ mod tests {
             worktree_repo: String::new(),
             worktree_branch: String::new(),
             tool_data: "{}".to_string(),
+            mcp_selection: crate::core::mcp::McpSelection::default(),
             acknowledged: false,
             notify: false,
             follow_up: false,
@@ -631,6 +638,7 @@ mod tests {
             worktree_repo: String::new(),
             worktree_branch: String::new(),
             tool_data: "{}".to_string(),
+            mcp_selection: crate::core::mcp::McpSelection::default(),
             acknowledged: false,
             notify: false,
             follow_up: false,
@@ -820,6 +828,7 @@ mod tests {
             group_path: None,
             tool: Tool::Claude,
             command: None,
+            mcp_selection: None,
             worktree: Some(WorktreeCreateOptions {
                 branch: "feature/x".to_string(),
                 new_branch: true,

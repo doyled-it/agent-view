@@ -101,6 +101,7 @@ impl SessionOps {
         )?;
 
         cache.register(&tmux_name);
+        let mcp_selection = options.mcp_selection.unwrap_or_default();
 
         let session = Session {
             id: id.clone(),
@@ -122,6 +123,7 @@ impl SessionOps {
             worktree_repo,
             worktree_branch,
             tool_data: "{}".to_string(),
+            mcp_selection,
             acknowledged: false,
             notify: false,
             follow_up: false,
@@ -471,6 +473,7 @@ mod tests {
                     group_path: None,
                     tool: Tool::Shell,
                     command: Some("sleep 1".to_string()),
+                    mcp_selection: None,
                     worktree: Some(WorktreeCreateOptions {
                         branch: "wt-feature".to_string(),
                         new_branch: true,
@@ -510,6 +513,7 @@ mod tests {
                     group_path: None,
                     tool: Tool::Shell,
                     command: Some("sleep 5".to_string()),
+                    mcp_selection: None,
                     worktree: Some(WorktreeCreateOptions {
                         branch: "merged-branch".to_string(),
                         new_branch: true,

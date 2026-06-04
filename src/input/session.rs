@@ -72,6 +72,7 @@ pub fn handle_new_session_key(
                     group_path: None,
                     tool: form.runner,
                     command: None,
+                    mcp_selection: None,
                     worktree,
                 };
 

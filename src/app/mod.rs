@@ -355,6 +355,7 @@ mod tests {
             worktree_repo: String::new(),
             worktree_branch: String::new(),
             tool_data: "{}".to_string(),
+            mcp_selection: crate::core::mcp::McpSelection::default(),
             acknowledged: false,
             notify: false,
             follow_up: false,
