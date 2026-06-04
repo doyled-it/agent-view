@@ -3,8 +3,9 @@
 
 pub mod hook_handler;
 pub mod hooks;
+pub mod mcp;
 
-use super::{Runner, ToolStatus};
+use super::{Runner, RunnerLaunch, RunnerLaunchContext, RunnerLaunchError, ToolStatus};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -117,6 +118,11 @@ impl Runner for ClaudeRunner {
     }
     fn launch_command(&self) -> Option<&'static str> {
         Some("claude")
+    }
+
+    fn build_launch(&self, ctx: &RunnerLaunchContext) -> Result<RunnerLaunch, RunnerLaunchError> {
+        mcp::build_claude_mcp_launch(&ctx.session_id, ctx.mcp_selection.as_ref(), None)
+            .map_err(RunnerLaunchError::Config)
     }
 
     fn tool_data_session_id_key(&self) -> &'static str {
