@@ -7,6 +7,10 @@ use ratatui::Frame;
 use crate::app::NewSessionForm;
 use crate::ui::theme::Theme;
 
+const MCP_FIELD: usize = 5;
+const DEFAULT_OVERLAY_WIDTH: u16 = 64;
+const WIDE_OVERLAY_WIDTH: u16 = 72;
+
 /// Render the new session creation form as a centered overlay.
 pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, theme: &Theme) {
     let has_path_completions = form.focused_field == 2 && form.completions.len() > 1;
@@ -14,7 +18,16 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     let has_base_completions = form.focused_field == 4 && form.completions.len() > 1;
     let has_completions = has_path_completions || has_branch_completions || has_base_completions;
     let max_completion_rows: usize = 6;
-    let overlay_width = 64u16.min(area.width.saturating_sub(4));
+    let mcp_line_specs = build_new_session_mcp_line_specs(form);
+    let mcp_needs_wide_overlay = mcp_line_specs
+        .iter()
+        .any(|line| line.text.chars().count() > DEFAULT_OVERLAY_WIDTH.saturating_sub(2) as usize);
+    let target_overlay_width = if mcp_needs_wide_overlay {
+        WIDE_OVERLAY_WIDTH
+    } else {
+        DEFAULT_OVERLAY_WIDTH
+    };
+    let overlay_width = target_overlay_width.min(area.width.saturating_sub(4));
 
     let (num_columns, completion_rows) = if has_completions {
         let inner_w = overlay_width.saturating_sub(2) as usize;
@@ -40,6 +53,9 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     //   [if branch completions: completion hint, completion grid (N rows)],
     //   spacer,
     //   base label, base input,
+    //   [if base completions: completion hint, completion grid (N rows)],
+    //   MCP summary,
+    //   [if MCP expanded: one row per server],
     //   [if error: error row],
     //   help hint
     // runner label + cycle row + spacer; title label + input + spacer; path label + input — always present
@@ -85,6 +101,10 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     if has_base_completions {
         constraints.push(Constraint::Length(1)); // hint
         constraints.push(Constraint::Length(completion_rows as u16)); // grid
+    }
+    // MCP summary/selection rows
+    for _ in &mcp_line_specs {
+        constraints.push(Constraint::Length(1));
     }
     // error row
     if form.error.is_some() {
@@ -328,6 +348,11 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         i += 1;
     }
 
+    for line in build_new_session_mcp_lines(form, theme) {
+        frame.render_widget(Paragraph::new(line), chunks[i]);
+        i += 1;
+    }
+
     if let Some(err) = &form.error {
         frame.render_widget(
             Paragraph::new(format!("\u{26a0} {}", err)).style(Style::default().fg(theme.warning)),
@@ -339,10 +364,11 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     // Help hint line — always last
     let base_hint =
         "^S save · Esc cancel · Tab/\u{2193} next · \u{21e7}Tab/\u{2191} back · ^T toggle";
-    let hint = if form.focused_field == 0 {
-        format!("\u{2190}/\u{2192} cycle runner   {}", base_hint)
-    } else {
-        base_hint.to_string()
+    let hint = match form.focused_field {
+        0 => format!("\u{2190}/\u{2192} cycle runner   {}", base_hint),
+        MCP_FIELD if form.mcp_expanded => format!("Space toggle · Enter MCP   {}", base_hint),
+        MCP_FIELD => format!("Enter MCP   {}", base_hint),
+        _ => base_hint.to_string(),
     };
     frame.render_widget(
         Paragraph::new(hint).style(Style::default().fg(theme.text_muted)),
@@ -358,6 +384,104 @@ fn display_runner_label(name: &str) -> String {
         Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
         None => String::new(),
     }
+}
+
+#[derive(Debug)]
+struct McpLineSpec {
+    text: String,
+    server_row: Option<usize>,
+}
+
+fn build_new_session_mcp_line_specs(form: &NewSessionForm) -> Vec<McpLineSpec> {
+    let mut lines = vec![McpLineSpec {
+        text: format!("MCP: {}", form.mcp_summary()),
+        server_row: None,
+    }];
+
+    if !form.mcp_expanded {
+        return lines;
+    }
+
+    for (idx, server) in form.mcp_servers.iter().enumerate() {
+        let marker = if mcp_server_enabled(form, &server.id) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let mut text = format!("  {} {}", marker, server.display_name);
+        if !server.tool_filter_enforceable {
+            text.push_str("  server-level only");
+        }
+        lines.push(McpLineSpec {
+            text,
+            server_row: Some(idx),
+        });
+    }
+
+    lines
+}
+
+fn build_new_session_mcp_lines(form: &NewSessionForm, theme: &Theme) -> Vec<Line<'static>> {
+    let specs = build_new_session_mcp_line_specs(form);
+    build_new_session_mcp_lines_from_specs(&specs, form, theme)
+}
+
+fn build_new_session_mcp_lines_from_specs(
+    specs: &[McpLineSpec],
+    form: &NewSessionForm,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    specs
+        .iter()
+        .map(|spec| {
+            let is_selected = form.focused_field == MCP_FIELD
+                && form.mcp_expanded
+                && spec.server_row == Some(form.mcp_selected_row);
+            let style = if is_selected {
+                Style::default()
+                    .bg(theme.primary)
+                    .fg(theme.selected_item_text)
+                    .bold()
+            } else if form.focused_field == MCP_FIELD && spec.server_row.is_none() {
+                Style::default().fg(theme.primary)
+            } else if spec.server_row.is_none() {
+                Style::default().fg(theme.text_muted)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            Line::from(Span::styled(spec.text.clone(), style))
+        })
+        .collect()
+}
+
+fn mcp_server_enabled(form: &NewSessionForm, id: &str) -> bool {
+    if form.mcp_selection.is_all_servers() {
+        return true;
+    }
+
+    form.mcp_selection
+        .servers
+        .iter()
+        .find(|server| server.id == id)
+        .map(|server| server.enabled)
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+fn line_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn render_new_session_lines_for_test(form: &NewSessionForm) -> Vec<String> {
+    let theme = Theme::dark();
+    build_new_session_mcp_lines(form, &theme)
+        .iter()
+        .map(line_text)
+        .collect()
 }
 
 fn render_completion_hint(
@@ -422,4 +546,100 @@ fn render_completion_grid(
         lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::mcp::{McpSelection, McpServerSelection};
+    use crate::types::Tool;
+
+    #[test]
+    fn new_session_overlay_renders_mcp_summary_collapsed() {
+        let form = NewSessionForm::new();
+
+        let lines = render_new_session_lines_for_test(&form);
+
+        assert!(
+            lines.iter().any(|line| line == "MCP: All MCP servers"),
+            "rendered lines: {lines:#?}"
+        );
+    }
+
+    #[test]
+    fn new_session_overlay_renders_enabled_mcp_rows_with_server_level_note() {
+        let mut form = NewSessionForm::new();
+        form.runner = Tool::Codex;
+        form.mcp_expanded = true;
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into()]);
+
+        let lines = render_new_session_lines_for_test(&form);
+
+        assert!(
+            lines.iter().any(|line| line.contains("[x] GitLabMITRE")),
+            "rendered lines: {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("server-level only")),
+            "rendered lines: {lines:#?}"
+        );
+    }
+
+    #[test]
+    fn new_session_overlay_renders_disabled_selected_mcp_server() {
+        let mut form = NewSessionForm::new();
+        form.runner = Tool::Codex;
+        form.mcp_expanded = true;
+        form.mcp_selected_row = 1;
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
+        form.mcp_selection = McpSelection {
+            profile_id: None,
+            servers: vec![
+                McpServerSelection {
+                    id: "GitLabMITRE".into(),
+                    enabled: true,
+                    selected_tools: None,
+                },
+                McpServerSelection {
+                    id: "browser".into(),
+                    enabled: false,
+                    selected_tools: None,
+                },
+            ],
+        };
+
+        let lines = render_new_session_lines_for_test(&form);
+
+        assert!(
+            lines.iter().any(|line| line.contains("[ ] browser")),
+            "rendered lines: {lines:#?}"
+        );
+    }
+
+    #[test]
+    fn new_session_overlay_renders_omitted_known_mcp_server_as_enabled() {
+        let mut form = NewSessionForm::new();
+        form.runner = Tool::Codex;
+        form.mcp_expanded = true;
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
+        form.mcp_selection = McpSelection {
+            profile_id: None,
+            servers: vec![McpServerSelection {
+                id: "GitLabMITRE".into(),
+                enabled: false,
+                selected_tools: None,
+            }],
+        };
+
+        let lines = render_new_session_lines_for_test(&form);
+
+        assert!(
+            lines.iter().any(|line| line.contains("[ ] GitLabMITRE")),
+            "rendered lines: {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("[x] browser")),
+            "rendered lines: {lines:#?}"
+        );
+    }
 }
