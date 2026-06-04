@@ -151,9 +151,10 @@ impl Tool {
         }
     }
 
-    /// Default command to launch in a new tmux pane for this tool. `None`
-    /// means "no command — tmux's default-shell handles it" (used by
-    /// `Tool::Shell`).
+    /// Default static command for this tool. Session launch uses runner
+    /// `build_launch`; this compatibility helper remains for direct command
+    /// lookups that do not need launch context.
+    #[allow(dead_code)]
     pub fn command(&self) -> Option<&'static str> {
         crate::core::runner::runner_for(*self).launch_command()
     }
