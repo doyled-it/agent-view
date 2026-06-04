@@ -4,8 +4,9 @@
 
 pub mod hook_handler;
 pub mod hooks;
+pub mod mcp;
 
-use super::{Runner, ToolStatus};
+use super::{Runner, RunnerLaunch, RunnerLaunchContext, RunnerLaunchError, ToolStatus};
 use regex::Regex;
 use serde_json::Value;
 use std::sync::LazyLock;
@@ -42,6 +43,10 @@ impl Runner for OpencodeRunner {
 
     fn launch_command(&self) -> Option<&'static str> {
         Some("opencode")
+    }
+
+    fn build_launch(&self, ctx: &RunnerLaunchContext) -> Result<RunnerLaunch, RunnerLaunchError> {
+        mcp::build_opencode_mcp_launch(ctx.mcp_selection.as_ref())
     }
 
     fn parse_status(&self, pane_content: &str) -> ToolStatus {
