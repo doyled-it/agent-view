@@ -98,7 +98,8 @@ pub fn execute_command_action(
 
     match action {
         CommandAction::NewSession => {
-            app.overlay = Overlay::NewSession(crate::app::NewSessionForm::new());
+            app.overlay =
+                Overlay::NewSession(crate::app::NewSessionForm::from_app_config(&app.config));
         }
         CommandAction::Search => {
             app.search_query = Some(String::new());

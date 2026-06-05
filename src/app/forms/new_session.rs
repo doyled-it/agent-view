@@ -26,6 +26,7 @@ pub struct NewSessionForm {
     pub mcp_selection: crate::core::mcp::McpSelection,
     pub mcp_profiles: Vec<crate::core::mcp::McpProfile>,
     pub mcp_servers: Vec<crate::core::mcp::catalog::McpServerCatalogEntry>,
+    pub mcp_catalog: Vec<crate::core::mcp::catalog::McpServerCatalogEntry>,
     pub mcp_expanded: bool,
     pub mcp_selected_row: usize,
 }
@@ -51,9 +52,25 @@ impl NewSessionForm {
             mcp_selection: crate::core::mcp::McpSelection::default(),
             mcp_profiles: Vec::new(),
             mcp_servers: Vec::new(),
+            mcp_catalog: Vec::new(),
             mcp_expanded: false,
             mcp_selected_row: 0,
         }
+    }
+
+    pub fn from_app_config(config: &crate::core::config::AppConfig) -> Self {
+        Self::from_config_and_catalog(config, crate::core::mcp::discover_mcp_server_catalog())
+    }
+
+    pub fn from_config_and_catalog(
+        config: &crate::core::config::AppConfig,
+        catalog: Vec<crate::core::mcp::catalog::McpServerCatalogEntry>,
+    ) -> Self {
+        let mut form = Self::new();
+        form.mcp_profiles = config.mcp_profiles.clone();
+        form.mcp_catalog = catalog;
+        form.refresh_mcp_servers_for_runner();
+        form
     }
 
     /// Drop any in-flight completion state. Call when changing fields or when
@@ -68,6 +85,7 @@ impl NewSessionForm {
     pub fn cycle_runner_next(&mut self) {
         let idx = self.current_runner_index();
         self.runner = self.runners[(idx + 1) % self.runners.len()];
+        self.refresh_mcp_servers_for_runner();
     }
 
     /// Move the runner selection to the previous entry in `runners`, wrapping.
@@ -75,6 +93,7 @@ impl NewSessionForm {
         let idx = self.current_runner_index();
         let n = self.runners.len();
         self.runner = self.runners[(idx + n - 1) % n];
+        self.refresh_mcp_servers_for_runner();
     }
 
     #[allow(dead_code)]
@@ -110,6 +129,35 @@ impl NewSessionForm {
                     selected_tools: None,
                 });
         }
+        self.normalize_mcp_selection_to_default_when_all_known_servers_enabled();
+    }
+
+    pub fn activate_selected_mcp_row(&mut self) -> Result<(), String> {
+        if let Some(profile_id) = self.selected_mcp_profile_id() {
+            self.apply_mcp_profile(&profile_id)
+        } else if let Some(server_id) = self.selected_mcp_server_id() {
+            self.toggle_mcp_server(&server_id);
+            Ok(())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn selected_mcp_profile_id(&self) -> Option<String> {
+        self.mcp_profiles
+            .get(self.mcp_selected_row)
+            .map(|profile| profile.id.clone())
+    }
+
+    pub fn selected_mcp_server_id(&self) -> Option<String> {
+        let server_idx = self.mcp_selected_row.checked_sub(self.mcp_profiles.len())?;
+        self.mcp_servers
+            .get(server_idx)
+            .map(|server| server.id.clone())
+    }
+
+    pub fn mcp_row_count(&self) -> usize {
+        self.mcp_profiles.len() + self.mcp_servers.len()
     }
 
     #[allow(dead_code)]
@@ -122,14 +170,43 @@ impl NewSessionForm {
 
     #[cfg(test)]
     pub fn set_mcp_servers_for_test(&mut self, ids: Vec<String>) {
-        self.mcp_servers = ids
+        self.mcp_catalog = ids
             .into_iter()
             .map(|id| crate::core::mcp::McpServerCatalogEntry::server_level(self.runner, id))
             .collect();
-        if self.mcp_servers.is_empty() {
+        self.refresh_mcp_servers_for_runner();
+    }
+
+    fn refresh_mcp_servers_for_runner(&mut self) {
+        self.mcp_servers = self
+            .mcp_catalog
+            .iter()
+            .filter(|server| server.runner == self.runner)
+            .cloned()
+            .collect();
+        let row_count = self.mcp_row_count();
+        if row_count == 0 {
             self.mcp_selected_row = 0;
         } else {
-            self.mcp_selected_row = self.mcp_selected_row.min(self.mcp_servers.len() - 1);
+            self.mcp_selected_row = self.mcp_selected_row.min(row_count - 1);
+        }
+    }
+
+    fn normalize_mcp_selection_to_default_when_all_known_servers_enabled(&mut self) {
+        if self.mcp_servers.is_empty() || self.mcp_selection.is_all_servers() {
+            return;
+        }
+
+        let all_known_enabled = self.mcp_servers.iter().all(|server| {
+            self.mcp_selection
+                .servers
+                .iter()
+                .find(|selected| selected.id == server.id)
+                .map(|selected| selected.enabled && selected.selected_tools.is_none())
+                .unwrap_or(true)
+        });
+        if all_known_enabled {
+            self.mcp_selection = crate::core::mcp::McpSelection::default();
         }
     }
 
@@ -223,6 +300,55 @@ mod tests {
     }
 
     #[test]
+    fn test_form_from_config_and_catalog_populates_profiles_and_current_runner_servers() {
+        let config = crate::core::config::AppConfig {
+            mcp_profiles: vec![McpProfile {
+                id: "rust".into(),
+                name: "Rust".into(),
+                selection: McpSelection {
+                    profile_id: None,
+                    servers: vec![McpServerSelection {
+                        id: "GitLabMITRE".into(),
+                        enabled: true,
+                        selected_tools: None,
+                    }],
+                },
+            }],
+            ..Default::default()
+        };
+        let catalog = vec![
+            crate::core::mcp::McpServerCatalogEntry::server_level(Tool::Claude, "claude-gitlab"),
+            crate::core::mcp::McpServerCatalogEntry::server_level(Tool::Codex, "codex-gitlab"),
+        ];
+
+        let f = NewSessionForm::from_config_and_catalog(&config, catalog);
+
+        assert_eq!(f.mcp_profiles.len(), 1);
+        assert_eq!(f.mcp_profiles[0].id, "rust");
+        assert_eq!(f.mcp_servers.len(), 1);
+        assert_eq!(f.mcp_servers[0].id, "claude-gitlab");
+    }
+
+    #[test]
+    fn test_cycle_runner_refreshes_mcp_servers_for_selected_runner() {
+        let catalog = vec![
+            crate::core::mcp::McpServerCatalogEntry::server_level(Tool::Claude, "claude-gitlab"),
+            crate::core::mcp::McpServerCatalogEntry::server_level(Tool::Codex, "codex-gitlab"),
+        ];
+        let mut f = NewSessionForm::from_config_and_catalog(
+            &crate::core::config::AppConfig::default(),
+            catalog,
+        );
+
+        while f.runner != Tool::Codex {
+            f.cycle_runner_next();
+        }
+
+        assert_eq!(f.mcp_servers.len(), 1);
+        assert_eq!(f.mcp_servers[0].id, "codex-gitlab");
+    }
+
+    #[test]
     fn test_toggle_known_server_from_all_materializes_disabled_selection() {
         let mut f = NewSessionForm::new();
         f.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
@@ -277,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn test_toggle_normalizes_duplicate_selection_rows_with_first_entry_wins() {
+    fn test_toggle_normalizes_all_enabled_selection_back_to_default() {
         let mut f = NewSessionForm::new();
         f.set_mcp_servers_for_test(vec!["browser".into(), "GitLabMITRE".into()]);
         f.mcp_selection = McpSelection {
@@ -308,25 +434,12 @@ mod tests {
 
         f.toggle_mcp_server("browser");
 
-        assert_eq!(
-            f.mcp_selection.servers,
-            vec![
-                McpServerSelection {
-                    id: "browser".into(),
-                    enabled: true,
-                    selected_tools: None,
-                },
-                McpServerSelection {
-                    id: "GitLabMITRE".into(),
-                    enabled: true,
-                    selected_tools: None,
-                },
-            ]
-        );
+        assert!(f.mcp_selection.is_all_servers());
+        assert_eq!(f.mcp_selection.profile_id, None);
     }
 
     #[test]
-    fn test_apply_profile_then_toggle_disabled_known_server_reenables_it() {
+    fn test_apply_profile_then_toggle_disabled_known_server_normalizes_to_default() {
         let mut f = NewSessionForm::new();
         f.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
         f.mcp_profiles = vec![McpProfile {
@@ -345,13 +458,7 @@ mod tests {
         f.apply_mcp_profile("minimal").unwrap();
         f.toggle_mcp_server("browser");
 
-        let browser = f
-            .mcp_selection
-            .servers
-            .iter()
-            .find(|server| server.id == "browser")
-            .unwrap();
-        assert_eq!(f.mcp_selection.profile_id.as_deref(), Some("minimal"));
-        assert!(browser.enabled);
+        assert!(f.mcp_selection.is_all_servers());
+        assert_eq!(f.mcp_selection.profile_id, None);
     }
 }

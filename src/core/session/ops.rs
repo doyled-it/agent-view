@@ -207,6 +207,18 @@ impl SessionOps {
             .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?
             .ok_or(SessionError::NotFound)?;
 
+        let launch_ctx = build_runner_launch_context(
+            session.project_path.clone(),
+            session.id.clone(),
+            Some(session.mcp_selection.clone()),
+        );
+        let launch = build_restart_launch(
+            session.tool,
+            &session.command,
+            &session.tool_data,
+            &launch_ctx,
+        )?;
+
         if !session.tmux_session.is_empty() {
             if tmux::session_exists(&session.tmux_session) {
                 tmux::kill_session(&session.tmux_session)?;
@@ -215,24 +227,13 @@ impl SessionOps {
         }
 
         let new_tmux_name = tmux::generate_session_name(&session.title);
-        let mut env = HashMap::new();
-        env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), session.id.clone());
-        env.insert("AGENT_VIEW_SESSION_ID".to_string(), session.id.clone());
-
-        let restart_cmd = crate::core::runner::runner_for(session.tool)
-            .restart_command(&session.command, &session.tool_data);
         // Empty string is the storage sentinel for "no command, use tmux
         // default-shell" — see `Tool::Shell` and `ShellRunner::launch_command`.
-        let restart_cmd_arg = if restart_cmd.is_empty() {
-            None
-        } else {
-            Some(restart_cmd.as_str())
-        };
         tmux::create_session(
             &new_tmux_name,
-            restart_cmd_arg,
+            launch.command.as_deref(),
             Some(&session.project_path),
-            Some(&env),
+            Some(&launch.env),
         )?;
 
         cache.register(&new_tmux_name);
@@ -446,6 +447,58 @@ fn build_session_launch(
         runner_launch,
         hook_warning,
     ))
+}
+
+fn build_restart_launch(
+    tool: Tool,
+    original_command: &str,
+    tool_data: &str,
+    ctx: &RunnerLaunchContext,
+) -> Result<SessionLaunch, RunnerLaunchError> {
+    let runner = runner_for(tool);
+    let restart_command = runner.restart_command(original_command, tool_data);
+    let runner_launch = runner.build_launch(ctx)?;
+    let command =
+        compose_restart_command(runner_launch.command, original_command, &restart_command);
+
+    Ok(merge_runner_launch(
+        &ctx.session_id,
+        RunnerLaunch {
+            command,
+            env: runner_launch.env,
+            warning: runner_launch.warning,
+        },
+        None,
+    ))
+}
+
+fn compose_restart_command(
+    launch_command: Option<String>,
+    original_command: &str,
+    restart_command: &str,
+) -> Option<String> {
+    if restart_command.is_empty() {
+        return None;
+    }
+
+    if restart_command == original_command {
+        return launch_command.or_else(|| Some(restart_command.to_string()));
+    }
+
+    let Some(launch_command) = launch_command else {
+        return Some(restart_command.to_string());
+    };
+
+    let suffix = command_suffix_after_program(restart_command);
+    Some(format!("{}{}", launch_command, suffix))
+}
+
+fn command_suffix_after_program(command: &str) -> &str {
+    command
+        .char_indices()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(idx, _)| &command[idx..])
+        .unwrap_or("")
 }
 
 fn merge_runner_launch(
@@ -722,6 +775,32 @@ mod tests {
                 launch.warning.as_deref(),
                 Some("hook warning; runner warning")
             );
+        }
+
+        #[test]
+        fn build_restart_launch_reapplies_mcp_launch_when_restart_falls_back_to_original() {
+            let ctx = super::super::build_runner_launch_context(
+                "/tmp/project".to_string(),
+                "session-123".to_string(),
+                Some(McpSelection {
+                    profile_id: Some("no-browser".to_string()),
+                    servers: vec![McpServerSelection {
+                        id: "browser".to_string(),
+                        enabled: false,
+                        selected_tools: None,
+                    }],
+                }),
+            );
+
+            let launch =
+                super::super::build_restart_launch(Tool::Codex, "codex", "{}", &ctx).unwrap();
+
+            assert_eq!(
+                launch.command.as_deref(),
+                Some("codex -c mcp_servers.browser.enabled=false")
+            );
+            assert_eq!(launch.env["AGENT_VIEW_SESSION_ID"], "session-123");
+            assert_eq!(launch.env["AGENT_ORCHESTRATOR_SESSION"], "session-123");
         }
     }
 }

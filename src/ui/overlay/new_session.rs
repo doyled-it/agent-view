@@ -366,7 +366,7 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         "^S save · Esc cancel · Tab/\u{2193} next · \u{21e7}Tab/\u{2191} back · ^T toggle";
     let hint = match form.focused_field {
         0 => format!("\u{2190}/\u{2192} cycle runner   {}", base_hint),
-        MCP_FIELD if form.mcp_expanded => format!("Space toggle · Enter MCP   {}", base_hint),
+        MCP_FIELD if form.mcp_expanded => format!("Space apply/toggle · Enter MCP   {}", base_hint),
         MCP_FIELD => format!("Enter MCP   {}", base_hint),
         _ => base_hint.to_string(),
     };
@@ -389,17 +389,29 @@ fn display_runner_label(name: &str) -> String {
 #[derive(Debug)]
 struct McpLineSpec {
     text: String,
-    server_row: Option<usize>,
+    selectable_row: Option<usize>,
 }
 
 fn build_new_session_mcp_line_specs(form: &NewSessionForm) -> Vec<McpLineSpec> {
     let mut lines = vec![McpLineSpec {
         text: format!("MCP: {}", form.mcp_summary()),
-        server_row: None,
+        selectable_row: None,
     }];
 
     if !form.mcp_expanded {
         return lines;
+    }
+
+    for (idx, profile) in form.mcp_profiles.iter().enumerate() {
+        let marker = if form.mcp_selection.profile_id.as_deref() == Some(profile.id.as_str()) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        lines.push(McpLineSpec {
+            text: format!("  {} Profile: {}", marker, profile.name),
+            selectable_row: Some(idx),
+        });
     }
 
     for (idx, server) in form.mcp_servers.iter().enumerate() {
@@ -414,7 +426,7 @@ fn build_new_session_mcp_line_specs(form: &NewSessionForm) -> Vec<McpLineSpec> {
         }
         lines.push(McpLineSpec {
             text,
-            server_row: Some(idx),
+            selectable_row: Some(form.mcp_profiles.len() + idx),
         });
     }
 
@@ -436,15 +448,15 @@ fn build_new_session_mcp_lines_from_specs(
         .map(|spec| {
             let is_selected = form.focused_field == MCP_FIELD
                 && form.mcp_expanded
-                && spec.server_row == Some(form.mcp_selected_row);
+                && spec.selectable_row == Some(form.mcp_selected_row);
             let style = if is_selected {
                 Style::default()
                     .bg(theme.primary)
                     .fg(theme.selected_item_text)
                     .bold()
-            } else if form.focused_field == MCP_FIELD && spec.server_row.is_none() {
+            } else if form.focused_field == MCP_FIELD && spec.selectable_row.is_none() {
                 Style::default().fg(theme.primary)
-            } else if spec.server_row.is_none() {
+            } else if spec.selectable_row.is_none() {
                 Style::default().fg(theme.text_muted)
             } else {
                 Style::default().fg(theme.text)
@@ -581,6 +593,31 @@ mod tests {
         );
         assert!(
             lines.iter().any(|line| line.contains("server-level only")),
+            "rendered lines: {lines:#?}"
+        );
+    }
+
+    #[test]
+    fn new_session_overlay_renders_mcp_profile_rows() {
+        let mut form = NewSessionForm::new();
+        form.mcp_expanded = true;
+        form.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".into(),
+            name: "Rust".into(),
+            selection: McpSelection {
+                profile_id: None,
+                servers: vec![McpServerSelection {
+                    id: "GitLabMITRE".into(),
+                    enabled: true,
+                    selected_tools: None,
+                }],
+            },
+        }];
+
+        let lines = render_new_session_lines_for_test(&form);
+
+        assert!(
+            lines.iter().any(|line| line.contains("[ ] Profile: Rust")),
             "rendered lines: {lines:#?}"
         );
     }

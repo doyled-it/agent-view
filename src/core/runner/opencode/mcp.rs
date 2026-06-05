@@ -16,17 +16,9 @@ pub fn build_opencode_mcp_launch(
         return Ok(default_opencode_launch());
     }
 
-    if selection
-        .servers
-        .iter()
-        .any(|server| !server.enabled || server.selected_tools.is_some())
-    {
-        return Err(RunnerLaunchError::Unsupported(
-            UNSUPPORTED_MCP_FILTERING_MESSAGE.to_string(),
-        ));
-    }
-
-    Ok(default_opencode_launch())
+    Err(RunnerLaunchError::Unsupported(
+        UNSUPPORTED_MCP_FILTERING_MESSAGE.to_string(),
+    ))
 }
 
 fn default_opencode_launch() -> RunnerLaunch {
@@ -87,6 +79,27 @@ mod tests {
                 id: "GitLabMITRE".to_string(),
                 enabled: true,
                 selected_tools: Some(vec!["search".to_string()]),
+            }],
+        };
+
+        let err = super::build_opencode_mcp_launch(Some(&selection)).unwrap_err();
+
+        match err {
+            RunnerLaunchError::Unsupported(message) => {
+                assert_eq!(message, super::UNSUPPORTED_MCP_FILTERING_MESSAGE)
+            }
+            other => panic!("expected unsupported error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enabled_server_list_returns_unsupported_error_instead_of_plain_opencode() {
+        let selection = McpSelection {
+            profile_id: Some("gitlab-only".to_string()),
+            servers: vec![McpServerSelection {
+                id: "GitLabMITRE".to_string(),
+                enabled: true,
+                selected_tools: None,
             }],
         };
 

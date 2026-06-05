@@ -122,12 +122,8 @@ pub fn handle_new_session_key(
             (KeyModifiers::NONE, KeyCode::Char(' '))
                 if form.focused_field == MCP_FIELD && form.mcp_expanded =>
             {
-                if let Some(id) = form
-                    .mcp_servers
-                    .get(form.mcp_selected_row)
-                    .map(|server| server.id.clone())
-                {
-                    form.toggle_mcp_server(&id);
+                if let Err(err) = form.activate_selected_mcp_row() {
+                    form.error = Some(err);
                 }
             }
             (_, KeyCode::Tab) => {
@@ -231,11 +227,11 @@ pub fn handle_new_session_key(
                 form.clear_completions();
             }
             (_, KeyCode::Down) if form.focused_field == MCP_FIELD && form.mcp_expanded => {
-                if form.mcp_servers.is_empty() {
+                let row_count = form.mcp_row_count();
+                if row_count == 0 {
                     form.mcp_selected_row = 0;
                 } else {
-                    form.mcp_selected_row =
-                        (form.mcp_selected_row + 1).min(form.mcp_servers.len() - 1);
+                    form.mcp_selected_row = (form.mcp_selected_row + 1).min(row_count - 1);
                 }
             }
             (_, KeyCode::Up) if form.focused_field == MCP_FIELD && form.mcp_expanded => {
@@ -602,6 +598,37 @@ mod tests {
     }
 
     #[test]
+    fn test_mcp_field_space_applies_selected_profile_when_expanded() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut form = crate::app::NewSessionForm::new();
+        form.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".into(),
+            name: "Rust".into(),
+            selection: McpSelection {
+                profile_id: None,
+                servers: vec![McpServerSelection {
+                    id: "GitLabMITRE".into(),
+                    enabled: true,
+                    selected_tools: None,
+                }],
+            },
+        }];
+        form.focused_field = 5;
+        form.mcp_expanded = true;
+        form.mcp_selected_row = 0;
+        let mut app = App::new(false);
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, key(KeyCode::Char(' ')), &storage, &session_ops).unwrap();
+
+        let form = form_in_overlay(&app);
+        assert_eq!(form.mcp_selection.profile_id.as_deref(), Some("rust"));
+        assert_eq!(form.mcp_selection.servers.len(), 1);
+        assert_eq!(form.mcp_selection.servers[0].id, "GitLabMITRE");
+    }
+
+    #[test]
     fn test_mcp_field_up_down_move_selected_server_row_when_expanded() {
         let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
         let session_ops = SessionOps;
@@ -622,5 +649,36 @@ mod tests {
         handle_new_session_key(&mut app, key(KeyCode::Up), &storage, &session_ops).unwrap();
         assert_eq!(form_in_overlay(&app).focused_field, 5);
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 0);
+    }
+
+    #[test]
+    fn test_new_session_command_uses_app_config_profiles() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut app = App::new(false);
+        app.config.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".into(),
+            name: "Rust".into(),
+            selection: McpSelection {
+                profile_id: None,
+                servers: vec![McpServerSelection {
+                    id: "GitLabMITRE".into(),
+                    enabled: true,
+                    selected_tools: None,
+                }],
+            },
+        }];
+
+        crate::input::overlay::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        let form = form_in_overlay(&app);
+        assert_eq!(form.mcp_profiles.len(), 1);
+        assert_eq!(form.mcp_profiles[0].id, "rust");
     }
 }

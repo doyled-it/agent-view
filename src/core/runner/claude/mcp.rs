@@ -4,6 +4,9 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+const UNSUPPORTED_MCP_TOOL_FILTERING_MESSAGE: &str =
+    "Claude MCP tool filtering is not enforceable yet; select entire MCP servers only";
+
 pub fn build_claude_mcp_launch(
     session_id: &str,
     selection: Option<&McpSelection>,
@@ -14,6 +17,7 @@ pub fn build_claude_mcp_launch(
     }
 
     let selection = selection.expect("narrowed selection checked above");
+    reject_selected_tools(selection)?;
     let config_dir = config_dir_override
         .map(Path::to_path_buf)
         .unwrap_or_else(crate::core::paths::mcp_session_config_dir);
@@ -48,6 +52,7 @@ fn build_claude_mcp_launch_from_source_json(
     }
 
     let selection = selection.expect("narrowed selection checked above");
+    reject_selected_tools(selection)?;
     validate_session_id(session_id)?;
     let mcp_servers = selected_mcp_servers(selection, source_settings)?;
     create_private_config_dir(config_dir)?;
@@ -67,6 +72,18 @@ fn build_claude_mcp_launch_from_source_json(
         env: HashMap::new(),
         warning: None,
     })
+}
+
+fn reject_selected_tools(selection: &McpSelection) -> Result<(), String> {
+    if selection
+        .servers
+        .iter()
+        .any(|server| server.selected_tools.is_some())
+    {
+        Err(UNSUPPORTED_MCP_TOOL_FILTERING_MESSAGE.to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn claude_settings_path() -> Result<PathBuf, String> {
@@ -326,6 +343,38 @@ mod tests {
 
         assert!(err.contains("GitLabMITRE"), "{err}");
         assert!(err.contains("settings.json"), "{err}");
+        assert!(!dir.path().join("session-123-claude-mcp.json").exists());
+    }
+
+    #[test]
+    fn selected_tools_returns_error_instead_of_widening_to_all_server_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = json!({
+            "mcpServers": {
+                "GitLabMITRE": {
+                    "type": "http",
+                    "url": "https://gitlab.example.test/api/v4/mcp"
+                }
+            }
+        });
+        let selection = McpSelection {
+            profile_id: Some("tools".to_string()),
+            servers: vec![McpServerSelection {
+                id: "GitLabMITRE".to_string(),
+                enabled: true,
+                selected_tools: Some(vec!["create_issue".to_string()]),
+            }],
+        };
+
+        let err = super::build_claude_mcp_launch_from_source_json(
+            "session-123",
+            Some(&selection),
+            dir.path(),
+            &source,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("Claude MCP tool filtering is not enforceable yet"));
         assert!(!dir.path().join("session-123-claude-mcp.json").exists());
     }
 

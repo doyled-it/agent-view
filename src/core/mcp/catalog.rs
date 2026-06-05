@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs;
 
 use crate::core::mcp::McpSelection;
 use crate::types::Tool;
@@ -48,6 +49,50 @@ pub fn parse_codex_mcp_servers(toml_text: &str) -> Result<Vec<McpServerCatalogEn
         .collect();
 
     Ok(servers)
+}
+
+#[allow(dead_code)]
+pub fn parse_claude_mcp_servers(settings_json: &str) -> Result<Vec<McpServerCatalogEntry>, String> {
+    let value: serde_json::Value = serde_json::from_str(settings_json)
+        .map_err(|e| format!("parse Claude settings.json: {}", e))?;
+    let servers = value
+        .get("mcpServers")
+        .and_then(serde_json::Value::as_object)
+        .map(|servers| {
+            servers
+                .keys()
+                .cloned()
+                .map(|id| McpServerCatalogEntry::server_level(Tool::Claude, id))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(servers)
+}
+
+#[allow(dead_code)]
+pub fn discover_mcp_server_catalog() -> Vec<McpServerCatalogEntry> {
+    let mut catalog = Vec::new();
+
+    if let Some(config_dir) = crate::core::runner::claude::hooks::claude_config_dir() {
+        let path = config_dir.join("settings.json");
+        if let Ok(text) = fs::read_to_string(path) {
+            if let Ok(mut servers) = parse_claude_mcp_servers(&text) {
+                catalog.append(&mut servers);
+            }
+        }
+    }
+
+    if let Some(config_dir) = crate::core::runner::codex::hooks::codex_config_dir() {
+        let path = config_dir.join("config.toml");
+        if let Ok(text) = fs::read_to_string(path) {
+            if let Ok(mut servers) = parse_codex_mcp_servers(&text) {
+                catalog.append(&mut servers);
+            }
+        }
+    }
+
+    catalog
 }
 
 fn direct_codex_mcp_server_name(line: &str) -> Option<&str> {
@@ -159,6 +204,34 @@ mod tests {
 
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].id, "gitlab");
+    }
+
+    #[test]
+    fn claude_settings_parser_finds_mcp_servers() {
+        let settings = r#"
+        {
+            "mcpServers": {
+                "GitLabMITRE": {
+                    "type": "http",
+                    "url": "https://gitlab.example.com/api/v4/mcp"
+                },
+                "browser": {
+                    "command": "npx",
+                    "args": ["@playwright/mcp"]
+                }
+            }
+        }
+        "#;
+
+        let servers = parse_claude_mcp_servers(settings).unwrap();
+
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].id, "GitLabMITRE");
+        assert_eq!(servers[0].display_name, "GitLabMITRE");
+        assert_eq!(servers[0].runner, Tool::Claude);
+        assert!(servers[0].server_filter_enforceable);
+        assert!(!servers[0].tool_filter_enforceable);
+        assert_eq!(servers[1].id, "browser");
     }
 
     #[test]

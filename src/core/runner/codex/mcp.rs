@@ -1,12 +1,25 @@
-use crate::core::mcp::McpSelection;
+use crate::core::mcp::{McpSelection, McpServerCatalogEntry, McpServerSelection};
 use crate::core::runner::{RunnerLaunch, RunnerLaunchError};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 
 const UNSUPPORTED_MCP_TOOL_FILTERING_MESSAGE: &str =
     "Codex MCP tool filtering is not enforceable yet; select entire MCP servers only";
 
 pub fn build_codex_mcp_launch(
     selection: Option<&McpSelection>,
+) -> Result<RunnerLaunch, RunnerLaunchError> {
+    let catalog = if selection_requires_catalog(selection) {
+        Some(read_codex_mcp_catalog()?)
+    } else {
+        None
+    };
+    build_codex_mcp_launch_with_catalog(selection, catalog.as_deref())
+}
+
+pub(crate) fn build_codex_mcp_launch_with_catalog(
+    selection: Option<&McpSelection>,
+    catalog: Option<&[McpServerCatalogEntry]>,
 ) -> Result<RunnerLaunch, RunnerLaunchError> {
     let Some(selection) = selection else {
         return Ok(default_codex_launch());
@@ -26,23 +39,25 @@ pub fn build_codex_mcp_launch(
         ));
     }
 
-    let mut seen = HashSet::new();
-    let mut disabled_args = Vec::new();
-    for server in &selection.servers {
-        if !seen.insert(&server.id) {
-            continue;
-        }
+    let selected = dedupe_server_selections(selection);
+    let disabled_server_ids = if selected.iter().any(|server| server.enabled) {
+        disabled_server_ids_from_catalog(&selected, catalog)?
+    } else {
+        selected
+            .iter()
+            .filter(|server| !server.enabled)
+            .map(|server| server.id.clone())
+            .collect()
+    };
 
-        if server.enabled {
-            continue;
-        }
-
-        validate_server_id(&server.id)?;
-        disabled_args.push(format!("-c mcp_servers.{}.enabled=false", server.id));
+    if disabled_server_ids.is_empty() {
+        return Ok(default_codex_launch());
     }
 
-    if disabled_args.is_empty() {
-        return Ok(default_codex_launch());
+    let mut disabled_args = Vec::new();
+    for server_id in disabled_server_ids {
+        validate_server_id(&server_id)?;
+        disabled_args.push(format!("-c mcp_servers.{}.enabled=false", server_id));
     }
 
     Ok(RunnerLaunch {
@@ -50,6 +65,81 @@ pub fn build_codex_mcp_launch(
         env: HashMap::new(),
         warning: None,
     })
+}
+
+fn selection_requires_catalog(selection: Option<&McpSelection>) -> bool {
+    selection
+        .filter(|selection| !selection.is_all_servers())
+        .map(|selection| selection.servers.iter().any(|server| server.enabled))
+        .unwrap_or(false)
+}
+
+fn dedupe_server_selections(selection: &McpSelection) -> Vec<McpServerSelection> {
+    let mut seen = HashSet::new();
+    selection
+        .servers
+        .iter()
+        .filter(|server| seen.insert(server.id.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn disabled_server_ids_from_catalog(
+    selected: &[McpServerSelection],
+    catalog: Option<&[McpServerCatalogEntry]>,
+) -> Result<Vec<String>, RunnerLaunchError> {
+    let catalog = catalog.ok_or_else(|| {
+        RunnerLaunchError::Config(
+            "enabled Codex MCP server selections require the configured Codex MCP server catalog"
+                .to_string(),
+        )
+    })?;
+    let catalog = dedupe_catalog_servers(catalog);
+    let catalog_ids: HashSet<&str> = catalog.iter().map(|server| server.id.as_str()).collect();
+    for server in selected {
+        validate_server_id(&server.id)?;
+        if !catalog_ids.contains(server.id.as_str()) {
+            return Err(RunnerLaunchError::Config(format!(
+                "selected Codex MCP server '{}' not found in config.toml mcp_servers",
+                server.id
+            )));
+        }
+    }
+
+    let included_ids: HashSet<&str> = selected
+        .iter()
+        .filter(|server| server.enabled)
+        .map(|server| server.id.as_str())
+        .collect();
+    Ok(catalog
+        .into_iter()
+        .filter(|server| !included_ids.contains(server.id.as_str()))
+        .map(|server| server.id)
+        .collect())
+}
+
+fn dedupe_catalog_servers(catalog: &[McpServerCatalogEntry]) -> Vec<McpServerCatalogEntry> {
+    let mut seen = HashSet::new();
+    catalog
+        .iter()
+        .filter(|server| seen.insert(server.id.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn read_codex_mcp_catalog() -> Result<Vec<McpServerCatalogEntry>, RunnerLaunchError> {
+    let config_dir = crate::core::runner::codex::hooks::codex_config_dir().ok_or_else(|| {
+        RunnerLaunchError::Config("no home directory for Codex config".to_string())
+    })?;
+    let config_path = config_dir.join("config.toml");
+    let text = fs::read_to_string(&config_path).map_err(|e| {
+        RunnerLaunchError::Config(format!(
+            "failed to read Codex config.toml at {}: {}",
+            config_path.display(),
+            e
+        ))
+    })?;
+    crate::core::mcp::parse_codex_mcp_servers(&text).map_err(RunnerLaunchError::Config)
 }
 
 fn default_codex_launch() -> RunnerLaunch {
@@ -77,8 +167,10 @@ fn validate_server_id(id: &str) -> Result<(), RunnerLaunchError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::mcp::catalog::McpServerCatalogEntry;
     use crate::core::mcp::{McpSelection, McpServerSelection};
     use crate::core::runner::RunnerLaunchError;
+    use crate::types::Tool;
 
     #[test]
     fn default_selection_launches_plain_codex() {
@@ -89,11 +181,64 @@ mod tests {
         assert_eq!(launch.warning, None);
 
         let selection = McpSelection::default();
-        let launch = super::build_codex_mcp_launch(Some(&selection)).unwrap();
+        let catalog = vec![McpServerCatalogEntry::server_level(
+            Tool::Codex,
+            "GitLabMITRE",
+        )];
+        let launch =
+            super::build_codex_mcp_launch_with_catalog(Some(&selection), Some(&catalog)).unwrap();
 
         assert_eq!(launch.command.as_deref(), Some("codex"));
         assert!(launch.env.is_empty());
         assert_eq!(launch.warning, None);
+    }
+
+    #[test]
+    fn enabled_allowlist_disables_omitted_catalog_servers() {
+        let selection = McpSelection {
+            profile_id: Some("gitlab-only".to_string()),
+            servers: vec![McpServerSelection {
+                id: "GitLabMITRE".to_string(),
+                enabled: true,
+                selected_tools: None,
+            }],
+        };
+        let catalog = vec![
+            McpServerCatalogEntry::server_level(Tool::Codex, "GitLabMITRE"),
+            McpServerCatalogEntry::server_level(Tool::Codex, "browser"),
+        ];
+
+        let launch =
+            super::build_codex_mcp_launch_with_catalog(Some(&selection), Some(&catalog)).unwrap();
+
+        assert_eq!(
+            launch.command.as_deref(),
+            Some("codex -c mcp_servers.browser.enabled=false")
+        );
+    }
+
+    #[test]
+    fn enabled_allowlist_requires_catalog_to_avoid_widening_access() {
+        let selection = McpSelection {
+            profile_id: Some("gitlab-only".to_string()),
+            servers: vec![McpServerSelection {
+                id: "GitLabMITRE".to_string(),
+                enabled: true,
+                selected_tools: None,
+            }],
+        };
+
+        let err = super::build_codex_mcp_launch_with_catalog(Some(&selection), None).unwrap_err();
+
+        match err {
+            RunnerLaunchError::Config(message) => {
+                assert!(
+                    message.contains("require the configured Codex MCP server catalog"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected config error, got {other:?}"),
+        }
     }
 
     #[test]
