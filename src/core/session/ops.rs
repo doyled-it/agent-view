@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::core::mcp::McpSelection;
+use crate::core::runner::{runner_for, RunnerLaunch, RunnerLaunchContext, RunnerLaunchError};
 use crate::core::storage::Storage;
 use crate::core::tmux;
 use crate::core::tmux::{SessionCache, TmuxError};
@@ -13,6 +15,8 @@ pub enum SessionError {
     Storage(String),
     #[error("session not found")]
     NotFound,
+    #[error("runner launch error: {0}")]
+    RunnerLaunch(#[from] RunnerLaunchError),
     #[error("tmux error: {0}")]
     Tmux(#[from] TmuxError),
     #[error("worktree error: {0}")]
@@ -27,8 +31,7 @@ pub struct SessionOps;
 
 impl SessionOps {
     /// Create a new session (creates tmux session and saves to storage).
-    /// Returns (session, optional non-fatal warning) — currently warnings
-    /// only originate from the worktree-setup hook.
+    /// Returns (session, optional non-fatal warning) from hook or runner setup.
     pub fn create_session(
         &self,
         storage: &Storage,
@@ -36,15 +39,12 @@ impl SessionOps {
         options: SessionCreateOptions,
     ) -> SessionResult<(Session, Option<String>)> {
         let title = options.title.unwrap_or_else(generate_title);
+        let explicit_command = options.command;
+        let requested_mcp_selection = options.mcp_selection.clone();
+        let mcp_selection = requested_mcp_selection.clone().unwrap_or_default();
+        let tool = options.tool;
         let id = uuid::Uuid::new_v4().to_string();
         let tmux_name = tmux::generate_session_name(&title);
-        // `None` here means "no explicit command — let tmux's default-shell
-        // run in the pane" (the path used by `Tool::Shell`). For storage
-        // we coerce to the empty string so `Session.command` retains its
-        // simple `String` type.
-        let command: Option<String> = options
-            .command
-            .or_else(|| options.tool.command().map(String::from));
 
         let now = chrono::Utc::now().timestamp_millis();
 
@@ -86,18 +86,18 @@ impl SessionOps {
             None
         };
 
-        let mut env = HashMap::new();
-        env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), id.clone());
-        env.insert("AGENT_VIEW_SESSION_ID".to_string(), id.clone());
+        let launch_ctx =
+            build_runner_launch_context(working_dir.clone(), id.clone(), requested_mcp_selection);
+        let launch = build_session_launch(tool, explicit_command, &launch_ctx, hook_warning)?;
 
         // NOTE: if tmux::create_session fails here, a freshly created worktree
         // at `working_dir` is leaked on disk. Task 8's orphan sweep is the
         // recovery path; no inline rollback to keep the failure message simple.
         tmux::create_session(
             &tmux_name,
-            command.as_deref(),
+            launch.command.as_deref(),
             Some(&working_dir),
-            Some(&env),
+            Some(&launch.env),
         )?;
 
         cache.register(&tmux_name);
@@ -110,9 +110,9 @@ impl SessionOps {
                 .group_path
                 .unwrap_or_else(|| "my-sessions".to_string()),
             order: storage.load_sessions().unwrap_or_default().len() as i32,
-            command: command.unwrap_or_default(),
+            command: launch.command.unwrap_or_default(),
             wrapper: String::new(),
-            tool: options.tool,
+            tool,
             status: SessionStatus::Running,
             tmux_session: tmux_name,
             created_at: now,
@@ -122,6 +122,7 @@ impl SessionOps {
             worktree_repo,
             worktree_branch,
             tool_data: "{}".to_string(),
+            mcp_selection,
             acknowledged: false,
             notify: false,
             follow_up: false,
@@ -143,7 +144,7 @@ impl SessionOps {
             .map_err(|e| SessionError::Storage(format!("Failed to save session: {}", e)))?;
         storage.touch().ok();
 
-        Ok((session, hook_warning))
+        Ok((session, launch.warning))
     }
 
     /// Stop a session (kill tmux but keep the record)
@@ -206,6 +207,18 @@ impl SessionOps {
             .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?
             .ok_or(SessionError::NotFound)?;
 
+        let launch_ctx = build_runner_launch_context(
+            session.project_path.clone(),
+            session.id.clone(),
+            Some(session.mcp_selection.clone()),
+        );
+        let launch = build_restart_launch(
+            session.tool,
+            &session.command,
+            &session.tool_data,
+            &launch_ctx,
+        )?;
+
         if !session.tmux_session.is_empty() {
             if tmux::session_exists(&session.tmux_session) {
                 tmux::kill_session(&session.tmux_session)?;
@@ -214,24 +227,13 @@ impl SessionOps {
         }
 
         let new_tmux_name = tmux::generate_session_name(&session.title);
-        let mut env = HashMap::new();
-        env.insert("AGENT_ORCHESTRATOR_SESSION".to_string(), session.id.clone());
-        env.insert("AGENT_VIEW_SESSION_ID".to_string(), session.id.clone());
-
-        let restart_cmd = crate::core::runner::runner_for(session.tool)
-            .restart_command(&session.command, &session.tool_data);
         // Empty string is the storage sentinel for "no command, use tmux
         // default-shell" — see `Tool::Shell` and `ShellRunner::launch_command`.
-        let restart_cmd_arg = if restart_cmd.is_empty() {
-            None
-        } else {
-            Some(restart_cmd.as_str())
-        };
         tmux::create_session(
             &new_tmux_name,
-            restart_cmd_arg,
+            launch.command.as_deref(),
             Some(&session.project_path),
-            Some(&env),
+            Some(&launch.env),
         )?;
 
         cache.register(&new_tmux_name);
@@ -405,6 +407,128 @@ fn delete_event_files_in(
     }
 }
 
+fn build_runner_launch_context(
+    working_dir: String,
+    session_id: String,
+    mcp_selection: Option<McpSelection>,
+) -> RunnerLaunchContext {
+    RunnerLaunchContext {
+        working_dir,
+        session_id,
+        mcp_selection,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionLaunch {
+    command: Option<String>,
+    env: HashMap<String, String>,
+    warning: Option<String>,
+}
+
+fn build_session_launch(
+    tool: Tool,
+    explicit_command: Option<String>,
+    ctx: &RunnerLaunchContext,
+    hook_warning: Option<String>,
+) -> Result<SessionLaunch, RunnerLaunchError> {
+    let runner_launch = if let Some(command) = explicit_command {
+        RunnerLaunch {
+            command: Some(command),
+            env: HashMap::new(),
+            warning: None,
+        }
+    } else {
+        runner_for(tool).build_launch(ctx)?
+    };
+
+    Ok(merge_runner_launch(
+        &ctx.session_id,
+        runner_launch,
+        hook_warning,
+    ))
+}
+
+fn build_restart_launch(
+    tool: Tool,
+    original_command: &str,
+    tool_data: &str,
+    ctx: &RunnerLaunchContext,
+) -> Result<SessionLaunch, RunnerLaunchError> {
+    let runner = runner_for(tool);
+    let restart_command = runner.restart_command(original_command, tool_data);
+    let runner_launch = runner.build_launch(ctx)?;
+    let command =
+        compose_restart_command(runner_launch.command, original_command, &restart_command);
+
+    Ok(merge_runner_launch(
+        &ctx.session_id,
+        RunnerLaunch {
+            command,
+            env: runner_launch.env,
+            warning: runner_launch.warning,
+        },
+        None,
+    ))
+}
+
+fn compose_restart_command(
+    launch_command: Option<String>,
+    original_command: &str,
+    restart_command: &str,
+) -> Option<String> {
+    if restart_command.is_empty() {
+        return None;
+    }
+
+    if restart_command == original_command {
+        return launch_command.or_else(|| Some(restart_command.to_string()));
+    }
+
+    let Some(launch_command) = launch_command else {
+        return Some(restart_command.to_string());
+    };
+
+    let suffix = command_suffix_after_program(restart_command);
+    Some(format!("{}{}", launch_command, suffix))
+}
+
+fn command_suffix_after_program(command: &str) -> &str {
+    command
+        .char_indices()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(idx, _)| &command[idx..])
+        .unwrap_or("")
+}
+
+fn merge_runner_launch(
+    session_id: &str,
+    runner_launch: RunnerLaunch,
+    hook_warning: Option<String>,
+) -> SessionLaunch {
+    let mut env = runner_launch.env;
+    env.insert(
+        "AGENT_ORCHESTRATOR_SESSION".to_string(),
+        session_id.to_string(),
+    );
+    env.insert("AGENT_VIEW_SESSION_ID".to_string(), session_id.to_string());
+
+    SessionLaunch {
+        command: runner_launch.command,
+        env,
+        warning: combine_warnings(hook_warning, runner_launch.warning),
+    }
+}
+
+fn combine_warnings(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{}; {}", first, second)),
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (None, None) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,6 +595,7 @@ mod tests {
                     group_path: None,
                     tool: Tool::Shell,
                     command: Some("sleep 1".to_string()),
+                    mcp_selection: None,
                     worktree: Some(WorktreeCreateOptions {
                         branch: "wt-feature".to_string(),
                         new_branch: true,
@@ -510,6 +635,7 @@ mod tests {
                     group_path: None,
                     tool: Tool::Shell,
                     command: Some("sleep 5".to_string()),
+                    mcp_selection: None,
                     worktree: Some(WorktreeCreateOptions {
                         branch: "merged-branch".to_string(),
                         new_branch: true,
@@ -573,5 +699,108 @@ mod tests {
         let hooks = dir.path().join("does-not-exist-hooks");
         let costs = dir.path().join("does-not-exist-costs");
         super::delete_event_files_in(&hooks, &costs, "anything");
+    }
+
+    mod launch_tests {
+        use crate::core::mcp::{McpSelection, McpServerSelection};
+        use crate::core::runner::RunnerLaunch;
+        use crate::types::Tool;
+        use std::collections::HashMap;
+
+        #[test]
+        fn build_runner_launch_context_carries_mcp_selection() {
+            let selection = McpSelection {
+                profile_id: Some("profile-rust".to_string()),
+                servers: vec![McpServerSelection {
+                    id: "GitLabMITRE".to_string(),
+                    enabled: true,
+                    selected_tools: Some(vec!["list_issues".to_string()]),
+                }],
+            };
+
+            let ctx = super::super::build_runner_launch_context(
+                "/tmp/project".to_string(),
+                "session-123".to_string(),
+                Some(selection.clone()),
+            );
+
+            assert_eq!(ctx.working_dir, "/tmp/project");
+            assert_eq!(ctx.session_id, "session-123");
+            assert_eq!(ctx.mcp_selection, Some(selection));
+        }
+
+        #[test]
+        fn build_session_launch_uses_explicit_command() {
+            let ctx = super::super::build_runner_launch_context(
+                "/tmp/project".to_string(),
+                "session-123".to_string(),
+                None,
+            );
+
+            let launch = super::super::build_session_launch(
+                Tool::Claude,
+                Some("echo explicit".to_string()),
+                &ctx,
+                None,
+            )
+            .unwrap();
+
+            assert_eq!(launch.command.as_deref(), Some("echo explicit"));
+            assert_eq!(launch.env["AGENT_VIEW_SESSION_ID"], "session-123");
+            assert_eq!(launch.env["AGENT_ORCHESTRATOR_SESSION"], "session-123");
+            assert_eq!(launch.warning, None);
+        }
+
+        #[test]
+        fn merge_runner_launch_preserves_base_env_and_combines_warnings() {
+            let mut runner_env = HashMap::new();
+            runner_env.insert("RUNNER_ONLY".to_string(), "1".to_string());
+            runner_env.insert("AGENT_VIEW_SESSION_ID".to_string(), "runner".to_string());
+
+            let launch = super::super::merge_runner_launch(
+                "session-123",
+                RunnerLaunch {
+                    command: Some("claude".to_string()),
+                    env: runner_env,
+                    warning: Some("runner warning".to_string()),
+                },
+                Some("hook warning".to_string()),
+            );
+
+            assert_eq!(launch.command.as_deref(), Some("claude"));
+            assert_eq!(launch.env["RUNNER_ONLY"], "1");
+            assert_eq!(launch.env["AGENT_VIEW_SESSION_ID"], "session-123");
+            assert_eq!(launch.env["AGENT_ORCHESTRATOR_SESSION"], "session-123");
+            assert_eq!(
+                launch.warning.as_deref(),
+                Some("hook warning; runner warning")
+            );
+        }
+
+        #[test]
+        fn build_restart_launch_reapplies_mcp_launch_when_restart_falls_back_to_original() {
+            let ctx = super::super::build_runner_launch_context(
+                "/tmp/project".to_string(),
+                "session-123".to_string(),
+                Some(McpSelection {
+                    profile_id: Some("no-browser".to_string()),
+                    servers: vec![McpServerSelection {
+                        id: "browser".to_string(),
+                        enabled: false,
+                        selected_tools: None,
+                    }],
+                }),
+            );
+
+            let launch =
+                super::super::build_restart_launch(Tool::Codex, "codex", "{}", &ctx).unwrap();
+
+            assert_eq!(
+                launch.command.as_deref(),
+                Some("codex -c mcp_servers.browser.enabled=false")
+            );
+            assert_eq!(launch.env["AGENT_VIEW_SESSION_ID"], "session-123");
+            assert_eq!(launch.env["AGENT_ORCHESTRATOR_SESSION"], "session-123");
+        }
     }
 }

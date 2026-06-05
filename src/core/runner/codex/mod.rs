@@ -13,10 +13,11 @@
 
 pub mod cost_handler;
 pub mod hooks;
+pub mod mcp;
 pub mod notify;
 pub mod notify_handler;
 
-use super::{Runner, ToolStatus};
+use super::{Runner, RunnerLaunch, RunnerLaunchContext, RunnerLaunchError, ToolStatus};
 use regex::Regex;
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -78,6 +79,10 @@ impl Runner for CodexRunner {
 
     fn launch_command(&self) -> Option<&'static str> {
         Some("codex")
+    }
+
+    fn build_launch(&self, ctx: &RunnerLaunchContext) -> Result<RunnerLaunch, RunnerLaunchError> {
+        mcp::build_codex_mcp_launch(ctx.mcp_selection.as_ref())
     }
 
     fn parse_status(&self, pane_content: &str) -> ToolStatus {

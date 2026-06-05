@@ -277,6 +277,7 @@ pub fn build_promoted_session(
         worktree_repo: String::new(),
         worktree_branch: String::new(),
         tool_data: run.tool_data.clone(),
+        mcp_selection: crate::core::mcp::McpSelection::default(),
         acknowledged: false,
         notify: false,
         follow_up: false,

@@ -66,7 +66,9 @@ pub fn handle_main_key(
         }
         (KeyModifiers::NONE, KeyCode::Char('n')) => match app.active_tab {
             crate::app::ActiveTab::Sessions => {
-                app.overlay = crate::app::Overlay::NewSession(crate::app::NewSessionForm::new());
+                app.overlay = crate::app::Overlay::NewSession(
+                    crate::app::NewSessionForm::from_app_config(&app.config),
+                );
             }
             crate::app::ActiveTab::Routines => {
                 app.overlay = crate::app::Overlay::NewRoutine(crate::app::NewRoutineForm::new());

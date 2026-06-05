@@ -4,7 +4,7 @@ use rusqlite::Result as SqlResult;
 use super::Storage;
 use crate::core::cost::Pricer;
 
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 
 impl Storage {
     pub fn migrate(&self) -> SqlResult<()> {
@@ -209,6 +209,14 @@ impl Storage {
             );
         }
 
+        // v10 -> v11: resolved MCP tool/server selection persisted per session.
+        if version < 11 {
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN mcp_selection TEXT NOT NULL DEFAULT '{}'",
+                [],
+            );
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -243,7 +251,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("10".to_string()));
+        assert_eq!(version, Some("11".to_string()));
     }
 
     #[test]
@@ -251,7 +259,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("10".to_string()));
+        assert_eq!(version, Some("11".to_string()));
     }
 
     #[test]
@@ -373,7 +381,7 @@ mod tests {
     fn test_current_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("10".to_string()));
+        assert_eq!(version, Some("11".to_string()));
     }
 
     #[test]
@@ -479,5 +487,29 @@ mod tests {
             .unwrap();
 
         assert_eq!(user_waiting, 1);
+    }
+
+    #[test]
+    fn test_v11_mcp_selection_column_exists() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO sessions (id, title, project_path, created_at, mcp_selection)
+                 VALUES ('test', 'Test', '/tmp', 0, '{\"profile_id\":\"dev\"}')",
+                [],
+            )
+            .unwrap();
+
+        let selection: String = storage
+            .conn()
+            .query_row(
+                "SELECT mcp_selection FROM sessions WHERE id = 'test'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(selection, "{\"profile_id\":\"dev\"}");
     }
 }

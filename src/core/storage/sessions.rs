@@ -2,7 +2,12 @@ use rusqlite::params;
 use rusqlite::Result as SqlResult;
 
 use super::Storage;
+use crate::core::mcp::McpSelection;
 use crate::types::{Session, SessionStatus, StatusHistoryEntry, Tool};
+
+fn parse_mcp_selection(json: &str) -> McpSelection {
+    serde_json::from_str(json).unwrap_or_default()
+}
 
 impl Storage {
     /// Save a session (insert or replace)
@@ -13,10 +18,10 @@ impl Storage {
                 command, wrapper, tool, status, tmux_session,
                 created_at, last_accessed,
                 parent_session_id, worktree_path, worktree_repo, worktree_branch,
-                tool_data, acknowledged,
+                tool_data, mcp_selection, acknowledged,
                 notify, follow_up, user_waiting, status_changed_at, restart_count, status_history,
                 pinned, tokens_used, last_started_at, notes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
             params![
                 session.id,
                 session.title,
@@ -35,6 +40,7 @@ impl Storage {
                 session.worktree_repo,
                 session.worktree_branch,
                 session.tool_data,
+                session.mcp_selection_json(),
                 session.acknowledged as i32,
                 session.notify as i32,
                 session.follow_up as i32,
@@ -58,7 +64,7 @@ impl Storage {
                     command, wrapper, tool, status, tmux_session,
                     created_at, last_accessed,
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
-                    tool_data, acknowledged,
+                    tool_data, mcp_selection, acknowledged,
                     notify, follow_up, user_waiting, status_changed_at, restart_count, status_history,
                     pinned, tokens_used, last_started_at, notes
              FROM sessions ORDER BY sort_order",
@@ -67,8 +73,9 @@ impl Storage {
         let rows = stmt.query_map([], |row| {
             let tool_str: String = row.get(7)?;
             let status_str: String = row.get(8)?;
-            let history_json: String = row.get(23)?;
-            let status_changed_at: i64 = row.get(21)?;
+            let mcp_selection_json: String = row.get(17).unwrap_or_else(|_| "{}".to_string());
+            let history_json: String = row.get(24)?;
+            let status_changed_at: i64 = row.get(22)?;
             let created_at: i64 = row.get(10)?;
 
             Ok(Session {
@@ -89,18 +96,19 @@ impl Storage {
                 worktree_repo: row.get(14)?,
                 worktree_branch: row.get(15)?,
                 tool_data: row.get(16)?,
-                acknowledged: row.get::<_, i32>(17)? == 1,
-                notify: row.get::<_, i32>(18)? == 1,
-                follow_up: row.get::<_, i32>(19)? == 1,
-                user_waiting: row.get::<_, i32>(20)? == 1,
+                mcp_selection: parse_mcp_selection(&mcp_selection_json),
+                acknowledged: row.get::<_, i32>(18)? == 1,
+                notify: row.get::<_, i32>(19)? == 1,
+                follow_up: row.get::<_, i32>(20)? == 1,
+                user_waiting: row.get::<_, i32>(21)? == 1,
                 status_changed_at: if status_changed_at > 0 {
                     status_changed_at
                 } else {
                     created_at
                 },
-                restart_count: row.get(22)?,
+                restart_count: row.get(23)?,
                 last_started_at: {
-                    let v: i64 = row.get(26).unwrap_or(0);
+                    let v: i64 = row.get(27).unwrap_or(0);
                     if v > 0 {
                         v
                     } else {
@@ -108,12 +116,12 @@ impl Storage {
                     }
                 },
                 notes: {
-                    let json: String = row.get(27).unwrap_or_else(|_| "[]".to_string());
+                    let json: String = row.get(28).unwrap_or_else(|_| "[]".to_string());
                     serde_json::from_str(&json).unwrap_or_default()
                 },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
-                pinned: row.get::<_, i32>(24)? == 1,
-                tokens_used: row.get(25)?,
+                pinned: row.get::<_, i32>(25)? == 1,
+                tokens_used: row.get(26)?,
             })
         })?;
 
@@ -127,7 +135,7 @@ impl Storage {
                     command, wrapper, tool, status, tmux_session,
                     created_at, last_accessed,
                     parent_session_id, worktree_path, worktree_repo, worktree_branch,
-                    tool_data, acknowledged,
+                    tool_data, mcp_selection, acknowledged,
                     notify, follow_up, user_waiting, status_changed_at, restart_count, status_history,
                     pinned, tokens_used, last_started_at, notes
              FROM sessions WHERE id = ?1",
@@ -136,8 +144,9 @@ impl Storage {
         let result = stmt.query_row(params![id], |row| {
             let tool_str: String = row.get(7)?;
             let status_str: String = row.get(8)?;
-            let history_json: String = row.get(23)?;
-            let status_changed_at: i64 = row.get(21)?;
+            let mcp_selection_json: String = row.get(17).unwrap_or_else(|_| "{}".to_string());
+            let history_json: String = row.get(24)?;
+            let status_changed_at: i64 = row.get(22)?;
             let created_at: i64 = row.get(10)?;
 
             Ok(Session {
@@ -158,18 +167,19 @@ impl Storage {
                 worktree_repo: row.get(14)?,
                 worktree_branch: row.get(15)?,
                 tool_data: row.get(16)?,
-                acknowledged: row.get::<_, i32>(17)? == 1,
-                notify: row.get::<_, i32>(18)? == 1,
-                follow_up: row.get::<_, i32>(19)? == 1,
-                user_waiting: row.get::<_, i32>(20)? == 1,
+                mcp_selection: parse_mcp_selection(&mcp_selection_json),
+                acknowledged: row.get::<_, i32>(18)? == 1,
+                notify: row.get::<_, i32>(19)? == 1,
+                follow_up: row.get::<_, i32>(20)? == 1,
+                user_waiting: row.get::<_, i32>(21)? == 1,
                 status_changed_at: if status_changed_at > 0 {
                     status_changed_at
                 } else {
                     created_at
                 },
-                restart_count: row.get(22)?,
+                restart_count: row.get(23)?,
                 last_started_at: {
-                    let v: i64 = row.get(26).unwrap_or(0);
+                    let v: i64 = row.get(27).unwrap_or(0);
                     if v > 0 {
                         v
                     } else {
@@ -177,12 +187,12 @@ impl Storage {
                     }
                 },
                 notes: {
-                    let json: String = row.get(27).unwrap_or_else(|_| "[]".to_string());
+                    let json: String = row.get(28).unwrap_or_else(|_| "[]".to_string());
                     serde_json::from_str(&json).unwrap_or_default()
                 },
                 status_history: serde_json::from_str(&history_json).unwrap_or_default(),
-                pinned: row.get::<_, i32>(24)? == 1,
-                tokens_used: row.get(25)?,
+                pinned: row.get::<_, i32>(25)? == 1,
+                tokens_used: row.get(26)?,
             })
         });
 
@@ -351,6 +361,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
+    use crate::core::mcp::{McpSelection, McpServerSelection};
     use crate::types::{SessionStatus, Tool};
 
     #[test]
@@ -379,6 +390,56 @@ mod tests {
 
         let missing = storage.get_session("nonexistent").unwrap();
         assert!(missing.is_none());
+    }
+
+    #[test]
+    fn test_save_and_load_session_mcp_selection() {
+        let (storage, _dir) = test_storage();
+        let mut session = make_test_session("s1");
+        session.mcp_selection = McpSelection {
+            profile_id: Some("dev-profile".to_string()),
+            servers: vec![McpServerSelection {
+                id: "GitLabMITRE".to_string(),
+                enabled: true,
+                selected_tools: Some(vec!["list_issues".to_string(), "create_issue".to_string()]),
+            }],
+        };
+        storage.save_session(&session).unwrap();
+
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert_eq!(
+            loaded.mcp_selection.profile_id.as_deref(),
+            Some("dev-profile")
+        );
+        let server = loaded.mcp_selection.servers.first().unwrap();
+        assert_eq!(server.id, "GitLabMITRE");
+        assert!(server.enabled);
+        let selected_tools = server.selected_tools.as_ref().unwrap();
+        assert_eq!(selected_tools.len(), 2);
+        assert_eq!(selected_tools[0], "list_issues");
+        assert_eq!(selected_tools[1], "create_issue");
+
+        let listed = storage.load_sessions().unwrap();
+        assert_eq!(listed[0].mcp_selection, loaded.mcp_selection);
+    }
+
+    #[test]
+    fn test_invalid_mcp_selection_json_defaults_to_empty() {
+        let (storage, _dir) = test_storage();
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO sessions (id, title, project_path, created_at, mcp_selection)
+                 VALUES ('s1', 'Session s1', '/tmp', 0, 'not json')",
+                [],
+            )
+            .unwrap();
+
+        let loaded = storage.get_session("s1").unwrap().unwrap();
+        assert_eq!(loaded.mcp_selection, McpSelection::default());
+
+        let listed = storage.load_sessions().unwrap();
+        assert_eq!(listed[0].mcp_selection, McpSelection::default());
     }
 
     #[test]

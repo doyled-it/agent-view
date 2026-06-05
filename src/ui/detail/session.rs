@@ -128,6 +128,51 @@ pub(super) fn render_metadata(frame: &mut Frame, area: Rect, session: &Session, 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let paragraph = Paragraph::new(build_metadata_lines(session, theme)).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, inner);
+}
+
+fn metadata_line(
+    label: &'static str,
+    value: impl Into<String>,
+    theme: &Theme,
+    value_style: Style,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(label, Style::default().fg(theme.text_muted)),
+        Span::styled(value.into(), value_style),
+    ])
+}
+
+fn mcp_server_summary(session: &Session) -> String {
+    let mut seen = Vec::new();
+    let mut enabled_servers = Vec::new();
+    let mut disabled_servers = Vec::new();
+
+    for server in &session.mcp_selection.servers {
+        let id = server.id.as_str();
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+
+        if server.enabled {
+            enabled_servers.push(id);
+        } else {
+            disabled_servers.push(id);
+        }
+    }
+
+    if !enabled_servers.is_empty() {
+        enabled_servers.join(", ")
+    } else if !disabled_servers.is_empty() {
+        format!("All except: {}", disabled_servers.join(", "))
+    } else {
+        "(none)".to_string()
+    }
+}
+
+fn build_metadata_lines(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
     let status_color = status_color(theme, session.status);
 
     let created = format_timestamp(session.created_at);
@@ -145,41 +190,80 @@ pub(super) fn render_metadata(frame: &mut Frame, area: Rect, session: &Session, 
         Line::from(""),
         Line::from(vec![
             Span::styled("Tool: ", Style::default().fg(theme.text_muted)),
-            Span::styled(session.tool.as_str(), Style::default().fg(theme.text)),
+            Span::styled(
+                session.tool.as_str().to_string(),
+                Style::default().fg(theme.text),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Path: ", Style::default().fg(theme.text_muted)),
-            Span::styled(&session.project_path, Style::default().fg(theme.text)),
+            Span::styled(
+                session.project_path.clone(),
+                Style::default().fg(theme.text),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Group: ", Style::default().fg(theme.text_muted)),
-            Span::styled(&session.group_path, Style::default().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("Created: ", Style::default().fg(theme.text_muted)),
-            Span::styled(created, Style::default().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("Started: ", Style::default().fg(theme.text_muted)),
-            Span::styled(started, Style::default().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("Uptime: ", Style::default().fg(theme.text_muted)),
-            Span::styled(duration, Style::default().fg(theme.text)),
+            Span::styled(session.group_path.clone(), Style::default().fg(theme.text)),
         ]),
     ];
+
+    lines.push(metadata_line(
+        "Created: ",
+        created,
+        theme,
+        Style::default().fg(theme.text),
+    ));
+    lines.push(metadata_line(
+        "Started: ",
+        started,
+        theme,
+        Style::default().fg(theme.text),
+    ));
+    lines.push(metadata_line(
+        "Uptime: ",
+        duration,
+        theme,
+        Style::default().fg(theme.text),
+    ));
+
+    if !session.mcp_selection.is_all_servers() {
+        if let Some(profile_id) = session
+            .mcp_selection
+            .profile_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+        {
+            lines.push(metadata_line(
+                "MCP Profile: ",
+                profile_id,
+                theme,
+                Style::default().fg(theme.text),
+            ));
+        }
+
+        lines.push(metadata_line(
+            "MCP Servers: ",
+            mcp_server_summary(session),
+            theme,
+            Style::default().fg(theme.text),
+        ));
+    }
 
     if !session.worktree_path.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("Worktree: ", Style::default().fg(theme.text_muted)),
-            Span::styled(&session.worktree_path, Style::default().fg(theme.text)),
+            Span::styled(
+                session.worktree_path.clone(),
+                Style::default().fg(theme.text),
+            ),
         ]));
         if !session.worktree_branch.is_empty() {
             lines.push(Line::from(vec![
                 Span::styled("Branch: ", Style::default().fg(theme.text_muted)),
                 Span::styled(
-                    &session.worktree_branch,
+                    session.worktree_branch.clone(),
                     Style::default().fg(theme.secondary),
                 ),
             ]));
@@ -268,6 +352,119 @@ pub(super) fn render_metadata(frame: &mut Frame, area: Rect, session: &Session, 
         }
     }
 
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, inner);
+    lines
+}
+
+#[cfg(test)]
+fn build_metadata_lines_for_test(session: &Session) -> Vec<String> {
+    build_metadata_lines(session, &Theme::dark())
+        .into_iter()
+        .map(|line| {
+            let mut text = String::new();
+            for span in line.spans {
+                text.push_str(span.content.as_ref());
+            }
+            text
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::mcp::{McpSelection, McpServerSelection};
+
+    fn test_session() -> Session {
+        crate::core::storage::test_helpers::make_test_session("test-session")
+    }
+
+    #[test]
+    fn metadata_lines_include_mcp_selection_summary() {
+        let mut session = test_session();
+        session.mcp_selection = McpSelection {
+            profile_id: Some("rust".to_string()),
+            servers: vec![McpServerSelection {
+                id: "GitLabMITRE".to_string(),
+                enabled: true,
+                selected_tools: None,
+            }],
+        };
+
+        let lines = build_metadata_lines_for_test(&session);
+
+        assert!(
+            lines.iter().any(|line| line == "MCP Profile: rust"),
+            "metadata lines: {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|line| line == "MCP Servers: GitLabMITRE"),
+            "metadata lines: {lines:#?}"
+        );
+
+        let uptime_index = lines
+            .iter()
+            .position(|line| line.starts_with("Uptime: "))
+            .unwrap();
+        let profile_index = lines
+            .iter()
+            .position(|line| line == "MCP Profile: rust")
+            .unwrap();
+        assert!(uptime_index < profile_index, "metadata lines: {lines:#?}");
+    }
+
+    #[test]
+    fn metadata_lines_deduplicate_mcp_servers_first_entry_wins() {
+        let mut session = test_session();
+        session.mcp_selection = McpSelection {
+            profile_id: Some("rust".to_string()),
+            servers: vec![
+                McpServerSelection {
+                    id: "GitLabMITRE".to_string(),
+                    enabled: true,
+                    selected_tools: None,
+                },
+                McpServerSelection {
+                    id: "browser".to_string(),
+                    enabled: true,
+                    selected_tools: None,
+                },
+                McpServerSelection {
+                    id: "GitLabMITRE".to_string(),
+                    enabled: true,
+                    selected_tools: None,
+                },
+            ],
+        };
+
+        let lines = build_metadata_lines_for_test(&session);
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "MCP Servers: GitLabMITRE, browser"),
+            "metadata lines: {lines:#?}"
+        );
+    }
+
+    #[test]
+    fn metadata_lines_show_disabled_only_selection_as_all_except() {
+        let mut session = test_session();
+        session.mcp_selection = McpSelection {
+            profile_id: None,
+            servers: vec![McpServerSelection {
+                id: "GitLabMITRE".to_string(),
+                enabled: false,
+                selected_tools: None,
+            }],
+        };
+
+        let lines = build_metadata_lines_for_test(&session);
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "MCP Servers: All except: GitLabMITRE"),
+            "metadata lines: {lines:#?}"
+        );
+    }
 }

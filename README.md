@@ -77,6 +77,14 @@ waiting, exited, and draft states when hook data is absent.
 
 Sessions are sorted with the most attention-needing states first (Crashed, Waiting, Draft, Paused), so anything wanting your eyes floats to the top of the list.
 
+### MCP profiles for new sessions
+
+New sessions default to all configured MCP servers. Selecting an MCP profile or toggling servers in the new-session form narrows only that session, and the details pane records the selected profile id plus enabled server ids.
+
+Claude and Codex enforce server-level selections at launch: Claude writes a session-scoped MCP config from the enabled servers, while Codex adds config overrides for disabled servers. OpenCode does not have enforceable MCP filtering yet, so narrowed selections that would filter servers or tools are blocked with a launch error instead of silently starting with broader access.
+
+Per-tool MCP filtering is available only when the selected runner can enforce it. Codex currently accepts whole-server selections and rejects per-tool limits; unsupported runners keep their default all-server behavior unless their launch path can apply the selection exactly.
+
 ### Account Usage Tracking
 
 A usage pane at the bottom of the screen shows your Claude account rate limits with colored progress bars (green < 50%, yellow 50-79%, red >= 80%). Displays session, weekly, and per-model buckets with reset times.

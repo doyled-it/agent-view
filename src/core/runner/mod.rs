@@ -12,8 +12,10 @@ pub mod opencode;
 pub mod osc_title;
 pub mod shell;
 
+use crate::core::mcp::McpSelection;
 use crate::core::runner::event_watcher::HookStatus;
 use crate::types::Tool;
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 const HOOK_FRESHNESS: Duration = Duration::from_millis(1100);
@@ -35,6 +37,32 @@ pub struct ToolStatus {
     pub is_monitoring: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct RunnerLaunchContext {
+    #[allow(dead_code)]
+    // reserved for runner-specific launch builders added after context plumbing
+    pub working_dir: String,
+    pub session_id: String,
+    #[allow(dead_code)] // reserved for MCP profile enforcement added after context plumbing
+    pub mcp_selection: Option<McpSelection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerLaunch {
+    pub command: Option<String>,
+    pub env: HashMap<String, String>,
+    pub warning: Option<String>,
+}
+
+#[derive(thiserror::Error, Debug)]
+#[allow(dead_code)] // variants are consumed by runner-specific launch builders added after context plumbing
+pub enum RunnerLaunchError {
+    #[error("{0}")]
+    Unsupported(String),
+    #[error("config error: {0}")]
+    Config(String),
+}
+
 pub trait Runner: Send + Sync {
     #[allow(dead_code)] // part of the public Runner API surface; used by tests and reserved for future runners
     fn name(&self) -> &'static str;
@@ -43,6 +71,15 @@ pub trait Runner: Send + Sync {
     /// so opening a Shell session drops you into your login shell directly,
     /// rather than spawning a second shell on top of it.
     fn launch_command(&self) -> Option<&'static str>;
+
+    fn build_launch(&self, _ctx: &RunnerLaunchContext) -> Result<RunnerLaunch, RunnerLaunchError> {
+        Ok(RunnerLaunch {
+            command: self.launch_command().map(String::from),
+            env: HashMap::new(),
+            warning: None,
+        })
+    }
+
     fn parse_status(&self, pane_content: &str) -> ToolStatus;
     fn extract_session_id(&self, pane_content: &str) -> Option<String>;
     fn restart_command(&self, original_command: &str, tool_data: &str) -> String;
@@ -213,6 +250,21 @@ mod tests {
         assert_eq!(runner_for(Tool::Custom).launch_command(), Some("bash"));
         // Shell defers to tmux's default-shell.
         assert_eq!(runner_for(Tool::Shell).launch_command(), None);
+    }
+
+    #[test]
+    fn default_launch_preserves_static_command() {
+        let ctx = RunnerLaunchContext {
+            working_dir: "/tmp/project".to_string(),
+            session_id: "session-123".to_string(),
+            mcp_selection: None,
+        };
+
+        let launch = runner_for(Tool::Claude).build_launch(&ctx).unwrap();
+
+        assert_eq!(launch.command.as_deref(), Some("claude"));
+        assert!(launch.env.is_empty());
+        assert_eq!(launch.warning, None);
     }
 
     #[test]

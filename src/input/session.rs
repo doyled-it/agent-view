@@ -1,5 +1,61 @@
 //! Session overlay keyboard handlers
 
+const FIELD_COUNT: usize = 6;
+const MCP_FIELD: usize = 5;
+
+fn build_session_create_options_from_form(
+    form: &crate::app::NewSessionForm,
+    group_path: Option<String>,
+) -> Result<crate::types::SessionCreateOptions, String> {
+    let wt_branch_trimmed = form.worktree_branch.trim().to_string();
+    let worktree = if wt_branch_trimmed.is_empty() {
+        None
+    } else {
+        if let Some(err) = crate::core::git::validate_branch_name(&wt_branch_trimmed) {
+            return Err(err);
+        }
+        if !crate::core::git::is_git_repo(&form.project_path) {
+            return Err("Project path is not a git repository".to_string());
+        }
+        let exists = crate::core::git::branch_exists(&form.project_path, &wt_branch_trimmed);
+        if form.worktree_new_branch && exists {
+            return Err(format!(
+                "Branch '{}' already exists — toggle to attach (^t)",
+                wt_branch_trimmed
+            ));
+        }
+        if !form.worktree_new_branch && !exists {
+            return Err(format!(
+                "Branch '{}' does not exist — toggle to create (^t)",
+                wt_branch_trimmed
+            ));
+        }
+        let base = form.worktree_base.trim().to_string();
+        Some(crate::types::WorktreeCreateOptions {
+            branch: wt_branch_trimmed,
+            new_branch: form.worktree_new_branch,
+            base: if base.is_empty() { None } else { Some(base) },
+        })
+    };
+
+    let title = if form.title.is_empty() {
+        None
+    } else {
+        Some(form.title.clone())
+    };
+    let project_path = form.project_path.clone();
+
+    Ok(crate::types::SessionCreateOptions {
+        title,
+        project_path,
+        group_path,
+        tool: form.runner,
+        command: None,
+        mcp_selection: Some(form.mcp_selection.clone()),
+        worktree,
+    })
+}
+
 pub fn handle_new_session_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
@@ -9,7 +65,6 @@ pub fn handle_new_session_key(
     use crossterm::event::{KeyCode, KeyModifiers};
 
     if let crate::app::Overlay::NewSession(ref mut form) = app.overlay {
-        const FIELD_COUNT: usize = 5;
         match (key.modifiers, key.code) {
             (_, KeyCode::Esc) => {
                 app.overlay = crate::app::Overlay::None;
@@ -23,56 +78,12 @@ pub fn handle_new_session_key(
             (m, KeyCode::Char('s'))
                 if m.contains(KeyModifiers::CONTROL) || m.contains(KeyModifiers::SUPER) =>
             {
-                let wt_branch_trimmed = form.worktree_branch.trim().to_string();
-                let worktree = if wt_branch_trimmed.is_empty() {
-                    None
-                } else {
-                    if let Some(err) = crate::core::git::validate_branch_name(&wt_branch_trimmed) {
+                let options = match build_session_create_options_from_form(form, None) {
+                    Ok(options) => options,
+                    Err(err) => {
                         form.error = Some(err);
                         return Ok(());
                     }
-                    if !crate::core::git::is_git_repo(&form.project_path) {
-                        form.error = Some("Project path is not a git repository".to_string());
-                        return Ok(());
-                    }
-                    let exists =
-                        crate::core::git::branch_exists(&form.project_path, &wt_branch_trimmed);
-                    if form.worktree_new_branch && exists {
-                        form.error = Some(format!(
-                            "Branch '{}' already exists — toggle to attach (^t)",
-                            wt_branch_trimmed
-                        ));
-                        return Ok(());
-                    }
-                    if !form.worktree_new_branch && !exists {
-                        form.error = Some(format!(
-                            "Branch '{}' does not exist — toggle to create (^t)",
-                            wt_branch_trimmed
-                        ));
-                        return Ok(());
-                    }
-                    let base = form.worktree_base.trim().to_string();
-                    Some(crate::types::WorktreeCreateOptions {
-                        branch: wt_branch_trimmed,
-                        new_branch: form.worktree_new_branch,
-                        base: if base.is_empty() { None } else { Some(base) },
-                    })
-                };
-
-                let title = if form.title.is_empty() {
-                    None
-                } else {
-                    Some(form.title.clone())
-                };
-                let project_path = form.project_path.clone();
-
-                let options = crate::types::SessionCreateOptions {
-                    title,
-                    project_path,
-                    group_path: None,
-                    tool: form.runner,
-                    command: None,
-                    worktree,
                 };
 
                 let mut cache = crate::core::tmux::SessionCache::new();
@@ -107,6 +118,13 @@ pub fn handle_new_session_key(
             }
             (KeyModifiers::NONE, KeyCode::Right) if form.focused_field == 0 => {
                 form.cycle_runner_next();
+            }
+            (KeyModifiers::NONE, KeyCode::Char(' '))
+                if form.focused_field == MCP_FIELD && form.mcp_expanded =>
+            {
+                if let Err(err) = form.activate_selected_mcp_row() {
+                    form.error = Some(err);
+                }
             }
             (_, KeyCode::Tab) => {
                 match form.focused_field {
@@ -198,7 +216,7 @@ pub fn handle_new_session_key(
                         }
                     }
                     _ => {
-                        // Fields 0 (runner), 1 (title), and 4 (base in attach mode): advance focus
+                        // Fields without completion behavior: advance focus.
                         form.focused_field = (form.focused_field + 1) % FIELD_COUNT;
                         form.clear_completions();
                     }
@@ -208,12 +226,27 @@ pub fn handle_new_session_key(
                 form.focused_field = (form.focused_field + FIELD_COUNT - 1) % FIELD_COUNT;
                 form.clear_completions();
             }
+            (_, KeyCode::Down) if form.focused_field == MCP_FIELD && form.mcp_expanded => {
+                let row_count = form.mcp_row_count();
+                if row_count == 0 {
+                    form.mcp_selected_row = 0;
+                } else {
+                    form.mcp_selected_row = (form.mcp_selected_row + 1).min(row_count - 1);
+                }
+            }
+            (_, KeyCode::Up) if form.focused_field == MCP_FIELD && form.mcp_expanded => {
+                form.mcp_selected_row = form.mcp_selected_row.saturating_sub(1);
+            }
             (_, KeyCode::Down) => {
                 form.focused_field = (form.focused_field + 1) % FIELD_COUNT;
                 form.clear_completions();
             }
             (_, KeyCode::Up) => {
                 form.focused_field = (form.focused_field + FIELD_COUNT - 1) % FIELD_COUNT;
+                form.clear_completions();
+            }
+            (_, KeyCode::Enter) if form.focused_field == MCP_FIELD => {
+                form.mcp_expanded = !form.mcp_expanded;
                 form.clear_completions();
             }
             (_, KeyCode::Enter) => {
@@ -476,4 +509,176 @@ pub fn handle_move_key(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{App, Overlay};
+    use crate::core::mcp::{McpSelection, McpServerSelection};
+    use crate::core::session::SessionOps;
+    use crate::types::Tool;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn form_in_overlay(app: &App) -> &crate::app::NewSessionForm {
+        match &app.overlay {
+            Overlay::NewSession(form) => form,
+            other => panic!("expected new session overlay, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_build_session_create_options_includes_mcp_selection() {
+        let mut form = crate::app::NewSessionForm::new();
+        form.title = "MCP session".into();
+        form.project_path = "/tmp/project".into();
+        form.runner = Tool::Codex;
+        form.mcp_selection = McpSelection {
+            profile_id: Some("minimal".into()),
+            servers: vec![McpServerSelection {
+                id: "browser".into(),
+                enabled: false,
+                selected_tools: None,
+            }],
+        };
+
+        let options =
+            build_session_create_options_from_form(&form, Some("work/tools".into())).unwrap();
+
+        assert_eq!(options.title.as_deref(), Some("MCP session"));
+        assert_eq!(options.project_path, "/tmp/project");
+        assert_eq!(options.group_path.as_deref(), Some("work/tools"));
+        assert_eq!(options.tool, Tool::Codex);
+        assert_eq!(options.mcp_selection, Some(form.mcp_selection.clone()));
+        assert!(options.worktree.is_none());
+    }
+
+    #[test]
+    fn test_mcp_field_enter_toggles_expanded() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut form = crate::app::NewSessionForm::new();
+        form.focused_field = 5;
+        let mut app = App::new(false);
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, key(KeyCode::Enter), &storage, &session_ops).unwrap();
+        assert!(form_in_overlay(&app).mcp_expanded);
+
+        handle_new_session_key(&mut app, key(KeyCode::Enter), &storage, &session_ops).unwrap();
+        assert!(!form_in_overlay(&app).mcp_expanded);
+    }
+
+    #[test]
+    fn test_mcp_field_space_toggles_selected_server_when_expanded() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut form = crate::app::NewSessionForm::new();
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
+        form.focused_field = 5;
+        form.mcp_expanded = true;
+        form.mcp_selected_row = 1;
+        let mut app = App::new(false);
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, key(KeyCode::Char(' ')), &storage, &session_ops).unwrap();
+
+        let form = form_in_overlay(&app);
+        let browser = form
+            .mcp_selection
+            .servers
+            .iter()
+            .find(|server| server.id == "browser")
+            .unwrap();
+        assert!(!browser.enabled);
+    }
+
+    #[test]
+    fn test_mcp_field_space_applies_selected_profile_when_expanded() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut form = crate::app::NewSessionForm::new();
+        form.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".into(),
+            name: "Rust".into(),
+            selection: McpSelection {
+                profile_id: None,
+                servers: vec![McpServerSelection {
+                    id: "GitLabMITRE".into(),
+                    enabled: true,
+                    selected_tools: None,
+                }],
+            },
+        }];
+        form.focused_field = 5;
+        form.mcp_expanded = true;
+        form.mcp_selected_row = 0;
+        let mut app = App::new(false);
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, key(KeyCode::Char(' ')), &storage, &session_ops).unwrap();
+
+        let form = form_in_overlay(&app);
+        assert_eq!(form.mcp_selection.profile_id.as_deref(), Some("rust"));
+        assert_eq!(form.mcp_selection.servers.len(), 1);
+        assert_eq!(form.mcp_selection.servers[0].id, "GitLabMITRE");
+    }
+
+    #[test]
+    fn test_mcp_field_up_down_move_selected_server_row_when_expanded() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut form = crate::app::NewSessionForm::new();
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
+        form.focused_field = 5;
+        form.mcp_expanded = true;
+        let mut app = App::new(false);
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, key(KeyCode::Down), &storage, &session_ops).unwrap();
+        assert_eq!(form_in_overlay(&app).focused_field, 5);
+        assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
+
+        handle_new_session_key(&mut app, key(KeyCode::Down), &storage, &session_ops).unwrap();
+        assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
+
+        handle_new_session_key(&mut app, key(KeyCode::Up), &storage, &session_ops).unwrap();
+        assert_eq!(form_in_overlay(&app).focused_field, 5);
+        assert_eq!(form_in_overlay(&app).mcp_selected_row, 0);
+    }
+
+    #[test]
+    fn test_new_session_command_uses_app_config_profiles() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut app = App::new(false);
+        app.config.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".into(),
+            name: "Rust".into(),
+            selection: McpSelection {
+                profile_id: None,
+                servers: vec![McpServerSelection {
+                    id: "GitLabMITRE".into(),
+                    enabled: true,
+                    selected_tools: None,
+                }],
+            },
+        }];
+
+        crate::input::overlay::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        let form = form_in_overlay(&app);
+        assert_eq!(form.mcp_profiles.len(), 1);
+        assert_eq!(form.mcp_profiles[0].id, "rust");
+    }
 }
