@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.17.0] - 2026-06-05
+
+### Changed
+
+- feat(mcp): add runner config sync (#69) (@doyled-it)
+
 ## [1.16.0] - 2026-06-05
 
 ### Changed
