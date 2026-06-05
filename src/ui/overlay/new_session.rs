@@ -54,8 +54,10 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     //   spacer,
     //   base label, base input,
     //   [if base completions: completion hint, completion grid (N rows)],
+    //   spacer,
     //   MCP summary,
     //   [if MCP expanded: one row per server],
+    //   spacer,
     //   [if error: error row],
     //   help hint
     // runner label + cycle row + spacer; title label + input + spacer; path label + input — always present
@@ -102,10 +104,14 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         constraints.push(Constraint::Length(1)); // hint
         constraints.push(Constraint::Length(completion_rows as u16)); // grid
     }
+    // spacer before MCP summary
+    constraints.push(Constraint::Length(1));
     // MCP summary/selection rows
     for _ in &mcp_line_specs {
         constraints.push(Constraint::Length(1));
     }
+    // spacer after MCP summary/selection rows
+    constraints.push(Constraint::Length(1));
     // error row
     if form.error.is_some() {
         constraints.push(Constraint::Length(1));
@@ -348,10 +354,14 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         i += 1;
     }
 
+    i += 1; // spacer before MCP summary
+
     for line in build_new_session_mcp_lines(form, theme) {
         frame.render_widget(Paragraph::new(line), chunks[i]);
         i += 1;
     }
+
+    i += 1; // spacer after MCP summary/selection rows
 
     if let Some(err) = &form.error {
         frame.render_widget(
@@ -565,6 +575,34 @@ mod tests {
     use super::*;
     use crate::core::mcp::{McpSelection, McpServerSelection};
     use crate::types::Tool;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn render_new_session_buffer_lines(form: &NewSessionForm) -> Vec<String> {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("test backend should initialize");
+        let theme = Theme::dark();
+        terminal
+            .draw(|frame| render_new_session(frame, frame.area(), form, &theme))
+            .expect("new session overlay should render");
+
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn rendered_row(lines: &[String], needle: &str) -> usize {
+        lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("expected {needle:?} in rendered lines:\n{lines:#?}"))
+    }
 
     #[test]
     fn new_session_overlay_renders_mcp_summary_collapsed() {
@@ -575,6 +613,26 @@ mod tests {
         assert!(
             lines.iter().any(|line| line == "MCP: All MCP servers"),
             "rendered lines: {lines:#?}"
+        );
+    }
+
+    #[test]
+    fn new_session_overlay_spaces_collapsed_mcp_summary_from_neighbors() {
+        let mut form = NewSessionForm::new();
+        form.focused_field = MCP_FIELD;
+
+        let lines = render_new_session_buffer_lines(&form);
+        let base_value_row = rendered_row(&lines, "(currently checked out branch)");
+        let mcp_row = rendered_row(&lines, "MCP: All MCP servers");
+        let footer_row = rendered_row(&lines, "Enter MCP");
+
+        assert!(
+            mcp_row >= base_value_row + 2,
+            "MCP row should have a blank row above it:\n{lines:#?}"
+        );
+        assert!(
+            footer_row >= mcp_row + 2,
+            "MCP row should have a blank row below it:\n{lines:#?}"
         );
     }
 
