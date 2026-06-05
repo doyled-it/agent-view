@@ -219,6 +219,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::CommandPalette(palette) => {
             crate::ui::overlay::render_command_palette(frame, area, palette, &app.theme);
         }
+        Overlay::McpSync(form) => {
+            crate::ui::overlay::render_mcp_sync(frame, area, form, &app.theme);
+        }
         Overlay::Help => {
             crate::ui::overlay::render_help(frame, area, app);
         }

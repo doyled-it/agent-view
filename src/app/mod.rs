@@ -14,8 +14,8 @@ mod state;
 pub use command_palette::{CommandAction, CommandPalette};
 pub use detail_panel::DetailPanelMode;
 pub use forms::{
-    ConfirmAction, ConfirmDialog, GroupForm, MoveForm, NewRoutineForm, NewSessionForm, NoteForm,
-    RenameForm, RenameTarget, ThemeSelectForm,
+    ConfirmAction, ConfirmDialog, GroupForm, McpSyncForm, MoveForm, NewRoutineForm, NewSessionForm,
+    NoteForm, RenameForm, RenameTarget, ThemeSelectForm,
 };
 pub use overlay::Overlay;
 pub use schedule_freq::ScheduleFrequency;
@@ -642,6 +642,14 @@ mod tests {
             item.label == "Toggle Waiting Marker"
                 && item.key_hint == "w"
                 && item.action == CommandAction::ToggleUserWaiting
+        }));
+    }
+
+    #[test]
+    fn test_command_palette_includes_mcp_sync() {
+        let palette = CommandPalette::new();
+        assert!(palette.items.iter().any(|item| {
+            item.label == "Sync MCP Servers" && item.action == CommandAction::SyncMcpServers
         }));
     }
 

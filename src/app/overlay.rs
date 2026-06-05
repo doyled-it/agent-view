@@ -1,5 +1,7 @@
 use super::command_palette::CommandPalette;
-use super::forms::{ConfirmDialog, GroupForm, MoveForm, NoteForm, RenameForm, ThemeSelectForm};
+use super::forms::{
+    ConfirmDialog, GroupForm, McpSyncForm, MoveForm, NoteForm, RenameForm, ThemeSelectForm,
+};
 use super::forms::{NewRoutineForm, NewSessionForm};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -11,6 +13,7 @@ pub enum Overlay {
     Rename(RenameForm),
     Move(MoveForm),
     GroupManage(GroupForm),
+    McpSync(McpSyncForm),
     RoutineWarning,
     CommandPalette(CommandPalette),
     Help,

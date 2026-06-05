@@ -681,4 +681,68 @@ mod tests {
         assert_eq!(form.mcp_profiles.len(), 1);
         assert_eq!(form.mcp_profiles[0].id, "rust");
     }
+
+    #[test]
+    fn test_new_session_command_auto_syncs_mcp_servers_before_loading_catalog() {
+        let _guard = crate::core::runner::hook_io::lock_env();
+        let dir = tempfile::tempdir().unwrap();
+        let claude_dir = dir.path().join("claude");
+        let codex_dir = dir.path().join("codex");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        std::env::set_var("CLAUDE_CONFIG_DIR", &claude_dir);
+        std::env::set_var("CODEX_HOME", &codex_dir);
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"mcpServers":{"wavecrest":{"command":"uvx","args":["wavecrest-mcp"]}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            codex_dir.join("config.toml"),
+            r#"[mcp_servers.GitLabMITRE]
+url = "https://gitlab.example.test/api/v4/mcp"
+"#,
+        )
+        .unwrap();
+        let (storage, _storage_dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut app = App::new(false);
+
+        crate::input::overlay::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        let form = form_in_overlay(&app);
+        assert_eq!(form.runner, Tool::Claude);
+        assert_server_ids(&form.mcp_servers, &["GitLabMITRE", "wavecrest"]);
+
+        let mut form = form.clone();
+        while form.runner != Tool::Codex {
+            form.cycle_runner_next();
+        }
+        assert_server_ids(&form.mcp_servers, &["GitLabMITRE", "wavecrest"]);
+        assert!(std::fs::read_to_string(claude_dir.join("settings.json"))
+            .unwrap()
+            .contains("GitLabMITRE"));
+        assert!(std::fs::read_to_string(codex_dir.join("config.toml"))
+            .unwrap()
+            .contains("[mcp_servers.wavecrest]"));
+
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
+        std::env::remove_var("CODEX_HOME");
+    }
+
+    fn assert_server_ids(
+        servers: &[crate::core::mcp::catalog::McpServerCatalogEntry],
+        expected: &[&str],
+    ) {
+        let actual: std::collections::BTreeSet<_> =
+            servers.iter().map(|server| server.id.as_str()).collect();
+        let expected: std::collections::BTreeSet<_> = expected.iter().copied().collect();
+        assert_eq!(actual, expected);
+    }
 }
