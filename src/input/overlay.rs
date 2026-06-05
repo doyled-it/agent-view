@@ -88,6 +88,24 @@ pub fn handle_palette_key(
     Ok(())
 }
 
+pub fn open_new_session_overlay(app: &mut crate::app::App) {
+    match crate::core::mcp::default_sync_config_paths()
+        .and_then(|paths| crate::core::mcp::sync_all_missing_mcp_servers_from_paths(&paths))
+    {
+        Ok(count) if count > 0 => {
+            app.toast.message = Some(format!("Auto-synced {count} MCP server config(s)"));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+        }
+        Ok(_) => {}
+        Err(e) => {
+            app.toast.message = Some(format!("MCP auto-sync failed: {}", e));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+        }
+    }
+    app.overlay =
+        crate::app::Overlay::NewSession(crate::app::NewSessionForm::from_app_config(&app.config));
+}
+
 pub fn execute_command_action(
     app: &mut crate::app::App,
     action: crate::app::CommandAction,
@@ -98,23 +116,7 @@ pub fn execute_command_action(
 
     match action {
         CommandAction::NewSession => {
-            match crate::core::mcp::default_sync_config_paths()
-                .and_then(|paths| crate::core::mcp::sync_all_missing_mcp_servers_from_paths(&paths))
-            {
-                Ok(count) if count > 0 => {
-                    app.toast.message = Some(format!("Auto-synced {count} MCP server config(s)"));
-                    app.toast.expire =
-                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    app.toast.message = Some(format!("MCP auto-sync failed: {}", e));
-                    app.toast.expire =
-                        Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
-                }
-            }
-            app.overlay =
-                Overlay::NewSession(crate::app::NewSessionForm::from_app_config(&app.config));
+            open_new_session_overlay(app);
         }
         CommandAction::Search => {
             app.search_query = Some(String::new());

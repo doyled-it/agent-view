@@ -66,9 +66,7 @@ pub fn handle_main_key(
         }
         (KeyModifiers::NONE, KeyCode::Char('n')) => match app.active_tab {
             crate::app::ActiveTab::Sessions => {
-                app.overlay = crate::app::Overlay::NewSession(
-                    crate::app::NewSessionForm::from_app_config(&app.config),
-                );
+                crate::input::overlay::open_new_session_overlay(app);
             }
             crate::app::ActiveTab::Routines => {
                 app.overlay = crate::app::Overlay::NewRoutine(crate::app::NewRoutineForm::new());
@@ -457,4 +455,116 @@ pub fn handle_main_key(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal, TerminalOptions, Viewport};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn form_in_overlay(app: &crate::app::App) -> &crate::app::NewSessionForm {
+        match &app.overlay {
+            crate::app::Overlay::NewSession(form) => form,
+            _ => panic!("expected new session overlay"),
+        }
+    }
+
+    fn assert_server_ids(
+        servers: &[crate::core::mcp::catalog::McpServerCatalogEntry],
+        expected: &[&str],
+    ) {
+        let actual: std::collections::BTreeSet<_> =
+            servers.iter().map(|server| server.id.as_str()).collect();
+        let expected: std::collections::BTreeSet<_> = expected.iter().copied().collect();
+        assert_eq!(actual, expected);
+    }
+
+    struct EnvRestore {
+        claude_config_dir: Option<std::ffi::OsString>,
+        codex_home: Option<std::ffi::OsString>,
+    }
+
+    impl EnvRestore {
+        fn capture() -> Self {
+            Self {
+                claude_config_dir: std::env::var_os("CLAUDE_CONFIG_DIR"),
+                codex_home: std::env::var_os("CODEX_HOME"),
+            }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            if let Some(value) = &self.claude_config_dir {
+                std::env::set_var("CLAUDE_CONFIG_DIR", value);
+            } else {
+                std::env::remove_var("CLAUDE_CONFIG_DIR");
+            }
+            if let Some(value) = &self.codex_home {
+                std::env::set_var("CODEX_HOME", value);
+            } else {
+                std::env::remove_var("CODEX_HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn test_new_session_shortcut_auto_syncs_mcp_servers_before_loading_catalog() {
+        let _env_lock = crate::core::runner::hook_io::lock_env();
+        let _env_restore = EnvRestore::capture();
+        let dir = tempfile::tempdir().unwrap();
+        let claude_dir = dir.path().join("claude");
+        let codex_dir = dir.path().join("codex");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        std::env::set_var("CLAUDE_CONFIG_DIR", &claude_dir);
+        std::env::set_var("CODEX_HOME", &codex_dir);
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"mcpServers":{"wavecrest":{"command":"uvx","args":["wavecrest-mcp"]}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            codex_dir.join("config.toml"),
+            r#"[mcp_servers.GitLabMITRE]
+url = "https://gitlab.example.test/api/v4/mcp"
+"#,
+        )
+        .unwrap();
+        let (storage, _storage_dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        let backend = CrosstermBackend::new(std::io::stdout());
+        let options = TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 80, 24)),
+        };
+        let mut terminal = Terminal::with_options(backend, options).unwrap();
+        let attach_state = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::core::attach_state::AttachState::new(),
+        ));
+
+        super::handle_main_key(
+            &mut app,
+            key(KeyCode::Char('n')),
+            &storage,
+            &session_ops,
+            &mut terminal,
+            &attach_state,
+        )
+        .unwrap();
+
+        let form = form_in_overlay(&app);
+        assert_eq!(form.runner, crate::types::Tool::Claude);
+        assert_server_ids(&form.mcp_servers, &["GitLabMITRE", "wavecrest"]);
+
+        let mut form = form.clone();
+        while form.runner != crate::types::Tool::Codex {
+            form.cycle_runner_next();
+        }
+        assert_server_ids(&form.mcp_servers, &["GitLabMITRE", "wavecrest"]);
+    }
 }
