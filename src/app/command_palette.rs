@@ -24,6 +24,7 @@ pub enum CommandAction {
     ToggleNotify,
     ToggleFollowUp,
     ToggleUserWaiting,
+    SyncMcpServers,
     ExportLog,
     CreateGroup,
     DeleteGroup,
@@ -98,6 +99,11 @@ impl CommandPalette {
                 label: "Toggle Waiting Marker".to_string(),
                 key_hint: "w".to_string(),
                 action: CommandAction::ToggleUserWaiting,
+            },
+            CommandItem {
+                label: "Sync MCP Servers".to_string(),
+                key_hint: String::new(),
+                action: CommandAction::SyncMcpServers,
             },
             CommandItem {
                 label: "Export Log".to_string(),

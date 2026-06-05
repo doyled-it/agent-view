@@ -113,6 +113,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 ("Esc", "close"),
             ]
         }
+        Overlay::McpSync(form) if form.confirming => {
+            vec![("y/Enter", "apply"), ("n/Esc", "cancel")]
+        }
+        Overlay::McpSync(_) => {
+            vec![("j/k", "navigate"), ("Enter", "preview"), ("Esc", "close")]
+        }
         Overlay::Help => {
             vec![("Esc", "close")]
         }

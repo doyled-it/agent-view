@@ -233,6 +233,20 @@ pub fn execute_command_action(
                 }
             }
         }
+        CommandAction::SyncMcpServers => {
+            match crate::core::mcp::default_sync_config_paths().and_then(|paths| {
+                crate::core::mcp::load_sync_plan_from_paths(&paths).map(|plan| (paths, plan))
+            }) {
+                Ok((paths, plan)) => {
+                    app.overlay = Overlay::McpSync(crate::app::McpSyncForm::new(paths, plan));
+                }
+                Err(e) => {
+                    app.toast.message = Some(format!("MCP sync failed: {}", e));
+                    app.toast.expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+                }
+            }
+        }
         CommandAction::ExportLog => {
             if let Some(session) = app.selected_session() {
                 if !session.tmux_session.is_empty() {
@@ -403,6 +417,92 @@ pub fn execute_command_action(
     Ok(())
 }
 
+pub fn handle_mcp_sync_key(
+    app: &mut crate::app::App,
+    key: crossterm::event::KeyEvent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::KeyCode;
+
+    let mut apply: Option<(
+        crate::core::mcp::McpSyncProposal,
+        crate::core::mcp::McpSyncConfigPaths,
+    )> = None;
+
+    if let crate::app::Overlay::McpSync(ref mut form) = app.overlay {
+        match key.code {
+            KeyCode::Esc => {
+                if form.confirming {
+                    form.confirming = false;
+                } else {
+                    app.overlay = crate::app::Overlay::None;
+                }
+            }
+            KeyCode::Char('n') if form.confirming => {
+                form.confirming = false;
+            }
+            KeyCode::Up | KeyCode::Char('k') if !form.confirming => {
+                form.move_up();
+            }
+            KeyCode::Down | KeyCode::Char('j') if !form.confirming => {
+                form.move_down();
+            }
+            KeyCode::Enter if form.confirming => {
+                if let Some(proposal) = form.selected_proposal().cloned() {
+                    apply = Some((proposal, form.paths.clone()));
+                }
+            }
+            KeyCode::Char('y') if form.confirming => {
+                if let Some(proposal) = form.selected_proposal().cloned() {
+                    apply = Some((proposal, form.paths.clone()));
+                }
+            }
+            KeyCode::Enter if form.selected_proposal().is_some() => {
+                form.confirming = true;
+            }
+            _ => {}
+        }
+    }
+
+    if let Some((proposal, paths)) = apply {
+        match crate::core::mcp::apply_sync_proposal_to_paths(&proposal, &paths) {
+            Ok(()) => {
+                app.toast.message = Some(format!(
+                    "Synced MCP server {} to {}",
+                    proposal.server_id, proposal.target
+                ));
+                app.toast.expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                match crate::core::mcp::load_sync_plan_from_paths(&paths) {
+                    Ok(plan) if plan.proposals.is_empty() => {
+                        app.overlay = crate::app::Overlay::None;
+                    }
+                    Ok(plan) => {
+                        if let crate::app::Overlay::McpSync(ref mut form) = app.overlay {
+                            form.replace_plan(plan);
+                        }
+                    }
+                    Err(e) => {
+                        app.overlay = crate::app::Overlay::None;
+                        app.toast.message = Some(format!("MCP sync refresh failed: {}", e));
+                        app.toast.expire =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+                    }
+                }
+            }
+            Err(e) => {
+                if let crate::app::Overlay::McpSync(ref mut form) = app.overlay {
+                    form.confirming = false;
+                }
+                app.toast.message = Some(format!("MCP sync failed: {}", e));
+                app.toast.expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn handle_theme_select_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
@@ -499,4 +599,56 @@ pub fn handle_add_note_key(
         _ => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::fs;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn mcp_sync_overlay_requires_confirmation_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_path = dir.path().join("claude").join("settings.json");
+        let codex_path = dir.path().join("codex").join("config.toml");
+        fs::create_dir_all(claude_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(codex_path.parent().unwrap()).unwrap();
+        fs::write(
+            &claude_path,
+            r#"{"mcpServers":{"wavecrest":{"command":"uvx","args":["wavecrest-mcp"]}}}"#,
+        )
+        .unwrap();
+        fs::write(&codex_path, r#"model = "gpt-5.5""#).unwrap();
+        let paths = crate::core::mcp::McpSyncConfigPaths {
+            claude_settings: claude_path,
+            codex_config: codex_path.clone(),
+        };
+        let plan = crate::core::mcp::load_sync_plan_from_paths(&paths).unwrap();
+        let mut app = crate::app::App::new(false);
+        app.overlay = crate::app::Overlay::McpSync(crate::app::McpSyncForm::new(paths, plan));
+
+        super::handle_mcp_sync_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&codex_path).unwrap(),
+            r#"model = "gpt-5.5""#
+        );
+        assert!(matches!(
+            app.overlay,
+            crate::app::Overlay::McpSync(crate::app::McpSyncForm {
+                confirming: true,
+                ..
+            })
+        ));
+
+        super::handle_mcp_sync_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+        assert!(fs::read_to_string(&codex_path)
+            .unwrap()
+            .contains("[mcp_servers.wavecrest]"));
+    }
 }

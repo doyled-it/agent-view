@@ -113,6 +113,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             binding("p", "Pin/unpin", key_style, desc_style),
             binding("S", "Cycle sort", key_style, desc_style),
             binding("Ctrl+K", "Command palette", key_style, desc_style),
+            binding("Palette", "Sync MCP servers", key_style, desc_style),
         ]
     };
 
