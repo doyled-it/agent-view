@@ -227,6 +227,20 @@ pub fn apply_sync_proposal_to_paths(
     Ok(())
 }
 
+pub fn sync_all_missing_mcp_servers_from_paths(
+    paths: &McpSyncConfigPaths,
+) -> Result<usize, String> {
+    let plan = load_sync_plan_from_paths(paths)?;
+    let mut applied_count = 0usize;
+
+    for proposal in &plan.proposals {
+        apply_sync_proposal_to_paths(proposal, paths)?;
+        applied_count += 1;
+    }
+
+    Ok(applied_count)
+}
+
 fn parse_claude_servers(settings_json: &str) -> Result<Vec<SourceServer>, String> {
     let value: JsonValue = serde_json::from_str(settings_json)
         .map_err(|e| format!("parse Claude settings.json: {}", e))?;

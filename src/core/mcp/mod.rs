@@ -11,7 +11,8 @@ pub use catalog::{
 #[allow(unused_imports)]
 pub use sync::{
     apply_sync_proposal_to_paths, default_sync_config_paths, load_sync_plan_from_paths,
-    McpSyncAvailability, McpSyncConfigPaths, McpSyncInventoryRow, McpSyncPlan, McpSyncProposal,
+    sync_all_missing_mcp_servers_from_paths, McpSyncAvailability, McpSyncConfigPaths,
+    McpSyncInventoryRow, McpSyncPlan, McpSyncProposal,
 };
 #[allow(unused_imports)]
 pub use types::{McpProfile, McpSelection, McpServerSelection};

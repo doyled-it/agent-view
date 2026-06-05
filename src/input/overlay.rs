@@ -98,6 +98,21 @@ pub fn execute_command_action(
 
     match action {
         CommandAction::NewSession => {
+            match crate::core::mcp::default_sync_config_paths()
+                .and_then(|paths| crate::core::mcp::sync_all_missing_mcp_servers_from_paths(&paths))
+            {
+                Ok(count) if count > 0 => {
+                    app.toast.message = Some(format!("Auto-synced {count} MCP server config(s)"));
+                    app.toast.expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    app.toast.message = Some(format!("MCP auto-sync failed: {}", e));
+                    app.toast.expire =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+                }
+            }
             app.overlay =
                 Overlay::NewSession(crate::app::NewSessionForm::from_app_config(&app.config));
         }
