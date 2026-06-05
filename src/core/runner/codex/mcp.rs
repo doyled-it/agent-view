@@ -68,10 +68,16 @@ pub(crate) fn build_codex_mcp_launch_with_catalog(
 }
 
 fn selection_requires_catalog(selection: Option<&McpSelection>) -> bool {
-    selection
-        .filter(|selection| !selection.is_all_servers())
-        .map(|selection| selection.servers.iter().any(|server| server.enabled))
-        .unwrap_or(false)
+    let Some(selection) = selection else {
+        return false;
+    };
+
+    !selection.is_all_servers()
+        && selection
+            .servers
+            .iter()
+            .all(|server| server.selected_tools.is_none())
+        && selection.servers.iter().any(|server| server.enabled)
 }
 
 fn dedupe_server_selections(selection: &McpSelection) -> Vec<McpServerSelection> {
@@ -334,7 +340,12 @@ mod tests {
             ],
         };
 
-        let launch = super::build_codex_mcp_launch(Some(&selection)).unwrap();
+        let catalog = vec![McpServerCatalogEntry::server_level(
+            Tool::Codex,
+            "GitLabMITRE",
+        )];
+        let launch =
+            super::build_codex_mcp_launch_with_catalog(Some(&selection), Some(&catalog)).unwrap();
 
         assert_eq!(launch.command.as_deref(), Some("codex"));
         assert!(launch.env.is_empty());

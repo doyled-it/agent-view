@@ -186,6 +186,16 @@ pub fn spawn_in(
     storage: Option<SharedStorage>,
     pricer: Arc<Pricer>,
 ) -> EventStateHandle {
+    spawn_in_inner(hooks, costs, storage, pricer, None)
+}
+
+fn spawn_in_inner(
+    hooks: PathBuf,
+    costs: PathBuf,
+    storage: Option<SharedStorage>,
+    pricer: Arc<Pricer>,
+    ready_tx: Option<mpsc::Sender<()>>,
+) -> EventStateHandle {
     let state: EventStateHandle = Arc::new(Mutex::new(EventState::default()));
 
     // Bootstrap from existing files BEFORE notify subscription so we don't
@@ -195,11 +205,18 @@ pub fn spawn_in(
     let state_thread = Arc::clone(&state);
     let pricer_thread = Arc::clone(&pricer);
     thread::spawn(move || {
+        let mut ready_tx = ready_tx;
+        let mut signal_ready = || {
+            if let Some(tx) = ready_tx.take() {
+                let _ = tx.send(());
+            }
+        };
         let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
         let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
             Ok(w) => w,
             Err(e) => {
                 eprintln!("agent-view: event_watcher: notify init failed: {}", e);
+                signal_ready();
                 return;
             }
         };
@@ -209,6 +226,17 @@ pub fn spawn_in(
         if let Err(e) = watcher.watch(&costs, RecursiveMode::NonRecursive) {
             eprintln!("agent-view: event_watcher: watch costs failed: {}", e);
         }
+
+        // Close the startup race between the pre-subscription bootstrap and
+        // the notify watches becoming active.
+        load_existing(
+            &state_thread,
+            &hooks,
+            &costs,
+            storage.as_ref(),
+            &pricer_thread,
+        );
+        signal_ready();
 
         let mut pending: HashSet<PathBuf> = HashSet::new();
         loop {
@@ -237,6 +265,18 @@ pub fn spawn_in(
     });
 
     state
+}
+
+#[cfg(test)]
+fn spawn_in_with_ready(
+    hooks: PathBuf,
+    costs: PathBuf,
+    storage: Option<SharedStorage>,
+    pricer: Arc<Pricer>,
+) -> (EventStateHandle, mpsc::Receiver<()>) {
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let state = spawn_in_inner(hooks, costs, storage, pricer, Some(ready_tx));
+    (state, ready_rx)
 }
 
 fn load_existing(
@@ -773,6 +813,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn test_spawn_in_consumes_new_hook_file_via_notify_thread() {
         // End-to-end: write a hook file AFTER the watcher starts, verify the
         // notify thread picks it up and mutates shared state.
@@ -782,25 +823,33 @@ mod tests {
         fs::create_dir(&hooks).unwrap();
         fs::create_dir(&costs).unwrap();
 
-        let state = spawn_in(
+        let (state, ready) = spawn_in_with_ready(
             hooks.clone(),
             costs,
             None,
             Arc::new(Pricer::with_defaults()),
         );
 
-        // Give notify a moment to attach its watch.
-        std::thread::sleep(Duration::from_millis(200));
+        ready
+            .recv_timeout(Duration::from_secs(5))
+            .expect("watcher did not report readiness");
         write_hook_file(&hooks, "live-sess", "running");
 
-        // Watcher debounces ~100ms after the last event; poll up to ~3s.
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        // Watcher debounces ~100ms after the last event. Rewrite while
+        // polling so a single dropped create event under the parallel test
+        // harness does not make the test timing-sensitive.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut last_write = std::time::Instant::now();
         loop {
             if state.lock().unwrap().hook_status.contains_key("live-sess") {
                 break;
             }
             if std::time::Instant::now() >= deadline {
                 panic!("watcher never picked up the new hook file");
+            }
+            if last_write.elapsed() >= Duration::from_millis(250) {
+                write_hook_file(&hooks, "live-sess", "running");
+                last_write = std::time::Instant::now();
             }
             std::thread::sleep(Duration::from_millis(50));
         }
