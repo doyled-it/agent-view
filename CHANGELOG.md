@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.16.0] - 2026-06-05
+
+### Changed
+
+- feat(mcp): add session tool profiles (#68) (@doyled-it)
+
 ## [1.15.0] - 2026-06-03
 
 ### Changed
