@@ -107,53 +107,109 @@ fn action_items(form: &McpSyncForm, theme: &Theme) -> Vec<ListItem<'static>> {
         )))];
     }
 
-    form.plan
-        .proposals
-        .iter()
-        .enumerate()
-        .take(5)
-        .map(|(idx, proposal)| {
-            let selected = idx == form.selected;
-            let style = if selected {
-                Style::default()
-                    .bg(theme.primary)
-                    .fg(theme.selected_item_text)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            ListItem::new(Line::from(Span::styled(
-                format!(
-                    "{} {} -> {}",
-                    proposal.server_id, proposal.source, proposal.target
-                ),
-                style,
-            )))
-        })
-        .collect()
+    let mut items = Vec::new();
+    if form.has_all_proposals_action() {
+        let style = if form.selected_all_proposals() {
+            Style::default()
+                .bg(theme.primary)
+                .fg(theme.selected_item_text)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!(
+                "All missing servers ({} changes)",
+                form.plan.proposals.len()
+            ),
+            style,
+        ))));
+    }
+
+    let remaining_rows = 5usize.saturating_sub(items.len());
+    items.extend(
+        form.plan
+            .proposals
+            .iter()
+            .enumerate()
+            .take(remaining_rows)
+            .map(|(idx, proposal)| {
+                let selected = if form.has_all_proposals_action() {
+                    idx + 1 == form.selected
+                } else {
+                    idx == form.selected
+                };
+                let style = if selected {
+                    Style::default()
+                        .bg(theme.primary)
+                        .fg(theme.selected_item_text)
+                } else {
+                    Style::default().fg(theme.text)
+                };
+                ListItem::new(Line::from(Span::styled(
+                    format!(
+                        "{} {} -> {}",
+                        proposal.server_id, proposal.source, proposal.target
+                    ),
+                    style,
+                )))
+            }),
+    );
+    items
 }
 
 fn preview_lines(form: &McpSyncForm, theme: &Theme) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    if form.confirming {
+    if form.confirming_all {
+        lines.push(Line::from(Span::styled(
+            "Apply all missing server syncs?",
+            Style::default().fg(theme.warning).bold(),
+        )));
+    } else if form.confirming {
         lines.push(Line::from(Span::styled(
             "Apply this change?",
             Style::default().fg(theme.warning).bold(),
         )));
     }
-    match form.selected_proposal() {
-        Some(proposal) => {
-            for line in proposal.preview_lines.iter().take(8) {
+
+    if form.selected_all_proposals() || form.confirming_all {
+        for proposal in form.plan.proposals.iter().take(2) {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "{} {} -> {}",
+                    proposal.server_id, proposal.source, proposal.target
+                ),
+                Style::default().fg(theme.text).bold(),
+            )));
+            for line in proposal.preview_lines.iter().take(3) {
                 lines.push(Line::from(Span::styled(
                     line.clone(),
                     Style::default().fg(theme.text),
                 )));
             }
         }
-        None => lines.push(Line::from(Span::styled(
-            "No changes selected",
-            Style::default().fg(theme.text_muted),
-        ))),
+        if form.plan.proposals.len() > 2 {
+            lines.push(Line::from(Span::styled(
+                format!("... and {} more", form.plan.proposals.len() - 2),
+                Style::default().fg(theme.text_muted),
+            )));
+        }
+    } else {
+        match form.selected_proposal() {
+            Some(proposal) => {
+                for line in proposal.preview_lines.iter().take(8) {
+                    lines.push(Line::from(Span::styled(
+                        line.clone(),
+                        Style::default().fg(theme.text),
+                    )));
+                }
+            }
+            None => lines.push(Line::from(Span::styled(
+                "No changes selected",
+                Style::default().fg(theme.text_muted),
+            ))),
+        }
     }
+
     lines
 }
 

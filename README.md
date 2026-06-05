@@ -85,7 +85,7 @@ Claude and Codex enforce server-level selections at launch: Claude writes a sess
 
 Per-tool MCP filtering is available only when the selected runner can enforce it. Codex currently accepts whole-server selections and rejects per-tool limits; unsupported runners keep their default all-server behavior unless their launch path can apply the selection exactly.
 
-Use **Sync MCP Servers** from the command palette to compare Claude and Codex MCP configuration. The sync view shows which servers are configured, missing, or unsupported per runner, previews the exact config addition, and requires confirmation before writing `~/.claude/settings.json` or `~/.codex/config.toml`. OpenCode is marked unsupported for config sync until its MCP configuration can be safely copied and enforced.
+Use **Sync MCP Servers** from the command palette to compare Claude and Codex MCP configuration. The sync view shows which servers are configured, missing, or unsupported per runner, previews individual config additions or all missing sync actions, and requires confirmation before writing `~/.claude/settings.json` or `~/.codex/config.toml`. OpenCode is marked unsupported for config sync until its MCP configuration can be safely copied and enforced.
 
 MCP sync makes servers available to runners; new-session MCP profiles still decide which of those configured servers a specific session can use.
 

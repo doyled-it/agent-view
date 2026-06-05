@@ -424,52 +424,83 @@ pub fn handle_mcp_sync_key(
     use crossterm::event::KeyCode;
 
     let mut apply: Option<(
-        crate::core::mcp::McpSyncProposal,
+        Vec<crate::core::mcp::McpSyncProposal>,
         crate::core::mcp::McpSyncConfigPaths,
     )> = None;
 
     if let crate::app::Overlay::McpSync(ref mut form) = app.overlay {
         match key.code {
             KeyCode::Esc => {
-                if form.confirming {
-                    form.confirming = false;
+                if form.confirming || form.confirming_all {
+                    form.clear_confirmation();
                 } else {
                     app.overlay = crate::app::Overlay::None;
                 }
             }
-            KeyCode::Char('n') if form.confirming => {
-                form.confirming = false;
+            KeyCode::Char('n') if form.confirming || form.confirming_all => {
+                form.clear_confirmation();
             }
-            KeyCode::Up | KeyCode::Char('k') if !form.confirming => {
+            KeyCode::Up | KeyCode::Char('k') if !form.confirming && !form.confirming_all => {
                 form.move_up();
             }
-            KeyCode::Down | KeyCode::Char('j') if !form.confirming => {
+            KeyCode::Down | KeyCode::Char('j') if !form.confirming && !form.confirming_all => {
                 form.move_down();
+            }
+            KeyCode::Char('a')
+                if !form.confirming && !form.confirming_all && !form.plan.proposals.is_empty() =>
+            {
+                form.selected = 0;
+                form.confirming_all = true;
+                form.confirming = false;
+            }
+            KeyCode::Enter if form.confirming_all => {
+                apply = Some((form.all_proposals(), form.paths.clone()));
+            }
+            KeyCode::Char('y') if form.confirming_all => {
+                apply = Some((form.all_proposals(), form.paths.clone()));
             }
             KeyCode::Enter if form.confirming => {
                 if let Some(proposal) = form.selected_proposal().cloned() {
-                    apply = Some((proposal, form.paths.clone()));
+                    apply = Some((vec![proposal], form.paths.clone()));
                 }
             }
             KeyCode::Char('y') if form.confirming => {
                 if let Some(proposal) = form.selected_proposal().cloned() {
-                    apply = Some((proposal, form.paths.clone()));
+                    apply = Some((vec![proposal], form.paths.clone()));
                 }
             }
-            KeyCode::Enter if form.selected_proposal().is_some() => {
-                form.confirming = true;
+            KeyCode::Enter if form.action_count() > 0 => {
+                form.begin_confirming_selected();
             }
             _ => {}
         }
     }
 
-    if let Some((proposal, paths)) = apply {
-        match crate::core::mcp::apply_sync_proposal_to_paths(&proposal, &paths) {
-            Ok(()) => {
-                app.toast.message = Some(format!(
-                    "Synced MCP server {} to {}",
-                    proposal.server_id, proposal.target
-                ));
+    if let Some((proposals, paths)) = apply {
+        let mut applied_count = 0usize;
+        let mut error = None;
+        for proposal in &proposals {
+            match crate::core::mcp::apply_sync_proposal_to_paths(proposal, &paths) {
+                Ok(()) => applied_count += 1,
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
+        }
+
+        match error {
+            None => {
+                let message = if applied_count == 1 {
+                    let proposal = &proposals[0];
+                    format!(
+                        "Synced MCP server {} to {}",
+                        proposal.server_id, proposal.target
+                    )
+                } else {
+                    format!("Synced {applied_count} MCP servers across runners")
+                };
+                app.toast.message = Some(message);
                 app.toast.expire =
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
                 match crate::core::mcp::load_sync_plan_from_paths(&paths) {
@@ -489,11 +520,15 @@ pub fn handle_mcp_sync_key(
                     }
                 }
             }
-            Err(e) => {
+            Some(e) => {
                 if let crate::app::Overlay::McpSync(ref mut form) = app.overlay {
-                    form.confirming = false;
+                    form.clear_confirmation();
                 }
-                app.toast.message = Some(format!("MCP sync failed: {}", e));
+                app.toast.message = Some(if applied_count == 0 {
+                    format!("MCP sync failed: {}", e)
+                } else {
+                    format!("MCP sync failed after {applied_count} change(s): {}", e)
+                });
                 app.toast.expire =
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
             }
@@ -650,5 +685,56 @@ mod tests {
         assert!(fs::read_to_string(&codex_path)
             .unwrap()
             .contains("[mcp_servers.wavecrest]"));
+    }
+
+    #[test]
+    fn mcp_sync_overlay_can_apply_all_missing_servers_after_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_path = dir.path().join("claude").join("settings.json");
+        let codex_path = dir.path().join("codex").join("config.toml");
+        fs::create_dir_all(claude_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(codex_path.parent().unwrap()).unwrap();
+        fs::write(
+            &claude_path,
+            r#"{"mcpServers":{"wavecrest":{"command":"uvx","args":["wavecrest-mcp"]}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            &codex_path,
+            r#"[mcp_servers.GitLabMITRE]
+url = "https://gitlab.example.test/api/v4/mcp"
+"#,
+        )
+        .unwrap();
+        let paths = crate::core::mcp::McpSyncConfigPaths {
+            claude_settings: claude_path.clone(),
+            codex_config: codex_path.clone(),
+        };
+        let plan = crate::core::mcp::load_sync_plan_from_paths(&paths).unwrap();
+        assert_eq!(plan.proposals.len(), 2);
+        let mut app = crate::app::App::new(false);
+        app.overlay = crate::app::Overlay::McpSync(crate::app::McpSyncForm::new(paths, plan));
+
+        super::handle_mcp_sync_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&claude_path).unwrap(),
+            r#"{"mcpServers":{"wavecrest":{"command":"uvx","args":["wavecrest-mcp"]}}}"#
+        );
+        assert!(matches!(
+            app.overlay,
+            crate::app::Overlay::McpSync(crate::app::McpSyncForm {
+                confirming_all: true,
+                ..
+            })
+        ));
+
+        super::handle_mcp_sync_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+        let claude_settings = fs::read_to_string(&claude_path).unwrap();
+        let codex_config = fs::read_to_string(&codex_path).unwrap();
+        assert!(claude_settings.contains("GitLabMITRE"));
+        assert!(codex_config.contains("[mcp_servers.wavecrest]"));
+        assert!(matches!(app.overlay, crate::app::Overlay::None));
     }
 }
