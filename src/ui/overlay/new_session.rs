@@ -380,7 +380,7 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         }
         0 => format!("\u{2190}/\u{2192} cycle runner   {}", base_hint),
         MCP_FIELD if form.mcp_expanded => {
-            format!("Space apply/toggle · ^P save profile · ^U update profile   {base_hint}")
+            format!("Space apply/toggle · d/Del delete · ^P save · ^U update   {base_hint}")
         }
         MCP_FIELD => format!("Enter MCP   {}", base_hint),
         _ => base_hint.to_string(),

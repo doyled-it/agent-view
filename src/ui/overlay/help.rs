@@ -102,6 +102,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             section_header("New Session MCP", section_style),
             binding("Enter", "Expand", key_style, desc_style),
             binding("Space", "Toggle", key_style, desc_style),
+            binding("D/Del", "Delete profile", key_style, desc_style),
             binding("Ctrl+P", "Save profile", key_style, desc_style),
             binding("Ctrl+U", "Update profile", key_style, desc_style),
             Line::from(""),

@@ -170,6 +170,17 @@ pub fn handle_new_session_key(
                     form.error = Some(err);
                 }
             }
+            (m, KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete | KeyCode::Backspace)
+                if form.focused_field == MCP_FIELD
+                    && form.mcp_expanded
+                    && !m.contains(KeyModifiers::CONTROL)
+                    && !m.contains(KeyModifiers::SUPER) =>
+            {
+                if let Some(profile) = form.delete_selected_mcp_profile() {
+                    mcp_profiles_to_persist = Some(form.mcp_profiles.clone());
+                    toast_message = Some(format!("Deleted MCP profile: {}", profile.name));
+                }
+            }
             (_, KeyCode::Tab) => {
                 match form.focused_field {
                     2 => {
@@ -746,6 +757,57 @@ mod tests {
 
         let form = form_in_overlay(&app);
         assert_eq!(form.mcp_selection, McpSelection::default());
+    }
+
+    #[test]
+    fn test_new_session_delete_key_removes_selected_mcp_profile() {
+        let _env_lock = crate::core::runner::hook_io::lock_env();
+        let _home_restore = HomeRestore::capture();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut app = App::new(false);
+        app.config.mcp_profiles = vec![
+            crate::core::mcp::McpProfile {
+                id: "rust".into(),
+                name: "Rust".into(),
+                selection: McpSelection {
+                    profile_id: None,
+                    servers: vec![McpServerSelection {
+                        id: "GitLabMITRE".into(),
+                        enabled: true,
+                        selected_tools: None,
+                    }],
+                },
+            },
+            crate::core::mcp::McpProfile {
+                id: "docs".into(),
+                name: "Docs".into(),
+                selection: McpSelection::default(),
+            },
+        ];
+        let mut form = crate::app::NewSessionForm::new();
+        form.focused_field = MCP_FIELD;
+        form.mcp_expanded = true;
+        form.mcp_selected_row = 0;
+        form.mcp_profiles = app.config.mcp_profiles.clone();
+        form.apply_mcp_profile("rust").unwrap();
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, key(KeyCode::Delete), &storage, &session_ops).unwrap();
+
+        assert_eq!(app.config.mcp_profiles.len(), 1);
+        assert_eq!(app.config.mcp_profiles[0].id, "docs");
+        let form = form_in_overlay(&app);
+        assert_eq!(form.mcp_profiles.len(), 1);
+        assert_eq!(form.mcp_profiles[0].id, "docs");
+        assert_eq!(form.mcp_selection, McpSelection::default());
+        let loaded = crate::core::config::load_config_from_path(
+            &home.path().join(".agent-view/config.json"),
+        );
+        assert_eq!(loaded.mcp_profiles.len(), 1);
+        assert_eq!(loaded.mcp_profiles[0].id, "docs");
     }
 
     #[test]

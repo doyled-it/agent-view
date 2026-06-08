@@ -163,6 +163,25 @@ impl NewSessionForm {
             .map(|server| server.id.clone())
     }
 
+    pub fn delete_selected_mcp_profile(&mut self) -> Option<crate::core::mcp::McpProfile> {
+        if self.mcp_selected_row >= self.mcp_profiles.len() {
+            return None;
+        }
+
+        let removed = self.mcp_profiles.remove(self.mcp_selected_row);
+        if self.mcp_selection.profile_id.as_deref() == Some(removed.id.as_str()) {
+            self.mcp_selection = crate::core::mcp::McpSelection::default();
+        }
+        let row_count = self.mcp_row_count();
+        self.mcp_selected_row = if row_count == 0 {
+            0
+        } else {
+            self.mcp_selected_row.min(row_count - 1)
+        };
+        self.error = None;
+        Some(removed)
+    }
+
     pub fn mcp_row_count(&self) -> usize {
         self.mcp_profiles.len() + self.mcp_servers.len()
     }
