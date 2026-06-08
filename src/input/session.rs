@@ -270,7 +270,9 @@ pub fn handle_new_session_key(
                 form.focused_field = (form.focused_field + FIELD_COUNT - 1) % FIELD_COUNT;
                 form.clear_completions();
             }
-            (_, KeyCode::Down) if form.focused_field == MCP_FIELD && form.mcp_expanded => {
+            (_, KeyCode::Down | KeyCode::Char('j'))
+                if form.focused_field == MCP_FIELD && form.mcp_expanded =>
+            {
                 let row_count = form.mcp_row_count();
                 if row_count == 0 {
                     form.mcp_selected_row = 0;
@@ -278,7 +280,9 @@ pub fn handle_new_session_key(
                     form.mcp_selected_row = (form.mcp_selected_row + 1).min(row_count - 1);
                 }
             }
-            (_, KeyCode::Up) if form.focused_field == MCP_FIELD && form.mcp_expanded => {
+            (_, KeyCode::Up | KeyCode::Char('k'))
+                if form.focused_field == MCP_FIELD && form.mcp_expanded =>
+            {
                 form.mcp_selected_row = form.mcp_selected_row.saturating_sub(1);
             }
             (_, KeyCode::Down) => {
@@ -816,6 +820,29 @@ mod tests {
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
 
         handle_new_session_key(&mut app, key(KeyCode::Up), &storage, &session_ops).unwrap();
+        assert_eq!(form_in_overlay(&app).focused_field, 5);
+        assert_eq!(form_in_overlay(&app).mcp_selected_row, 0);
+    }
+
+    #[test]
+    fn test_mcp_field_j_k_move_selected_server_row_when_expanded() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut form = crate::app::NewSessionForm::new();
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
+        form.focused_field = 5;
+        form.mcp_expanded = true;
+        let mut app = App::new(false);
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, key(KeyCode::Char('j')), &storage, &session_ops).unwrap();
+        assert_eq!(form_in_overlay(&app).focused_field, 5);
+        assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
+
+        handle_new_session_key(&mut app, key(KeyCode::Char('j')), &storage, &session_ops).unwrap();
+        assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
+
+        handle_new_session_key(&mut app, key(KeyCode::Char('k')), &storage, &session_ops).unwrap();
         assert_eq!(form_in_overlay(&app).focused_field, 5);
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 0);
     }

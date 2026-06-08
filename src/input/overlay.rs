@@ -498,13 +498,13 @@ pub fn handle_mcp_profiles_key(
                 (_, KeyCode::BackTab) => {
                     form.focused_field = (form.focused_field + 1) % 2;
                 }
-                (_, KeyCode::Down) if form.focused_field == 1 => {
+                (_, KeyCode::Down | KeyCode::Char('j')) if form.focused_field == 1 => {
                     let count = form.server_row_count();
                     if count > 0 {
                         form.selected_server = (form.selected_server + 1).min(count - 1);
                     }
                 }
-                (_, KeyCode::Up) if form.focused_field == 1 => {
+                (_, KeyCode::Up | KeyCode::Char('k')) if form.focused_field == 1 => {
                     form.selected_server = form.selected_server.saturating_sub(1);
                 }
                 (_, KeyCode::Char(' ')) if form.focused_field == 1 => {
@@ -1087,5 +1087,40 @@ url = "https://gitlab.example.test/api/v4/mcp"
         );
         assert_eq!(loaded.mcp_profiles.len(), 1);
         assert_eq!(loaded.mcp_profiles[0].id, "docs");
+    }
+
+    #[test]
+    fn mcp_profiles_key_j_k_move_selected_server_in_editor() {
+        let catalog = vec![
+            crate::core::mcp::McpServerCatalogEntry::server_level(
+                crate::types::Tool::Claude,
+                "GitLabMITRE",
+            ),
+            crate::core::mcp::McpServerCatalogEntry::server_level(
+                crate::types::Tool::Claude,
+                "wavecrest",
+            ),
+        ];
+        let mut app = crate::app::App::new(false);
+        app.overlay =
+            crate::app::Overlay::McpProfiles(crate::app::McpProfilesForm::new(Vec::new(), catalog));
+
+        super::handle_mcp_profiles_key(&mut app, key(KeyCode::Char('n'))).unwrap();
+        super::handle_mcp_profiles_key(&mut app, key(KeyCode::Tab)).unwrap();
+        super::handle_mcp_profiles_key(&mut app, key(KeyCode::Char('j'))).unwrap();
+
+        let crate::app::Overlay::McpProfiles(form) = &app.overlay else {
+            panic!("expected MCP profiles overlay");
+        };
+        assert_eq!(form.focused_field, 1);
+        assert_eq!(form.selected_server, 1);
+
+        super::handle_mcp_profiles_key(&mut app, key(KeyCode::Char('k'))).unwrap();
+
+        let crate::app::Overlay::McpProfiles(form) = &app.overlay else {
+            panic!("expected MCP profiles overlay");
+        };
+        assert_eq!(form.focused_field, 1);
+        assert_eq!(form.selected_server, 0);
     }
 }
