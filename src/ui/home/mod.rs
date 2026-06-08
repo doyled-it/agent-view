@@ -150,9 +150,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         match app.active_tab {
             crate::app::ActiveTab::Sessions => {
                 if let Some(session) = app.selected_session() {
-                    crate::ui::detail::render_detail_panel(
+                    crate::ui::detail::render_session_detail_panel(
                         frame,
                         detail_rect,
+                        app,
                         session,
                         &app.theme,
                         app.detail_mode,
@@ -254,7 +255,7 @@ mod tests {
     use ratatui::style::Modifier;
     use ratatui::Terminal;
 
-    use crate::app::App;
+    use crate::app::{App, DetailPanelMode};
     use crate::core::groups::ListRow;
     use crate::types::{
         ActivityEvent, Group, Session, SessionStatus, StatusIndicator, StatusPageData, Tool,
@@ -314,6 +315,77 @@ mod tests {
             .position(|row| matches!(row, ListRow::Session { .. }))
             .expect("test app should include a session row");
         app
+    }
+
+    fn app_with_conductor_tree(selected_child: bool, detail_mode: DetailPanelMode) -> App {
+        let mut app = App::new(false);
+        app.detail_mode = detail_mode;
+        app.preview.content = "preview transcript".to_string();
+        app.groups = vec![Group {
+            path: "active".to_string(),
+            name: "Active".to_string(),
+            expanded: true,
+            order: 0,
+            default_path: String::new(),
+        }];
+
+        let mut conductor = make_session(Tool::Codex);
+        conductor.id = "conductor-1".to_string();
+        conductor.title = "Launch Conductor".to_string();
+        conductor.role = crate::types::SessionRole::Conductor;
+        conductor.conductor_expanded = true;
+        conductor.status = SessionStatus::Running;
+
+        let mut child = make_session(Tool::Codex);
+        child.id = "child-1".to_string();
+        child.title = "Worker Alpha".to_string();
+        child.parent_session_id = conductor.id.clone();
+        child.status = SessionStatus::Waiting;
+
+        app.sessions = vec![conductor, child];
+        app.rebuild_list_rows();
+        let expected_depth = if selected_child { 1 } else { 0 };
+        app.selected_index = app
+            .list_rows
+            .iter()
+            .position(
+                |row| matches!(row, ListRow::Session { depth, .. } if *depth == expected_depth),
+            )
+            .expect("test app should include selected conductor tree row");
+        app
+    }
+
+    fn render_home_lines(app: &App) -> Vec<String> {
+        let backend = TestBackend::new(160, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend should initialize");
+        terminal
+            .draw(|frame| render(frame, app))
+            .expect("home should render");
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn assert_rendered_contains(lines: &[String], needle: &str) {
+        assert!(
+            lines.iter().any(|line| line.contains(needle)),
+            "expected rendered output to contain {needle:?}\n{}",
+            lines.join("\n")
+        );
+    }
+
+    fn assert_rendered_not_contains(lines: &[String], needle: &str) {
+        assert!(
+            lines.iter().all(|line| !line.contains(needle)),
+            "expected rendered output not to contain {needle:?}\n{}",
+            lines.join("\n")
+        );
     }
 
     fn render_panel(render: impl FnOnce(&mut ratatui::Frame, Rect)) -> Buffer {
@@ -406,5 +478,82 @@ mod tests {
             claude_quota_pane::render_claude_quota_pane(frame, area, &claude_app);
         });
         assert_title_uses_primary_bold(&claude_usage, "Usage", &claude_app);
+    }
+
+    #[test]
+    fn selected_conductor_detail_keeps_preview_and_details_with_sub_session_details() {
+        let app = app_with_conductor_tree(false, DetailPanelMode::Both);
+
+        let lines = render_home_lines(&app);
+
+        assert_rendered_contains(&lines, "Preview");
+        assert_rendered_contains(&lines, "Details");
+        assert_rendered_contains(&lines, "Sub-session Details");
+        assert_rendered_contains(&lines, "Worker Alpha");
+        assert_rendered_contains(&lines, "waiting");
+    }
+
+    #[test]
+    fn selected_conductor_metadata_detail_hides_preview_and_keeps_sub_session_details() {
+        let app = app_with_conductor_tree(false, DetailPanelMode::Metadata);
+
+        let lines = render_home_lines(&app);
+
+        assert_rendered_not_contains(&lines, "Preview");
+        assert_rendered_not_contains(&lines, "preview transcript");
+        assert_rendered_contains(&lines, "Details");
+        assert_rendered_contains(&lines, "Tool:");
+        assert_rendered_contains(&lines, "Sub-session Details");
+        assert_rendered_contains(&lines, "Worker Alpha");
+    }
+
+    #[test]
+    fn selected_conductor_preview_detail_hides_metadata_and_keeps_sub_session_details() {
+        let app = app_with_conductor_tree(false, DetailPanelMode::Preview);
+
+        let lines = render_home_lines(&app);
+
+        assert_rendered_contains(&lines, "Preview");
+        assert_rendered_contains(&lines, "preview transcript");
+        assert_rendered_contains(&lines, "Sub-session Details");
+        assert_rendered_contains(&lines, "Worker Alpha");
+        assert_rendered_not_contains(&lines, "Tool:");
+    }
+
+    #[test]
+    fn selected_conductor_none_detail_hides_all_detail_panes() {
+        let mut app = app_with_conductor_tree(false, DetailPanelMode::None);
+        let conductor_index = app
+            .sessions
+            .iter()
+            .position(|session| session.role == crate::types::SessionRole::Conductor)
+            .expect("test app should include a conductor session");
+        app.sessions[conductor_index].conductor_expanded = false;
+        app.rebuild_list_rows();
+        app.selected_index = app
+            .list_rows
+            .iter()
+            .position(|row| matches!(row, ListRow::Session { depth, .. } if *depth == 0))
+            .expect("test app should include selected conductor tree row");
+
+        let lines = render_home_lines(&app);
+
+        assert_rendered_not_contains(&lines, "Preview");
+        assert_rendered_not_contains(&lines, "Details");
+        assert_rendered_not_contains(&lines, "Sub-session Details");
+        assert_rendered_not_contains(&lines, "Worker Alpha");
+    }
+
+    #[test]
+    fn selected_child_detail_keeps_preview_and_details_with_parent_context() {
+        let app = app_with_conductor_tree(true, DetailPanelMode::Both);
+
+        let lines = render_home_lines(&app);
+
+        assert_rendered_contains(&lines, "Preview");
+        assert_rendered_contains(&lines, "Details");
+        assert_rendered_contains(&lines, "Sub-session Details");
+        assert_rendered_contains(&lines, "Parent Conductor");
+        assert_rendered_contains(&lines, "Launch Conductor");
     }
 }
