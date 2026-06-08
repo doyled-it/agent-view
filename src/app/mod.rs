@@ -138,8 +138,8 @@ impl App {
 
     pub fn select_all_visible(&mut self) {
         for row in &self.list_rows {
-            if let crate::core::groups::ListRow::Session(s) = row {
-                self.bulk.selected.insert(s.id.clone());
+            if let crate::core::groups::ListRow::Session { session, .. } = row {
+                self.bulk.selected.insert(session.id.clone());
             }
         }
     }
@@ -154,9 +154,42 @@ impl App {
 
     pub fn selected_session(&self) -> Option<&Session> {
         match self.list_rows.get(self.selected_index) {
-            Some(ListRow::Session(s)) => Some(s),
+            Some(ListRow::Session { session, .. }) => Some(session),
             _ => None,
         }
+    }
+
+    pub fn selected_session_depth(&self) -> Option<usize> {
+        match self.list_rows.get(self.selected_index) {
+            Some(ListRow::Session { depth, .. }) => Some(*depth),
+            _ => None,
+        }
+    }
+
+    pub fn selected_parent_conductor(&self) -> Option<&Session> {
+        let session = self.selected_session()?;
+        if session.parent_session_id.is_empty() {
+            return None;
+        }
+
+        self.list_rows.iter().find_map(|row| match row {
+            ListRow::Session {
+                session: parent,
+                depth: 0,
+            } if parent.id == session.parent_session_id
+                && parent.role == crate::types::SessionRole::Conductor =>
+            {
+                Some(parent.as_ref())
+            }
+            _ => None,
+        })
+    }
+
+    pub fn selected_parent_conductor_index(&self) -> Option<usize> {
+        let parent_id = self.selected_parent_conductor()?.id.as_str();
+        self.list_rows.iter().position(
+            |row| matches!(row, ListRow::Session { session, depth: 0 } if session.id == parent_id),
+        )
     }
 
     pub fn selected_group(&self) -> Option<&Group> {
@@ -200,7 +233,11 @@ impl App {
             .iter()
             .enumerate()
             .filter_map(|(i, row)| match row {
-                ListRow::Session(s) if s.title.to_lowercase().contains(&query) => Some(i),
+                ListRow::Session { session, .. }
+                    if session.title.to_lowercase().contains(&query) =>
+                {
+                    Some(i)
+                }
                 _ => None,
             })
             .collect()
@@ -551,7 +588,7 @@ mod tests {
         let session_idx = app
             .list_rows
             .iter()
-            .position(|r| matches!(r, ListRow::Session(_)))
+            .position(|r| matches!(r, ListRow::Session { .. }))
             .expect("should have at least one session row");
         app.selected_index = session_idx;
         assert!(app.selected_session().is_some());
@@ -601,8 +638,8 @@ mod tests {
         assert!(!matches.is_empty());
         // All matches should point to session rows containing "alpha" in title (case-insensitive)
         for idx in &matches {
-            if let Some(ListRow::Session(s)) = app.list_rows.get(*idx) {
-                assert!(s.title.to_lowercase().contains("alpha"));
+            if let Some(ListRow::Session { session, .. }) = app.list_rows.get(*idx) {
+                assert!(session.title.to_lowercase().contains("alpha"));
             }
         }
     }

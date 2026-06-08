@@ -99,7 +99,7 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     };
                     ListItem::new(Line::from(spans)).style(Style::default().bg(bg))
                 }
-                ListRow::Session(session) => {
+                ListRow::Session { session, depth } => {
                     let is_bulk_selected = app.bulk.selected.contains(&session.id);
                     let status_color = status_color(theme, session.status);
                     let notify_indicator = if session.notify { " \u{266A}" } else { "  " };
@@ -122,7 +122,18 @@ pub(super) fn render_session_list(frame: &mut Frame, area: Rect, app: &App) {
                     };
 
                     // Build left side: indicators + status + title + path
-                    let left_prefix = format!(" {}", pin_indicator);
+                    let tree_prefix = if *depth > 0 {
+                        "  \u{2514} "
+                    } else if session.role == crate::types::SessionRole::Conductor {
+                        if session.conductor_expanded {
+                            " \u{25BC} "
+                        } else {
+                            " \u{25B6} "
+                        }
+                    } else {
+                        " "
+                    };
+                    let left_prefix = format!("{}{}", tree_prefix, pin_indicator);
                     let status_str = format!(" {} ", session.status.icon());
                     let path_str = truncate_path(&session.project_path, 30);
 

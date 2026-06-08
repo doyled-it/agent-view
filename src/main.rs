@@ -340,7 +340,7 @@ fn run_tui(
                     app.groups = storage.load_groups().unwrap_or_default();
                     app.rebuild_list_rows();
                     if let Some(pos) = app.list_rows.iter().position(|row| {
-                        matches!(row, crate::core::groups::ListRow::Session(s) if s.tmux_session == tmux_name)
+                        matches!(row, crate::core::groups::ListRow::Session { session, .. } if session.tmux_session == tmux_name)
                     }) {
                         app.selected_index = pos;
                     }
@@ -383,8 +383,11 @@ fn run_tui(
                                 // Auto-jump to first match as user types
                                 let query = q.to_lowercase();
                                 for (i, row) in app.list_rows.iter().enumerate() {
-                                    if let crate::core::groups::ListRow::Session(s) = row {
-                                        if s.title.to_lowercase().contains(&query) {
+                                    if let crate::core::groups::ListRow::Session {
+                                        session, ..
+                                    } = row
+                                    {
+                                        if session.title.to_lowercase().contains(&query) {
                                             app.selected_index = i;
                                             break;
                                         }

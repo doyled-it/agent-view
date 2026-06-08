@@ -311,7 +311,7 @@ mod tests {
         app.selected_index = app
             .list_rows
             .iter()
-            .position(|row| matches!(row, ListRow::Session(_)))
+            .position(|row| matches!(row, ListRow::Session { .. }))
             .expect("test app should include a session row");
         app
     }

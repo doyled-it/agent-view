@@ -4,6 +4,65 @@ pub mod overlay;
 pub mod routine;
 pub mod session;
 
+fn reload_sessions_and_groups(app: &mut crate::app::App, storage: &crate::core::storage::Storage) {
+    if let Ok(sessions) = storage.load_sessions() {
+        app.sessions = sessions;
+        app.groups = storage.load_groups().unwrap_or_default();
+        app.rebuild_list_rows();
+    }
+}
+
+fn restore_selected_session(app: &mut crate::app::App, session_id: &str) {
+    if let Some(index) = app.list_rows.iter().position(|row| {
+        matches!(row, crate::core::groups::ListRow::Session { session, .. } if session.id == session_id)
+    }) {
+        app.selected_index = index;
+    }
+}
+
+fn handle_conductor_left(
+    app: &mut crate::app::App,
+    storage: &crate::core::storage::Storage,
+) -> bool {
+    if app.selected_session_depth().is_some_and(|depth| depth > 0) {
+        if let Some(index) = app.selected_parent_conductor_index() {
+            app.selected_index = index;
+        }
+        return true;
+    }
+
+    let Some(session) = app.selected_session() else {
+        return false;
+    };
+    if session.role != crate::types::SessionRole::Conductor || !session.conductor_expanded {
+        return false;
+    }
+
+    let id = session.id.clone();
+    let _ = storage.set_conductor_expanded(&id, false);
+    reload_sessions_and_groups(app, storage);
+    restore_selected_session(app, &id);
+    true
+}
+
+fn handle_conductor_right(
+    app: &mut crate::app::App,
+    storage: &crate::core::storage::Storage,
+) -> bool {
+    let Some(session) = app.selected_session() else {
+        return false;
+    };
+    if session.role != crate::types::SessionRole::Conductor || session.conductor_expanded {
+        return false;
+    }
+
+    let id = session.id.clone();
+    let _ = storage.set_conductor_expanded(&id, true);
+    reload_sessions_and_groups(app, storage);
+    restore_selected_session(app, &id);
+    true
+}
+
 pub fn handle_main_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
@@ -85,7 +144,9 @@ pub fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Right) | (KeyModifiers::NONE, KeyCode::Char('l')) => {
-            if let Some(group) = app.selected_group() {
+            if handle_conductor_right(app, storage) {
+                // handled
+            } else if let Some(group) = app.selected_group() {
                 if !group.expanded {
                     let path = group.path.clone();
                     let _ = storage.toggle_group_expanded(&path);
@@ -95,7 +156,9 @@ pub fn handle_main_key(
             }
         }
         (KeyModifiers::NONE, KeyCode::Left) | (KeyModifiers::NONE, KeyCode::Char('h')) => {
-            if let Some(group) = app.selected_group() {
+            if handle_conductor_left(app, storage) {
+                // handled
+            } else if let Some(group) = app.selected_group() {
                 if group.expanded {
                     let path = group.path.clone();
                     let _ = storage.toggle_group_expanded(&path);
@@ -148,7 +211,7 @@ pub fn handle_main_key(
                         app.rebuild_list_rows();
                         // Restore cursor to the session we just detached from
                         if let Some(pos) = app.list_rows.iter().position(|row| {
-                            matches!(row, crate::core::groups::ListRow::Session(s) if s.tmux_session == tmux_name)
+                            matches!(row, crate::core::groups::ListRow::Session { session, .. } if session.tmux_session == tmux_name)
                         }) {
                             app.selected_index = pos;
                         }
@@ -474,6 +537,62 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT)
     }
 
+    fn main_test_terminal() -> Terminal<CrosstermBackend<std::io::Stdout>> {
+        let backend = CrosstermBackend::new(std::io::stdout());
+        let options = TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 80, 24)),
+        };
+        Terminal::with_options(backend, options).unwrap()
+    }
+
+    fn conductor_tree_fixture(
+        parent_expanded: bool,
+    ) -> (
+        crate::app::App,
+        crate::core::storage::Storage,
+        tempfile::TempDir,
+    ) {
+        let (storage, storage_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut parent = crate::core::storage::test_helpers::make_test_session("parent");
+        parent.title = "Parent Conductor".to_string();
+        parent.role = crate::types::SessionRole::Conductor;
+        parent.conductor_expanded = parent_expanded;
+        let mut child = crate::core::storage::test_helpers::make_test_session("child");
+        child.title = "Child Session".to_string();
+        child.parent_session_id = parent.id.clone();
+        storage.save_session(&parent).unwrap();
+        storage.save_session(&child).unwrap();
+
+        let mut app = crate::app::App::new(false);
+        app.sessions = storage.load_sessions().unwrap();
+        app.groups = storage.load_groups().unwrap_or_default();
+        app.rebuild_list_rows();
+
+        (app, storage, storage_dir)
+    }
+
+    fn dispatch_main_key(
+        app: &mut crate::app::App,
+        key: KeyEvent,
+        storage: &crate::core::storage::Storage,
+    ) {
+        let session_ops = crate::core::session::SessionOps;
+        let mut terminal = main_test_terminal();
+        let attach_state = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::core::attach_state::AttachState::new(),
+        ));
+
+        super::handle_main_key(
+            app,
+            key,
+            storage,
+            &session_ops,
+            &mut terminal,
+            &attach_state,
+        )
+        .unwrap();
+    }
+
     fn form_in_overlay(app: &crate::app::App) -> &crate::app::NewSessionForm {
         match &app.overlay {
             crate::app::Overlay::NewSession(form) => form,
@@ -489,6 +608,71 @@ mod tests {
             servers.iter().map(|server| server.id.as_str()).collect();
         let expected: std::collections::BTreeSet<_> = expected.iter().copied().collect();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_left_collapses_selected_expanded_conductor() {
+        let (mut app, storage, _storage_dir) = conductor_tree_fixture(true);
+        app.selected_index = app
+            .list_rows
+            .iter()
+            .position(
+                |row| matches!(row, crate::core::groups::ListRow::Session { session, depth: 0 } if session.id == "parent"),
+            )
+            .unwrap();
+
+        dispatch_main_key(&mut app, key(KeyCode::Left), &storage);
+
+        let parent = app
+            .sessions
+            .iter()
+            .find(|session| session.id == "parent")
+            .unwrap();
+        assert!(!parent.conductor_expanded);
+        assert!(app.list_rows.iter().all(|row| {
+            !matches!(row, crate::core::groups::ListRow::Session { session, .. } if session.id == "child")
+        }));
+    }
+
+    #[test]
+    fn test_left_on_child_selects_parent_conductor() {
+        let (mut app, storage, _storage_dir) = conductor_tree_fixture(true);
+        app.selected_index = app
+            .list_rows
+            .iter()
+            .position(
+                |row| matches!(row, crate::core::groups::ListRow::Session { session, depth: 1 } if session.id == "child"),
+            )
+            .unwrap();
+
+        dispatch_main_key(&mut app, key(KeyCode::Left), &storage);
+
+        let selected = app.selected_session().unwrap();
+        assert_eq!(selected.id, "parent");
+    }
+
+    #[test]
+    fn test_right_expands_selected_collapsed_conductor() {
+        let (mut app, storage, _storage_dir) = conductor_tree_fixture(false);
+        app.selected_index = app
+            .list_rows
+            .iter()
+            .position(
+                |row| matches!(row, crate::core::groups::ListRow::Session { session, depth: 0 } if session.id == "parent"),
+            )
+            .unwrap();
+
+        dispatch_main_key(&mut app, key(KeyCode::Right), &storage);
+
+        let parent = app
+            .sessions
+            .iter()
+            .find(|session| session.id == "parent")
+            .unwrap();
+        assert!(parent.conductor_expanded);
+        assert!(app.list_rows.iter().any(|row| {
+            matches!(row, crate::core::groups::ListRow::Session { session, depth: 1 } if session.id == "child")
+        }));
     }
 
     struct EnvRestore {
