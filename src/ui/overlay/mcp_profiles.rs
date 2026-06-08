@@ -36,7 +36,7 @@ pub fn render_mcp_profiles(frame: &mut Frame, area: Rect, form: &McpProfilesForm
     frame.render_widget(Paragraph::new(lines), chunks[0]);
 
     let help = match &form.mode {
-        McpProfilesMode::List => "n new - Enter/e edit - c duplicate - d delete - Esc close",
+        McpProfilesMode::List => "n new - Enter/e edit - c duplicate - d/Del delete - Esc close",
         McpProfilesMode::Edit(_) => "Ctrl+S save - Tab field - Space toggle - Esc cancel",
     };
     frame.render_widget(

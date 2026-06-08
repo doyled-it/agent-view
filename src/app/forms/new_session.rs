@@ -136,7 +136,12 @@ impl NewSessionForm {
 
     pub fn activate_selected_mcp_row(&mut self) -> Result<(), String> {
         if let Some(profile_id) = self.selected_mcp_profile_id() {
-            self.apply_mcp_profile(&profile_id)
+            if self.mcp_selection.profile_id.as_deref() == Some(profile_id.as_str()) {
+                self.mcp_selection = crate::core::mcp::McpSelection::default();
+                Ok(())
+            } else {
+                self.apply_mcp_profile(&profile_id)
+            }
         } else if let Some(server_id) = self.selected_mcp_server_id() {
             self.toggle_mcp_server(&server_id);
             Ok(())

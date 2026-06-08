@@ -719,6 +719,36 @@ mod tests {
     }
 
     #[test]
+    fn test_mcp_field_space_clears_selected_profile_when_already_active() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut form = crate::app::NewSessionForm::new();
+        form.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".into(),
+            name: "Rust".into(),
+            selection: McpSelection {
+                profile_id: None,
+                servers: vec![McpServerSelection {
+                    id: "GitLabMITRE".into(),
+                    enabled: true,
+                    selected_tools: None,
+                }],
+            },
+        }];
+        form.focused_field = 5;
+        form.mcp_expanded = true;
+        form.mcp_selected_row = 0;
+        form.apply_mcp_profile("rust").unwrap();
+        let mut app = App::new(false);
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, key(KeyCode::Char(' ')), &storage, &session_ops).unwrap();
+
+        let form = form_in_overlay(&app);
+        assert_eq!(form.mcp_selection, McpSelection::default());
+    }
+
+    #[test]
     fn test_new_session_ctrl_p_saves_current_mcp_selection_as_profile() {
         let _env_lock = crate::core::runner::hook_io::lock_env();
         let _home_restore = HomeRestore::capture();

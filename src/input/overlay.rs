@@ -479,7 +479,7 @@ pub fn handle_mcp_profiles_key(
                         form.error = Some(err);
                     }
                 }
-                KeyCode::Char('d') => {
+                KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete | KeyCode::Backspace => {
                     if let Some(profile) = form.delete_selected() {
                         profiles_to_persist = Some(form.profiles.clone());
                         toast_message = Some(format!("Deleted MCP profile: {}", profile.name));
@@ -1087,6 +1087,32 @@ url = "https://gitlab.example.test/api/v4/mcp"
         );
         assert_eq!(loaded.mcp_profiles.len(), 1);
         assert_eq!(loaded.mcp_profiles[0].id, "docs");
+    }
+
+    #[test]
+    fn mcp_profiles_key_delete_key_removes_profile() {
+        let _env_lock = crate::core::runner::hook_io::lock_env();
+        let _home_restore = HomeRestore::capture();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+        let mut app = crate::app::App::new(false);
+        app.config.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".to_string(),
+            name: "Rust".to_string(),
+            selection: crate::core::mcp::McpSelection::default(),
+        }];
+        app.overlay = crate::app::Overlay::McpProfiles(crate::app::McpProfilesForm::new(
+            app.config.mcp_profiles.clone(),
+            Vec::new(),
+        ));
+
+        super::handle_mcp_profiles_key(&mut app, key(KeyCode::Delete)).unwrap();
+
+        assert!(app.config.mcp_profiles.is_empty());
+        let loaded = crate::core::config::load_config_from_path(
+            &home.path().join(".agent-view/config.json"),
+        );
+        assert!(loaded.mcp_profiles.is_empty());
     }
 
     #[test]
