@@ -88,6 +88,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             section_header("General", section_style),
             binding("Tab", "Switch tab", key_style, desc_style),
             binding("Ctrl+K", "Command palette", key_style, desc_style),
+            binding("M", "MCP profiles", key_style, desc_style),
         ]
     } else {
         vec![
@@ -115,9 +116,9 @@ pub fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             binding("w", "Waiting marker", key_style, desc_style),
             binding("p", "Pin/unpin", key_style, desc_style),
             binding("S", "Cycle sort", key_style, desc_style),
+            binding("M", "MCP profiles", key_style, desc_style),
             binding("Ctrl+K", "Command palette", key_style, desc_style),
             binding("Palette", "Sync MCP servers", key_style, desc_style),
-            binding("Palette", "Manage MCP profiles", key_style, desc_style),
         ]
     };
 

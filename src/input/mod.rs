@@ -34,6 +34,7 @@ pub fn handle_main_key(
                 | (KeyModifiers::NONE, KeyCode::Tab)
                 | (KeyModifiers::NONE, KeyCode::Char('?'))
                 | (KeyModifiers::CONTROL, KeyCode::Char('k'))
+                | (KeyModifiers::SHIFT, KeyCode::Char('M'))
                 | (KeyModifiers::NONE, KeyCode::Char('n'))
                 | (KeyModifiers::NONE, KeyCode::Char('v'))
                 | (KeyModifiers::NONE, KeyCode::Char('/'))
@@ -341,6 +342,9 @@ pub fn handle_main_key(
         (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
             app.overlay = crate::app::Overlay::CommandPalette(crate::app::CommandPalette::new());
         }
+        (KeyModifiers::SHIFT, KeyCode::Char('M')) => {
+            crate::input::overlay::open_mcp_profiles_overlay(app);
+        }
         (KeyModifiers::SHIFT, KeyCode::Char('S')) => {
             app.sort_mode = app.sort_mode.next();
             app.rebuild_list_rows();
@@ -466,6 +470,10 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    fn shift_key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT)
+    }
+
     fn form_in_overlay(app: &crate::app::App) -> &crate::app::NewSessionForm {
         match &app.overlay {
             crate::app::Overlay::NewSession(form) => form,
@@ -566,5 +574,71 @@ url = "https://gitlab.example.test/api/v4/mcp"
             form.cycle_runner_next();
         }
         assert_server_ids(&form.mcp_servers, &["GitLabMITRE", "wavecrest"]);
+    }
+
+    #[test]
+    fn test_shift_m_opens_mcp_profile_manager() {
+        let (storage, _storage_dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.config.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".to_string(),
+            name: "Rust".to_string(),
+            selection: crate::core::mcp::McpSelection::default(),
+        }];
+        let backend = CrosstermBackend::new(std::io::stdout());
+        let options = TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 80, 24)),
+        };
+        let mut terminal = Terminal::with_options(backend, options).unwrap();
+        let attach_state = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::core::attach_state::AttachState::new(),
+        ));
+
+        super::handle_main_key(
+            &mut app,
+            shift_key('M'),
+            &storage,
+            &session_ops,
+            &mut terminal,
+            &attach_state,
+        )
+        .unwrap();
+
+        match app.overlay {
+            crate::app::Overlay::McpProfiles(form) => {
+                assert_eq!(form.profiles.len(), 1);
+                assert_eq!(form.profiles[0].id, "rust");
+            }
+            _ => panic!("expected MCP profiles overlay"),
+        }
+    }
+
+    #[test]
+    fn test_shift_m_opens_mcp_profile_manager_from_routines_tab() {
+        let (storage, _storage_dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.active_tab = crate::app::ActiveTab::Routines;
+        let backend = CrosstermBackend::new(std::io::stdout());
+        let options = TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 80, 24)),
+        };
+        let mut terminal = Terminal::with_options(backend, options).unwrap();
+        let attach_state = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::core::attach_state::AttachState::new(),
+        ));
+
+        super::handle_main_key(
+            &mut app,
+            shift_key('M'),
+            &storage,
+            &session_ops,
+            &mut terminal,
+            &attach_state,
+        )
+        .unwrap();
+
+        assert!(matches!(app.overlay, crate::app::Overlay::McpProfiles(_)));
     }
 }
