@@ -64,16 +64,60 @@ pub fn handle_new_session_key(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::{KeyCode, KeyModifiers};
 
+    let mut mcp_profiles_to_persist: Option<Vec<crate::core::mcp::McpProfile>> = None;
+    let mut toast_message: Option<String> = None;
+
     if let crate::app::Overlay::NewSession(ref mut form) = app.overlay {
         match (key.modifiers, key.code) {
+            (_, KeyCode::Esc) if form.mcp_profile_save_name.is_some() => {
+                form.cancel_save_mcp_profile();
+            }
             (_, KeyCode::Esc) => {
                 app.overlay = crate::app::Overlay::None;
+            }
+            (_, KeyCode::Enter) if form.mcp_profile_save_name.is_some() => {
+                match form.save_mcp_profile_from_prompt() {
+                    Ok(profile) => {
+                        mcp_profiles_to_persist = Some(form.mcp_profiles.clone());
+                        toast_message = Some(format!("Saved MCP profile: {}", profile.name));
+                    }
+                    Err(err) => {
+                        form.error = Some(err);
+                    }
+                }
+            }
+            (_, KeyCode::Backspace) if form.mcp_profile_save_name.is_some() => {
+                if let Some(name) = &mut form.mcp_profile_save_name {
+                    name.pop();
+                }
+            }
+            (m, KeyCode::Char(c))
+                if form.mcp_profile_save_name.is_some()
+                    && !m.contains(KeyModifiers::CONTROL)
+                    && !m.contains(KeyModifiers::SUPER) =>
+            {
+                if let Some(name) = &mut form.mcp_profile_save_name {
+                    name.push(c);
+                    form.error = None;
+                }
             }
             // Ctrl+T must precede the generic Char arm so it doesn't append 't'
             (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
                 form.worktree_new_branch = !form.worktree_new_branch;
                 form.error = None;
             }
+            (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
+                form.begin_save_mcp_profile();
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('u')) => match form.update_active_mcp_profile() {
+                Ok(profile) => {
+                    mcp_profiles_to_persist = Some(form.mcp_profiles.clone());
+                    toast_message = Some(format!("Updated MCP profile: {}", profile.name));
+                }
+                Err(err) => {
+                    form.error = Some(err);
+                }
+            },
             // Ctrl+S or Super+S — submit
             (m, KeyCode::Char('s'))
                 if m.contains(KeyModifiers::CONTROL) || m.contains(KeyModifiers::SUPER) =>
@@ -296,6 +340,22 @@ pub fn handle_new_session_key(
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    if let Some(profiles) = mcp_profiles_to_persist {
+        app.config.mcp_profiles = profiles;
+        match crate::core::config::save_config(&app.config) {
+            Ok(()) => {
+                app.toast.message = toast_message;
+                app.toast.expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+            }
+            Err(e) => {
+                app.toast.message = Some(format!("MCP profile save failed: {}", e));
+                app.toast.expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
+            }
         }
     }
 
@@ -524,6 +584,32 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    fn ctrl_key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    struct HomeRestore {
+        home: Option<std::ffi::OsString>,
+    }
+
+    impl HomeRestore {
+        fn capture() -> Self {
+            Self {
+                home: std::env::var_os("HOME"),
+            }
+        }
+    }
+
+    impl Drop for HomeRestore {
+        fn drop(&mut self) {
+            if let Some(value) = &self.home {
+                std::env::set_var("HOME", value);
+            } else {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
     fn form_in_overlay(app: &App) -> &crate::app::NewSessionForm {
         match &app.overlay {
             Overlay::NewSession(form) => form,
@@ -626,6 +712,89 @@ mod tests {
         assert_eq!(form.mcp_selection.profile_id.as_deref(), Some("rust"));
         assert_eq!(form.mcp_selection.servers.len(), 1);
         assert_eq!(form.mcp_selection.servers[0].id, "GitLabMITRE");
+    }
+
+    #[test]
+    fn test_new_session_ctrl_p_saves_current_mcp_selection_as_profile() {
+        let _env_lock = crate::core::runner::hook_io::lock_env();
+        let _home_restore = HomeRestore::capture();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut app = App::new(false);
+        let mut form = crate::app::NewSessionForm::new();
+        form.focused_field = MCP_FIELD;
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "wavecrest".into()]);
+        form.toggle_mcp_server("GitLabMITRE");
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, ctrl_key('p'), &storage, &session_ops).unwrap();
+        for c in "Rust".chars() {
+            handle_new_session_key(&mut app, key(KeyCode::Char(c)), &storage, &session_ops)
+                .unwrap();
+        }
+        handle_new_session_key(&mut app, key(KeyCode::Enter), &storage, &session_ops).unwrap();
+
+        assert_eq!(app.config.mcp_profiles.len(), 1);
+        assert_eq!(app.config.mcp_profiles[0].id, "rust");
+        assert_eq!(app.config.mcp_profiles[0].name, "Rust");
+        assert!(app.config.mcp_profiles[0]
+            .selection
+            .servers
+            .iter()
+            .any(|server| server.id == "GitLabMITRE" && !server.enabled));
+        assert_eq!(
+            form_in_overlay(&app).mcp_selection.profile_id.as_deref(),
+            Some("rust")
+        );
+        let loaded = crate::core::config::load_config_from_path(
+            &home.path().join(".agent-view/config.json"),
+        );
+        assert_eq!(loaded.mcp_profiles.len(), 1);
+        assert_eq!(loaded.mcp_profiles[0].id, "rust");
+    }
+
+    #[test]
+    fn test_new_session_ctrl_u_updates_active_mcp_profile() {
+        let _env_lock = crate::core::runner::hook_io::lock_env();
+        let _home_restore = HomeRestore::capture();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = SessionOps;
+        let mut app = App::new(false);
+        app.config.mcp_profiles = vec![crate::core::mcp::McpProfile {
+            id: "rust".into(),
+            name: "Rust".into(),
+            selection: McpSelection::default(),
+        }];
+        let mut form = crate::app::NewSessionForm::new();
+        form.focused_field = MCP_FIELD;
+        form.mcp_profiles = app.config.mcp_profiles.clone();
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "wavecrest".into()]);
+        form.apply_mcp_profile("rust").unwrap();
+        form.toggle_mcp_server("wavecrest");
+        app.overlay = Overlay::NewSession(form);
+
+        handle_new_session_key(&mut app, ctrl_key('u'), &storage, &session_ops).unwrap();
+
+        assert_eq!(app.config.mcp_profiles.len(), 1);
+        let profile = &app.config.mcp_profiles[0];
+        assert_eq!(profile.id, "rust");
+        assert!(profile
+            .selection
+            .servers
+            .iter()
+            .any(|server| server.id == "wavecrest" && !server.enabled));
+        let loaded = crate::core::config::load_config_from_path(
+            &home.path().join(".agent-view/config.json"),
+        );
+        assert!(loaded.mcp_profiles[0]
+            .selection
+            .servers
+            .iter()
+            .any(|server| server.id == "wavecrest" && !server.enabled));
     }
 
     #[test]

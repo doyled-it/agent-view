@@ -114,23 +114,14 @@ fn selected_mcp_servers(
     source_settings: &Value,
 ) -> Result<Map<String, Value>, String> {
     let mut selected = Map::new();
+    let Some(source_servers) = source_settings.get("mcpServers").and_then(Value::as_object) else {
+        return Ok(selected);
+    };
+
     for server in selection.servers.iter().filter(|server| server.enabled) {
-        let source_servers = source_settings
-            .get("mcpServers")
-            .and_then(Value::as_object)
-            .ok_or_else(|| {
-                format!(
-                    "enabled Claude MCP server '{}' not found in settings.json mcpServers",
-                    server.id
-                )
-            })?;
-        let source_definition = source_servers.get(&server.id).ok_or_else(|| {
-            format!(
-                "enabled Claude MCP server '{}' not found in settings.json mcpServers",
-                server.id
-            )
-        })?;
-        selected.insert(server.id.clone(), source_definition.clone());
+        if let Some(source_definition) = source_servers.get(&server.id) {
+            selected.insert(server.id.clone(), source_definition.clone());
+        }
     }
     Ok(selected)
 }
@@ -328,22 +319,23 @@ mod tests {
     }
 
     #[test]
-    fn missing_enabled_server_returns_config_error() {
+    fn missing_enabled_server_is_ignored_in_strict_config() {
         let dir = tempfile::tempdir().unwrap();
         let source = json!({ "mcpServers": {} });
         let selection = narrowed_selection();
 
-        let err = super::build_claude_mcp_launch_from_source_json(
+        super::build_claude_mcp_launch_from_source_json(
             "session-123",
             Some(&selection),
             dir.path(),
             &source,
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(err.contains("GitLabMITRE"), "{err}");
-        assert!(err.contains("settings.json"), "{err}");
-        assert!(!dir.path().join("session-123-claude-mcp.json").exists());
+        let config_path = dir.path().join("session-123-claude-mcp.json");
+        let json: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        let servers = json.get("mcpServers").and_then(Value::as_object).unwrap();
+        assert!(servers.is_empty());
     }
 
     #[test]

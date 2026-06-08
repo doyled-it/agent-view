@@ -119,6 +119,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Overlay::McpSync(_) => {
             vec![("j/k", "navigate"), ("Enter", "preview"), ("Esc", "close")]
         }
+        Overlay::McpProfiles(_) => {
+            vec![
+                ("j/k", "navigate"),
+                ("n", "new"),
+                ("Enter", "edit"),
+                ("Esc", "close"),
+            ]
+        }
         Overlay::Help => {
             vec![("Esc", "close")]
         }

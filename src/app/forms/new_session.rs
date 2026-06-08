@@ -29,6 +29,7 @@ pub struct NewSessionForm {
     pub mcp_catalog: Vec<crate::core::mcp::catalog::McpServerCatalogEntry>,
     pub mcp_expanded: bool,
     pub mcp_selected_row: usize,
+    pub mcp_profile_save_name: Option<String>,
 }
 
 impl NewSessionForm {
@@ -55,6 +56,7 @@ impl NewSessionForm {
             mcp_catalog: Vec::new(),
             mcp_expanded: false,
             mcp_selected_row: 0,
+            mcp_profile_save_name: None,
         }
     }
 
@@ -168,6 +170,59 @@ impl NewSessionForm {
         Ok(())
     }
 
+    pub fn begin_save_mcp_profile(&mut self) {
+        self.mcp_profile_save_name = Some(String::new());
+        self.error = None;
+    }
+
+    pub fn cancel_save_mcp_profile(&mut self) {
+        self.mcp_profile_save_name = None;
+        self.error = None;
+    }
+
+    pub fn save_mcp_profile_from_prompt(&mut self) -> Result<crate::core::mcp::McpProfile, String> {
+        let name = self
+            .mcp_profile_save_name
+            .as_deref()
+            .unwrap_or_default()
+            .trim();
+        if name.is_empty() {
+            return Err("Profile name is required".to_string());
+        }
+        let id = unique_profile_id(&self.mcp_profiles, &slugify_profile_name(name));
+        let profile = crate::core::mcp::McpProfile {
+            id: id.clone(),
+            name: name.to_string(),
+            selection: selection_without_profile_id(self.mcp_selection.clone()),
+        };
+        crate::core::mcp::profiles::upsert_profile(&mut self.mcp_profiles, profile.clone());
+        self.mcp_selection.profile_id = Some(id);
+        self.mcp_profile_save_name = None;
+        self.error = None;
+        Ok(profile)
+    }
+
+    pub fn update_active_mcp_profile(&mut self) -> Result<crate::core::mcp::McpProfile, String> {
+        let id = self
+            .mcp_selection
+            .profile_id
+            .clone()
+            .ok_or_else(|| "No active MCP profile to update".to_string())?;
+        let name = self
+            .mcp_profiles
+            .iter()
+            .find(|profile| profile.id == id)
+            .map(|profile| profile.name.clone())
+            .ok_or_else(|| format!("MCP profile '{}' not found", id))?;
+        let profile = crate::core::mcp::McpProfile {
+            id,
+            name,
+            selection: selection_without_profile_id(self.mcp_selection.clone()),
+        };
+        crate::core::mcp::profiles::upsert_profile(&mut self.mcp_profiles, profile.clone());
+        Ok(profile)
+    }
+
     #[cfg(test)]
     pub fn set_mcp_servers_for_test(&mut self, ids: Vec<String>) {
         self.mcp_catalog = ids
@@ -236,6 +291,41 @@ fn mcp_server_selections_from_catalog(
 fn dedupe_mcp_server_selections(servers: &mut Vec<crate::core::mcp::McpServerSelection>) {
     let mut seen = std::collections::HashSet::new();
     servers.retain(|server| seen.insert(server.id.clone()));
+}
+
+fn selection_without_profile_id(
+    mut selection: crate::core::mcp::McpSelection,
+) -> crate::core::mcp::McpSelection {
+    selection.profile_id = None;
+    selection
+}
+
+fn slugify_profile_name(name: &str) -> String {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let slug = slug
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if slug.is_empty() {
+        "profile".to_string()
+    } else {
+        slug
+    }
+}
+
+fn unique_profile_id(profiles: &[crate::core::mcp::McpProfile], base: &str) -> String {
+    let mut candidate = base.to_string();
+    let mut n = 2;
+    while profiles.iter().any(|profile| profile.id == candidate) {
+        candidate = format!("{base}-{n}");
+        n += 1;
+    }
+    candidate
 }
 
 #[cfg(test)]

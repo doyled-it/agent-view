@@ -1,5 +1,6 @@
 mod confirm;
 mod group;
+mod mcp_profiles;
 mod mcp_sync;
 mod move_;
 mod new_routine;
@@ -10,6 +11,7 @@ mod theme;
 
 pub use confirm::{ConfirmAction, ConfirmDialog};
 pub use group::GroupForm;
+pub use mcp_profiles::{McpProfilesForm, McpProfilesMode};
 pub use mcp_sync::McpSyncForm;
 pub use move_::MoveForm;
 pub use new_routine::NewRoutineForm;

@@ -375,8 +375,13 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     let base_hint =
         "^S save · Esc cancel · Tab/\u{2193} next · \u{21e7}Tab/\u{2191} back · ^T toggle";
     let hint = match form.focused_field {
+        _ if form.mcp_profile_save_name.is_some() => {
+            "Enter save profile · Esc cancel profile save".to_string()
+        }
         0 => format!("\u{2190}/\u{2192} cycle runner   {}", base_hint),
-        MCP_FIELD if form.mcp_expanded => format!("Space apply/toggle · Enter MCP   {}", base_hint),
+        MCP_FIELD if form.mcp_expanded => {
+            format!("Space apply/toggle · ^P save profile · ^U update profile   {base_hint}")
+        }
         MCP_FIELD => format!("Enter MCP   {}", base_hint),
         _ => base_hint.to_string(),
     };
@@ -407,6 +412,13 @@ fn build_new_session_mcp_line_specs(form: &NewSessionForm) -> Vec<McpLineSpec> {
         text: format!("MCP: {}", form.mcp_summary()),
         selectable_row: None,
     }];
+
+    if let Some(name) = &form.mcp_profile_save_name {
+        lines.push(McpLineSpec {
+            text: format!("  Save profile as: {}\u{2588}", name),
+            selectable_row: None,
+        });
+    }
 
     if !form.mcp_expanded {
         return lines;

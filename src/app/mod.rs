@@ -14,8 +14,8 @@ mod state;
 pub use command_palette::{CommandAction, CommandPalette};
 pub use detail_panel::DetailPanelMode;
 pub use forms::{
-    ConfirmAction, ConfirmDialog, GroupForm, McpSyncForm, MoveForm, NewRoutineForm, NewSessionForm,
-    NoteForm, RenameForm, RenameTarget, ThemeSelectForm,
+    ConfirmAction, ConfirmDialog, GroupForm, McpProfilesForm, McpProfilesMode, McpSyncForm,
+    MoveForm, NewRoutineForm, NewSessionForm, NoteForm, RenameForm, RenameTarget, ThemeSelectForm,
 };
 pub use overlay::Overlay;
 pub use schedule_freq::ScheduleFrequency;
@@ -651,6 +651,110 @@ mod tests {
         assert!(palette.items.iter().any(|item| {
             item.label == "Sync MCP Servers" && item.action == CommandAction::SyncMcpServers
         }));
+    }
+
+    #[test]
+    fn test_command_palette_includes_mcp_profile_management() {
+        let palette = CommandPalette::new();
+        assert!(palette.items.iter().any(|item| {
+            item.label == "Manage MCP Profiles" && item.action == CommandAction::ManageMcpProfiles
+        }));
+    }
+
+    #[test]
+    fn test_mcp_profile_form_create_saves_current_selection() {
+        let catalog = vec![
+            crate::core::mcp::McpServerCatalogEntry::server_level(
+                crate::types::Tool::Claude,
+                "GitLabMITRE",
+            ),
+            crate::core::mcp::McpServerCatalogEntry::server_level(
+                crate::types::Tool::Codex,
+                "GitLabMITRE",
+            ),
+            crate::core::mcp::McpServerCatalogEntry::server_level(
+                crate::types::Tool::Claude,
+                "wavecrest",
+            ),
+        ];
+        let mut form = crate::app::McpProfilesForm::new(Vec::new(), catalog);
+
+        form.start_create_from_selection(crate::core::mcp::McpSelection::default());
+        form.name_input = "Rust Project".to_string();
+        form.toggle_server("wavecrest");
+        let saved = form.save_edit().unwrap();
+
+        assert_eq!(saved.id, "rust-project");
+        assert_eq!(saved.name, "Rust Project");
+        assert_eq!(form.profiles.len(), 1);
+        assert_eq!(form.profiles[0].id, "rust-project");
+        assert_eq!(form.profiles[0].selection.profile_id, None);
+        assert_eq!(form.profiles[0].selection.servers.len(), 2);
+        assert!(form.profiles[0]
+            .selection
+            .servers
+            .iter()
+            .any(|server| server.id == "GitLabMITRE" && server.enabled));
+        assert!(form.profiles[0]
+            .selection
+            .servers
+            .iter()
+            .any(|server| server.id == "wavecrest" && !server.enabled));
+    }
+
+    #[test]
+    fn test_mcp_profile_form_edit_keeps_missing_servers_visible() {
+        let profile = crate::core::mcp::McpProfile {
+            id: "legacy".to_string(),
+            name: "Legacy".to_string(),
+            selection: crate::core::mcp::McpSelection {
+                profile_id: None,
+                servers: vec![crate::core::mcp::McpServerSelection {
+                    id: "retired".to_string(),
+                    enabled: true,
+                    selected_tools: None,
+                }],
+            },
+        };
+        let mut form = crate::app::McpProfilesForm::new(
+            vec![profile],
+            vec![crate::core::mcp::McpServerCatalogEntry::server_level(
+                crate::types::Tool::Claude,
+                "GitLabMITRE",
+            )],
+        );
+
+        form.start_edit_selected().unwrap();
+        let rows = form.server_rows();
+
+        assert!(rows.iter().any(|row| {
+            row.id == "retired" && row.missing && row.enabled && row.display_name == "retired"
+        }));
+        assert!(rows
+            .iter()
+            .any(|row| { row.id == "GitLabMITRE" && !row.missing && row.enabled }));
+    }
+
+    #[test]
+    fn test_mcp_profile_form_duplicate_generates_distinct_profile() {
+        let profile = crate::core::mcp::McpProfile {
+            id: "rust".to_string(),
+            name: "Rust".to_string(),
+            selection: crate::core::mcp::McpSelection::default(),
+        };
+        let mut form = crate::app::McpProfilesForm::new(Vec::from([profile]), Vec::new());
+
+        form.start_duplicate_selected().unwrap();
+        let saved = form.save_edit().unwrap();
+
+        assert_eq!(saved.id, "rust-copy");
+        assert_eq!(saved.name, "Rust Copy");
+        assert_eq!(form.profiles.len(), 2);
+        assert!(form.profiles.iter().any(|profile| profile.id == "rust"));
+        assert!(form
+            .profiles
+            .iter()
+            .any(|profile| profile.id == "rust-copy"));
     }
 
     #[test]

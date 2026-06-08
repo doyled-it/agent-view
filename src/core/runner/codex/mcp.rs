@@ -104,17 +104,11 @@ fn disabled_server_ids_from_catalog(
     let catalog_ids: HashSet<&str> = catalog.iter().map(|server| server.id.as_str()).collect();
     for server in selected {
         validate_server_id(&server.id)?;
-        if !catalog_ids.contains(server.id.as_str()) {
-            return Err(RunnerLaunchError::Config(format!(
-                "selected Codex MCP server '{}' not found in config.toml mcp_servers",
-                server.id
-            )));
-        }
     }
 
     let included_ids: HashSet<&str> = selected
         .iter()
-        .filter(|server| server.enabled)
+        .filter(|server| server.enabled && catalog_ids.contains(server.id.as_str()))
         .map(|server| server.id.as_str())
         .collect();
     Ok(catalog
@@ -245,6 +239,37 @@ mod tests {
             }
             other => panic!("expected config error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn enabled_allowlist_ignores_missing_selected_servers() {
+        let selection = McpSelection {
+            profile_id: Some("gitlab-only".to_string()),
+            servers: vec![
+                McpServerSelection {
+                    id: "GitLabMITRE".to_string(),
+                    enabled: true,
+                    selected_tools: None,
+                },
+                McpServerSelection {
+                    id: "retired".to_string(),
+                    enabled: true,
+                    selected_tools: None,
+                },
+            ],
+        };
+        let catalog = vec![
+            McpServerCatalogEntry::server_level(Tool::Codex, "GitLabMITRE"),
+            McpServerCatalogEntry::server_level(Tool::Codex, "browser"),
+        ];
+
+        let launch =
+            super::build_codex_mcp_launch_with_catalog(Some(&selection), Some(&catalog)).unwrap();
+
+        assert_eq!(
+            launch.command.as_deref(),
+            Some("codex -c mcp_servers.browser.enabled=false")
+        );
     }
 
     #[test]
