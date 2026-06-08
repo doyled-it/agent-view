@@ -334,6 +334,22 @@ pub struct ConductorConfig {
     pub failure_count: i32,
 }
 
+impl ConductorConfig {
+    pub fn default_for_session(session_id: String) -> Self {
+        Self {
+            session_id,
+            mode: ConductorMode::Autonomous,
+            heartbeat_secs: 900,
+            max_children: 8,
+            max_actions_per_tick: 5,
+            allow_spawn_child: true,
+            allow_send_child_response: true,
+            enabled: true,
+            failure_count: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: String,

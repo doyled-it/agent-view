@@ -5,9 +5,36 @@ use crate::core::runner::{runner_for, RunnerLaunch, RunnerLaunchContext, RunnerL
 use crate::core::storage::Storage;
 use crate::core::tmux;
 use crate::core::tmux::{SessionCache, TmuxError};
-use crate::types::{Session, SessionCreateOptions, SessionStatus, StatusHistoryEntry, Tool};
+use crate::types::{
+    ConductorConfig, Session, SessionCreateOptions, SessionRole, SessionStatus, StatusHistoryEntry,
+    Tool,
+};
 
 use super::generate_title;
+
+#[cfg(test)]
+mod test_support {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static SKIP_TMUX_CREATE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    pub struct SkipTmuxCreateGuard;
+
+    impl Drop for SkipTmuxCreateGuard {
+        fn drop(&mut self) {
+            SKIP_TMUX_CREATE_COUNT.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    pub fn skip_tmux_create() -> SkipTmuxCreateGuard {
+        SKIP_TMUX_CREATE_COUNT.fetch_add(1, Ordering::SeqCst);
+        SkipTmuxCreateGuard
+    }
+
+    pub fn should_skip_tmux_create() -> bool {
+        SKIP_TMUX_CREATE_COUNT.load(Ordering::SeqCst) > 0
+    }
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum SessionError {
@@ -44,7 +71,27 @@ impl SessionOps {
         let mcp_selection = requested_mcp_selection.clone().unwrap_or_default();
         let tool = options.tool;
         let role = options.role;
+        let parent_session = if let Some(parent_id) = options.parent_session_id.as_deref() {
+            match storage
+                .get_session(parent_id)
+                .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?
+            {
+                Some(session) if session.role == SessionRole::Conductor => Some(session),
+                _ => {
+                    return Err(SessionError::Storage(
+                        "Child sessions require a conductor parent".to_string(),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
         let parent_session_id = options.parent_session_id.clone().unwrap_or_default();
+        let group_path = parent_session
+            .as_ref()
+            .map(|session| session.group_path.clone())
+            .or_else(|| options.group_path.clone())
+            .unwrap_or_else(|| crate::core::groups::DEFAULT_GROUP_PATH.to_string());
         let conductor_config = options.conductor_config.clone();
         let id = uuid::Uuid::new_v4().to_string();
         let tmux_name = tmux::generate_session_name(&title);
@@ -96,7 +143,7 @@ impl SessionOps {
         // NOTE: if tmux::create_session fails here, a freshly created worktree
         // at `working_dir` is leaked on disk. Task 8's orphan sweep is the
         // recovery path; no inline rollback to keep the failure message simple.
-        tmux::create_session(
+        create_tmux_session(
             &tmux_name,
             launch.command.as_deref(),
             Some(&working_dir),
@@ -109,9 +156,7 @@ impl SessionOps {
             id: id.clone(),
             title,
             project_path: options.project_path,
-            group_path: options
-                .group_path
-                .unwrap_or_else(|| "my-sessions".to_string()),
+            group_path,
             order: storage.load_sessions().unwrap_or_default().len() as i32,
             command: launch.command.unwrap_or_default(),
             wrapper: String::new(),
@@ -122,7 +167,7 @@ impl SessionOps {
             last_accessed: now,
             parent_session_id,
             role,
-            conductor_expanded: false,
+            conductor_expanded: role == SessionRole::Conductor,
             worktree_path,
             worktree_repo,
             worktree_branch,
@@ -147,8 +192,10 @@ impl SessionOps {
         storage
             .save_session(&session)
             .map_err(|e| SessionError::Storage(format!("Failed to save session: {}", e)))?;
-        if let Some(mut config) = conductor_config {
-            config.session_id = id;
+        if role == SessionRole::Conductor {
+            let mut config = conductor_config
+                .unwrap_or_else(|| ConductorConfig::default_for_session(session.id.clone()));
+            config.session_id = session.id.clone();
             storage.save_conductor_config(&config).map_err(|e| {
                 SessionError::Storage(format!("Failed to save conductor config: {}", e))
             })?;
@@ -437,6 +484,21 @@ struct SessionLaunch {
     warning: Option<String>,
 }
 
+fn create_tmux_session(
+    name: &str,
+    command: Option<&str>,
+    cwd: Option<&str>,
+    env: Option<&HashMap<String, String>>,
+) -> SessionResult<()> {
+    #[cfg(test)]
+    if test_support::should_skip_tmux_create() {
+        return Ok(());
+    }
+
+    tmux::create_session(name, command, cwd, env)?;
+    Ok(())
+}
+
 fn build_session_launch(
     tool: Tool,
     explicit_command: Option<String>,
@@ -544,7 +606,9 @@ fn combine_warnings(first: Option<String>, second: Option<String>) -> Option<Str
 mod tests {
     use super::*;
     use crate::core::tmux::SessionCache;
-    use crate::types::{SessionCreateOptions, Tool, WorktreeCreateOptions};
+    use crate::types::{
+        ConductorMode, SessionCreateOptions, SessionRole, Tool, WorktreeCreateOptions,
+    };
     use std::process::Command as Cmd;
 
     fn init_repo() -> tempfile::TempDir {
@@ -585,6 +649,97 @@ mod tests {
         // Main repo worktree is excluded; orphan-1 has no session row → orphan.
         assert!(orphans.iter().any(|w| w.contains("orphan-1")));
         assert!(!orphans.iter().any(|w| w == &path));
+    }
+
+    fn create_options(title: &str, role: SessionRole) -> SessionCreateOptions {
+        SessionCreateOptions {
+            title: Some(title.to_string()),
+            project_path: "/tmp".to_string(),
+            group_path: None,
+            tool: Tool::Shell,
+            command: Some("true".to_string()),
+            mcp_selection: None,
+            role,
+            parent_session_id: None,
+            conductor_config: None,
+            worktree: None,
+        }
+    }
+
+    #[test]
+    fn test_create_conductor_session_persists_default_config() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (session, _) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                create_options("conductor-test", SessionRole::Conductor),
+            )
+            .unwrap();
+
+        let config = storage.get_conductor_config(&session.id).unwrap();
+        let loaded = storage.get_session(&session.id).unwrap().unwrap();
+
+        let config = config.unwrap();
+        assert_eq!(config.session_id, session.id);
+        assert_eq!(config.mode, ConductorMode::Autonomous);
+        assert_eq!(config.heartbeat_secs, 900);
+        assert_eq!(loaded.role, SessionRole::Conductor);
+        assert!(loaded.conductor_expanded);
+    }
+
+    #[test]
+    fn test_create_child_session_persists_parent() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let mut parent_options = create_options("parent-conductor", SessionRole::Conductor);
+        parent_options.group_path = Some("conductors/project-a".to_string());
+        let (parent, _) = ops
+            .create_session(&storage, &mut cache, parent_options)
+            .unwrap();
+
+        let mut child_options = create_options("child-session", SessionRole::Normal);
+        child_options.parent_session_id = Some(parent.id.clone());
+        let (child, _) = ops
+            .create_session(&storage, &mut cache, child_options)
+            .unwrap();
+
+        let loaded_child = storage.get_session(&child.id).unwrap().unwrap();
+
+        assert_eq!(loaded_child.parent_session_id, parent.id);
+        assert_eq!(loaded_child.group_path, parent.group_path);
+    }
+
+    #[test]
+    fn test_create_child_session_requires_conductor_parent() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (parent, _) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                create_options("normal-parent", SessionRole::Normal),
+            )
+            .unwrap();
+
+        let mut child_options = create_options("child-session", SessionRole::Normal);
+        child_options.parent_session_id = Some(parent.id.clone());
+        let result = ops.create_session(&storage, &mut cache, child_options);
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, SessionError::Storage(message) if message.contains("conductor parent"))
+        );
     }
 
     #[test]
