@@ -270,6 +270,70 @@ pub struct RoutineRun {
     pub promoted_session_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionRole {
+    Normal,
+    Conductor,
+}
+
+impl SessionRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Conductor => "conductor",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "conductor" => Self::Conductor,
+            _ => Self::Normal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConductorMode {
+    Manual,
+    Supervised,
+    Autonomous,
+}
+
+impl ConductorMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Supervised => "supervised",
+            Self::Autonomous => "autonomous",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "manual" => Self::Manual,
+            "supervised" => Self::Supervised,
+            "autonomous" => Self::Autonomous,
+            _ => Self::Supervised,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConductorConfig {
+    pub session_id: String,
+    pub mode: ConductorMode,
+    pub heartbeat_secs: i64,
+    pub max_children: i32,
+    pub max_actions_per_tick: i32,
+    pub allow_spawn_child: bool,
+    pub allow_send_child_response: bool,
+    pub enabled: bool,
+    pub failure_count: i32,
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: String,
@@ -285,6 +349,8 @@ pub struct Session {
     pub created_at: i64,
     pub last_accessed: i64,
     pub parent_session_id: String,
+    pub role: SessionRole,
+    pub conductor_expanded: bool,
     pub worktree_path: String,
     pub worktree_repo: String,
     pub worktree_branch: String,
@@ -373,6 +439,9 @@ pub struct SessionCreateOptions {
     pub tool: Tool,
     pub command: Option<String>,
     pub mcp_selection: Option<crate::core::mcp::McpSelection>,
+    pub role: SessionRole,
+    pub parent_session_id: Option<String>,
+    pub conductor_config: Option<ConductorConfig>,
     /// Worktree to create alongside this session; `None` means no worktree.
     pub worktree: Option<WorktreeCreateOptions>,
 }
@@ -599,6 +668,8 @@ mod tests {
             created_at: 0,
             last_accessed: 0,
             parent_session_id: String::new(),
+            role: SessionRole::Normal,
+            conductor_expanded: false,
             worktree_path: String::new(),
             worktree_repo: String::new(),
             worktree_branch: String::new(),
@@ -635,6 +706,8 @@ mod tests {
             created_at: 0,
             last_accessed: 0,
             parent_session_id: String::new(),
+            role: SessionRole::Normal,
+            conductor_expanded: false,
             worktree_path: String::new(),
             worktree_repo: String::new(),
             worktree_branch: String::new(),
@@ -830,6 +903,9 @@ mod tests {
             tool: Tool::Claude,
             command: None,
             mcp_selection: None,
+            role: SessionRole::Normal,
+            parent_session_id: None,
+            conductor_config: None,
             worktree: Some(WorktreeCreateOptions {
                 branch: "feature/x".to_string(),
                 new_branch: true,

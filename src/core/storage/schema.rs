@@ -4,7 +4,7 @@ use rusqlite::Result as SqlResult;
 use super::Storage;
 use crate::core::cost::Pricer;
 
-const SCHEMA_VERSION: i32 = 11;
+const SCHEMA_VERSION: i32 = 12;
 
 impl Storage {
     pub fn migrate(&self) -> SqlResult<()> {
@@ -30,6 +30,8 @@ impl Storage {
                 created_at INTEGER NOT NULL,
                 last_accessed INTEGER NOT NULL DEFAULT 0,
                 parent_session_id TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'normal',
+                conductor_expanded INTEGER NOT NULL DEFAULT 0,
                 worktree_path TEXT NOT NULL DEFAULT '',
                 worktree_repo TEXT NOT NULL DEFAULT '',
                 worktree_branch TEXT NOT NULL DEFAULT '',
@@ -217,6 +219,54 @@ impl Storage {
             );
         }
 
+        // v11 -> v12: conductor session role/config/action/event storage.
+        if version < 12 {
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'normal'",
+                [],
+            );
+            let _ = self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN conductor_expanded INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS conductor_configs (
+                    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+                    mode TEXT NOT NULL DEFAULT 'supervised',
+                    heartbeat_secs INTEGER NOT NULL DEFAULT 900,
+                    max_children INTEGER NOT NULL DEFAULT 8,
+                    max_actions_per_tick INTEGER NOT NULL DEFAULT 5,
+                    allow_spawn_child INTEGER NOT NULL DEFAULT 1,
+                    allow_send_child_response INTEGER NOT NULL DEFAULT 1,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    failure_count INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS conductor_actions (
+                    id TEXT PRIMARY KEY,
+                    conductor_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    action_type TEXT NOT NULL,
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    result TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_conductor_actions_conductor
+                    ON conductor_actions(conductor_session_id, status, created_at);
+                CREATE TABLE IF NOT EXISTS conductor_events (
+                    id TEXT PRIMARY KEY,
+                    conductor_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    child_session_id TEXT NOT NULL DEFAULT '',
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL DEFAULT '',
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_conductor_events_conductor
+                    ON conductor_events(conductor_session_id, created_at);",
+            )?;
+        }
+
         // Set schema version
         self.conn.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
@@ -251,7 +301,7 @@ mod tests {
     fn test_migrate_sets_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("11".to_string()));
+        assert_eq!(version, Some("12".to_string()));
     }
 
     #[test]
@@ -259,7 +309,7 @@ mod tests {
         let (storage, _dir) = test_storage();
         storage.migrate().unwrap();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("11".to_string()));
+        assert_eq!(version, Some("12".to_string()));
     }
 
     #[test]
@@ -381,7 +431,7 @@ mod tests {
     fn test_current_schema_version() {
         let (storage, _dir) = test_storage();
         let version = storage.get_meta("schema_version").unwrap();
-        assert_eq!(version, Some("11".to_string()));
+        assert_eq!(version, Some("12".to_string()));
     }
 
     #[test]
@@ -511,5 +561,72 @@ mod tests {
             .unwrap();
 
         assert_eq!(selection, "{\"profile_id\":\"dev\"}");
+    }
+
+    #[test]
+    fn test_v12_conductor_columns_and_tables_exist() {
+        let (storage, _dir) = test_storage();
+        let version = storage.get_meta("schema_version").unwrap();
+        assert_eq!(version, Some("12".to_string()));
+
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO sessions (
+                    id, title, project_path, created_at, role, conductor_expanded
+                ) VALUES ('c1', 'Conductor', '/tmp', 1, 'conductor', 1)",
+                [],
+            )
+            .unwrap();
+
+        let role: String = storage
+            .conn()
+            .query_row("SELECT role FROM sessions WHERE id = 'c1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let expanded: i32 = storage
+            .conn()
+            .query_row(
+                "SELECT conductor_expanded FROM sessions WHERE id = 'c1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(role, "conductor");
+        assert_eq!(expanded, 1);
+
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO conductor_configs (
+                    session_id, mode, heartbeat_secs, max_children, max_actions_per_tick,
+                    allow_spawn_child, allow_send_child_response, enabled, failure_count
+                ) VALUES ('c1', 'autonomous', 900, 8, 5, 1, 1, 1, 0)",
+                [],
+            )
+            .unwrap();
+
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO conductor_actions (
+                    id, conductor_session_id, action_type, payload, status, created_at,
+                    updated_at, result
+                ) VALUES ('a1', 'c1', 'record_child_summary', '{}', 'queued', 1, 1, '')",
+                [],
+            )
+            .unwrap();
+
+        storage
+            .conn()
+            .execute(
+                "INSERT INTO conductor_events (
+                    id, conductor_session_id, child_session_id, event_type, message, payload,
+                    created_at
+                ) VALUES ('e1', 'c1', '', 'observation', 'Observed children', '{}', 1)",
+                [],
+            )
+            .unwrap();
     }
 }

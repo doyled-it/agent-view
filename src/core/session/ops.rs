@@ -43,6 +43,9 @@ impl SessionOps {
         let requested_mcp_selection = options.mcp_selection.clone();
         let mcp_selection = requested_mcp_selection.clone().unwrap_or_default();
         let tool = options.tool;
+        let role = options.role;
+        let parent_session_id = options.parent_session_id.clone().unwrap_or_default();
+        let conductor_config = options.conductor_config.clone();
         let id = uuid::Uuid::new_v4().to_string();
         let tmux_name = tmux::generate_session_name(&title);
 
@@ -117,7 +120,9 @@ impl SessionOps {
             tmux_session: tmux_name,
             created_at: now,
             last_accessed: now,
-            parent_session_id: String::new(),
+            parent_session_id,
+            role,
+            conductor_expanded: false,
             worktree_path,
             worktree_repo,
             worktree_branch,
@@ -142,6 +147,12 @@ impl SessionOps {
         storage
             .save_session(&session)
             .map_err(|e| SessionError::Storage(format!("Failed to save session: {}", e)))?;
+        if let Some(mut config) = conductor_config {
+            config.session_id = id;
+            storage.save_conductor_config(&config).map_err(|e| {
+                SessionError::Storage(format!("Failed to save conductor config: {}", e))
+            })?;
+        }
         storage.touch().ok();
 
         Ok((session, launch.warning))
@@ -596,6 +607,9 @@ mod tests {
                     tool: Tool::Shell,
                     command: Some("sleep 1".to_string()),
                     mcp_selection: None,
+                    role: crate::types::SessionRole::Normal,
+                    parent_session_id: None,
+                    conductor_config: None,
                     worktree: Some(WorktreeCreateOptions {
                         branch: "wt-feature".to_string(),
                         new_branch: true,
@@ -636,6 +650,9 @@ mod tests {
                     tool: Tool::Shell,
                     command: Some("sleep 5".to_string()),
                     mcp_selection: None,
+                    role: crate::types::SessionRole::Normal,
+                    parent_session_id: None,
+                    conductor_config: None,
                     worktree: Some(WorktreeCreateOptions {
                         branch: "merged-branch".to_string(),
                         new_branch: true,

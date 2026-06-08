@@ -52,6 +52,9 @@ fn build_session_create_options_from_form(
         tool: form.runner,
         command: None,
         mcp_selection: Some(form.mcp_selection.clone()),
+        role: crate::types::SessionRole::Normal,
+        parent_session_id: None,
+        conductor_config: None,
         worktree,
     })
 }
