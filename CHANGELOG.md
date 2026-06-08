@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.0] - 2026-06-08
+
+### Changed
+
+- feat(mcp): add profile management (#71) (@doyled-it)
+
 ## [1.17.0] - 2026-06-05
 
 ### Changed
