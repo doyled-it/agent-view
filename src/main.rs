@@ -442,6 +442,9 @@ fn run_tui(
                         crate::app::Overlay::McpSync(_) => {
                             crate::input::overlay::handle_mcp_sync_key(&mut app, key)?;
                         }
+                        crate::app::Overlay::McpProfiles(_) => {
+                            crate::input::overlay::handle_mcp_profiles_key(&mut app, key)?;
+                        }
                         crate::app::Overlay::Help => {
                             if key.code == crossterm::event::KeyCode::Esc
                                 || key.code == crossterm::event::KeyCode::Char('?')

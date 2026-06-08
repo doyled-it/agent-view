@@ -25,6 +25,7 @@ pub enum CommandAction {
     ToggleFollowUp,
     ToggleUserWaiting,
     SyncMcpServers,
+    ManageMcpProfiles,
     ExportLog,
     CreateGroup,
     DeleteGroup,
@@ -104,6 +105,11 @@ impl CommandPalette {
                 label: "Sync MCP Servers".to_string(),
                 key_hint: String::new(),
                 action: CommandAction::SyncMcpServers,
+            },
+            CommandItem {
+                label: "Manage MCP Profiles".to_string(),
+                key_hint: String::new(),
+                action: CommandAction::ManageMcpProfiles,
             },
             CommandItem {
                 label: "Export Log".to_string(),

@@ -81,6 +81,10 @@ Sessions are sorted with the most attention-needing states first (Crashed, Waiti
 
 New sessions default to all configured MCP servers. Selecting an MCP profile or toggling servers in the new-session form narrows only that session, and the details pane records the selected profile id plus enabled server ids.
 
+Use **Manage MCP Profiles** from the command palette to create, edit, rename, duplicate, and delete reusable MCP profiles. Profiles are saved in `~/.agent-view/config.json` as user preferences. Editing or deleting a profile does not change existing sessions because each session stores the concrete MCP selection it was launched with.
+
+In the New Session form, expand the MCP section to apply a saved profile or toggle individual servers before launch. Press `Ctrl+P` to save the current MCP selection as a new profile, then type a profile name and press Enter. Press `Ctrl+U` to update the active profile from the current selection. Press `d` or `Delete` on a profile row to delete that profile.
+
 Claude and Codex enforce server-level selections at launch: Claude writes a session-scoped MCP config from the enabled servers, while Codex adds config overrides for disabled servers. OpenCode does not have enforceable MCP filtering yet, so narrowed selections that would filter servers or tools are blocked with a launch error instead of silently starting with broader access.
 
 Per-tool MCP filtering is available only when the selected runner can enforce it. Codex currently accepts whole-server selections and rejects per-tool limits; unsupported runners keep their default all-server behavior unless their launch path can apply the selection exactly.

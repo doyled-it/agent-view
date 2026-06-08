@@ -222,6 +222,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::McpSync(form) => {
             crate::ui::overlay::render_mcp_sync(frame, area, form, &app.theme);
         }
+        Overlay::McpProfiles(form) => {
+            crate::ui::overlay::render_mcp_profiles(frame, area, form, &app.theme);
+        }
         Overlay::Help => {
             crate::ui::overlay::render_help(frame, area, app);
         }

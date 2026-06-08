@@ -116,12 +116,19 @@ pub fn load_config() -> AppConfig {
 
 /// Save config to disk at the default config path.
 pub fn save_config(config: &AppConfig) -> Result<(), std::io::Error> {
-    let path = config_path();
+    save_config_to_path(&config_path(), config)
+}
+
+/// Save config to a specific path.
+pub fn save_config_to_path(
+    path: &std::path::Path,
+    config: &AppConfig,
+) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
-    fs::write(&path, json)?;
+    fs::write(path, json)?;
     Ok(())
 }
 
@@ -201,6 +208,37 @@ mod tests {
         assert_eq!(cfg.mcp_profiles.len(), 1);
         assert_eq!(cfg.mcp_profiles[0].id, "rust");
         assert_eq!(cfg.mcp_profiles[0].selection.servers.len(), 2);
+    }
+
+    #[test]
+    fn test_save_config_to_path_persists_mcp_profiles() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        let config = AppConfig {
+            mcp_profiles: vec![crate::core::mcp::McpProfile {
+                id: "rust".to_string(),
+                name: "Rust".to_string(),
+                selection: crate::core::mcp::McpSelection {
+                    profile_id: None,
+                    servers: vec![crate::core::mcp::McpServerSelection {
+                        id: "GitLabMITRE".to_string(),
+                        enabled: true,
+                        selected_tools: None,
+                    }],
+                },
+            }],
+            ..Default::default()
+        };
+
+        save_config_to_path(&path, &config).unwrap();
+        let loaded = load_config_from_path(&path);
+
+        assert_eq!(loaded.mcp_profiles.len(), 1);
+        assert_eq!(loaded.mcp_profiles[0].id, "rust");
+        assert_eq!(
+            loaded.mcp_profiles[0].selection.servers[0].id,
+            "GitLabMITRE"
+        );
     }
 
     #[test]
