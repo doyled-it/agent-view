@@ -7,15 +7,25 @@ use ratatui::Frame;
 use crate::app::NewSessionForm;
 use crate::ui::theme::Theme;
 
-const MCP_FIELD: usize = 5;
+const RUNNER_FIELD: usize = 0;
+const ROLE_FIELD: usize = 1;
+const PARENT_FIELD: usize = 2;
+const TITLE_FIELD: usize = 3;
+const PROJECT_PATH_FIELD: usize = 4;
+const WORKTREE_BRANCH_FIELD: usize = 5;
+const WORKTREE_BASE_FIELD: usize = 6;
+const MCP_FIELD: usize = 7;
 const DEFAULT_OVERLAY_WIDTH: u16 = 64;
 const WIDE_OVERLAY_WIDTH: u16 = 72;
 
 /// Render the new session creation form as a centered overlay.
 pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, theme: &Theme) {
-    let has_path_completions = form.focused_field == 2 && form.completions.len() > 1;
-    let has_branch_completions = form.focused_field == 3 && form.completions.len() > 1;
-    let has_base_completions = form.focused_field == 4 && form.completions.len() > 1;
+    let has_path_completions =
+        form.focused_field == PROJECT_PATH_FIELD && form.completions.len() > 1;
+    let has_branch_completions =
+        form.focused_field == WORKTREE_BRANCH_FIELD && form.completions.len() > 1;
+    let has_base_completions =
+        form.focused_field == WORKTREE_BASE_FIELD && form.completions.len() > 1;
     let has_completions = has_path_completions || has_branch_completions || has_base_completions;
     let max_completion_rows: usize = 6;
     let mcp_line_specs = build_new_session_mcp_line_specs(form);
@@ -44,7 +54,9 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     // directly under the field whose completion is active.
     //
     // Layout sections (each 1 row unless noted):
-    //   runner label, runner cycle row, spacer (after runner),
+    //   runner label, runner cycle row,
+    //   role row,
+    //   parent row, spacer,
     //   title label, title input, spacer,
     //   path label, path input,
     //   [if path completions: completion hint, completion grid (N rows)],
@@ -60,11 +72,12 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     //   spacer,
     //   [if error: error row],
     //   help hint
-    // runner label + cycle row + spacer; title label + input + spacer; path label + input — always present
     let mut constraints: Vec<Constraint> = vec![
         Constraint::Length(1), // runner label
         Constraint::Length(1), // runner cycle row
-        Constraint::Length(1), // spacer (after runner, before title)
+        Constraint::Length(1), // role row
+        Constraint::Length(1), // parent conductor row
+        Constraint::Length(1), // spacer
         Constraint::Length(1), // title label
         Constraint::Length(1), // title input
         Constraint::Length(1), // spacer
@@ -127,7 +140,7 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
             _ => 0,
         })
         .sum();
-    let overlay_height = (inner_height + 2).min(area.height.saturating_sub(4));
+    let overlay_height = (inner_height + 2).min(area.height);
 
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;
@@ -159,9 +172,9 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
 
     let mut i: usize = 0;
 
-    // Runner row: label, cycle value, then a one-row spacer before the title.
+    // Runner
     frame.render_widget(
-        Paragraph::new("Runner:").style(label_style(form.focused_field == 0)),
+        Paragraph::new("Runner:").style(label_style(form.focused_field == RUNNER_FIELD)),
         chunks[i],
     );
     let runner_line = Line::from(vec![
@@ -173,18 +186,49 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         Span::styled(" \u{203a}", Style::default().fg(theme.text_muted)),
     ]);
     frame.render_widget(Paragraph::new(runner_line), chunks[i + 1]);
-    i += 3;
+    i += 2;
+
+    // Role
+    let role_line = Line::from(vec![
+        Span::styled("Role:", label_style(form.focused_field == ROLE_FIELD)),
+        Span::styled("  \u{2039} ", Style::default().fg(theme.text_muted)),
+        Span::styled(role_label(form.role), Style::default().fg(theme.text)),
+        Span::styled(" \u{203a}", Style::default().fg(theme.text_muted)),
+    ]);
+    frame.render_widget(Paragraph::new(role_line), chunks[i]);
+    i += 1;
+
+    // Parent conductor
+    let parent_dimmed = form.role == crate::types::SessionRole::Conductor;
+    let parent_label_style = if parent_dimmed {
+        Style::default().fg(theme.text_muted)
+    } else {
+        label_style(form.focused_field == PARENT_FIELD)
+    };
+    let parent_value_style = if parent_dimmed {
+        Style::default().fg(theme.text_muted)
+    } else {
+        Style::default().fg(theme.text)
+    };
+    let parent_line = Line::from(vec![
+        Span::styled("Parent Conductor:", parent_label_style),
+        Span::styled("  \u{2039} ", Style::default().fg(theme.text_muted)),
+        Span::styled(form.parent_label(), parent_value_style),
+        Span::styled(" \u{203a}", Style::default().fg(theme.text_muted)),
+    ]);
+    frame.render_widget(Paragraph::new(parent_line), chunks[i]);
+    i += 2;
 
     // Title
     frame.render_widget(
         Paragraph::new("Title (leave empty for random):")
-            .style(label_style(form.focused_field == 1)),
+            .style(label_style(form.focused_field == TITLE_FIELD)),
         chunks[i],
     );
     i += 1;
-    let title_display = if form.title.is_empty() && form.focused_field == 1 {
+    let title_display = if form.title.is_empty() && form.focused_field == TITLE_FIELD {
         "\u{2588}".to_string()
-    } else if form.focused_field == 1 {
+    } else if form.focused_field == TITLE_FIELD {
         format!("{}\u{2588}", form.title)
     } else if form.title.is_empty() {
         "(auto-generated)".to_string()
@@ -200,11 +244,12 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
 
     // Path
     frame.render_widget(
-        Paragraph::new("Project Path:").style(label_style(form.focused_field == 2)),
+        Paragraph::new("Project Path:")
+            .style(label_style(form.focused_field == PROJECT_PATH_FIELD)),
         chunks[i],
     );
     i += 1;
-    let path_display = if form.focused_field == 2 {
+    let path_display = if form.focused_field == PROJECT_PATH_FIELD {
         format!("{}\u{2588}", form.project_path)
     } else {
         form.project_path.clone()
@@ -249,11 +294,12 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     };
     let branch_label = format!("Worktree Branch \u{00b7} {}:", mode_hint);
     frame.render_widget(
-        Paragraph::new(branch_label).style(label_style(form.focused_field == 3)),
+        Paragraph::new(branch_label)
+            .style(label_style(form.focused_field == WORKTREE_BRANCH_FIELD)),
         chunks[i],
     );
     i += 1;
-    let branch_display = if form.focused_field == 3 {
+    let branch_display = if form.focused_field == WORKTREE_BRANCH_FIELD {
         format!("{}\u{2588}", form.worktree_branch)
     } else if form.worktree_branch.is_empty() {
         "(no worktree)".to_string()
@@ -302,14 +348,14 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         // Attach mode: always dim regardless of focus
         Style::default().fg(theme.text_muted)
     } else {
-        label_style(form.focused_field == 4)
+        label_style(form.focused_field == WORKTREE_BASE_FIELD)
     };
     frame.render_widget(
         Paragraph::new(base_label).style(base_label_style),
         chunks[i],
     );
     i += 1;
-    let base_display = if form.focused_field == 4 {
+    let base_display = if form.focused_field == WORKTREE_BASE_FIELD {
         format!("{}\u{2588}", form.worktree_base)
     } else if form.worktree_base.is_empty() {
         if form.worktree_new_branch {
@@ -378,7 +424,9 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         _ if form.mcp_profile_save_name.is_some() => {
             "Enter save profile · Esc cancel profile save".to_string()
         }
-        0 => format!("\u{2190}/\u{2192} cycle runner   {}", base_hint),
+        RUNNER_FIELD => format!("\u{2190}/\u{2192} cycle runner   {}", base_hint),
+        ROLE_FIELD => format!("\u{2190}/\u{2192} cycle role   {}", base_hint),
+        PARENT_FIELD => format!("\u{2190}/\u{2192} cycle parent   {}", base_hint),
         MCP_FIELD if form.mcp_expanded => {
             format!("Space apply/toggle · d/Del delete · ^P save · ^U update   {base_hint}")
         }
@@ -398,6 +446,13 @@ fn display_runner_label(name: &str) -> String {
     match chars.next() {
         Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+fn role_label(role: crate::types::SessionRole) -> &'static str {
+    match role {
+        crate::types::SessionRole::Normal => "Normal",
+        crate::types::SessionRole::Conductor => "Conductor",
     }
 }
 

@@ -6,6 +6,24 @@ pub struct CommandPalette {
     pub selected: usize,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_palette_includes_new_child_session_action() {
+        let palette = CommandPalette::new();
+
+        let item = palette
+            .items
+            .iter()
+            .find(|item| item.action == CommandAction::NewChildSession)
+            .expect("palette should include new child session action");
+
+        assert_eq!(item.label, "New Child Session");
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandItem {
     pub label: String,
@@ -16,6 +34,7 @@ pub struct CommandItem {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandAction {
     NewSession,
+    NewChildSession,
     StopSession,
     RestartSession,
     DeleteSession,
@@ -50,6 +69,11 @@ impl CommandPalette {
                 label: "New Session".to_string(),
                 key_hint: "n".to_string(),
                 action: CommandAction::NewSession,
+            },
+            CommandItem {
+                label: "New Child Session".to_string(),
+                key_hint: String::new(),
+                action: CommandAction::NewChildSession,
             },
             CommandItem {
                 label: "Stop Session".to_string(),
