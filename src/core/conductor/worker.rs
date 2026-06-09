@@ -184,10 +184,20 @@ pub fn run_once(storage: &Storage, now_ms: i64) -> Result<(), String> {
 
         match send_heartbeat_prompt(storage, &conductor) {
             Ok(()) => {}
-            Err(error) => errors.push(format!(
-                "failed to send conductor heartbeat {}: {}",
-                conductor.id, error
-            )),
+            Err(error) => {
+                if let Err(reset_error) =
+                    make_heartbeat_due_for_retry(storage, &conductor.id, now_ms)
+                {
+                    errors.push(format!(
+                        "failed to reset conductor heartbeat {} after send failure: {}",
+                        conductor.id, reset_error
+                    ));
+                }
+                errors.push(format!(
+                    "failed to send conductor heartbeat {}: {}",
+                    conductor.id, error
+                ));
+            }
         }
     }
 
@@ -196,6 +206,22 @@ pub fn run_once(storage: &Storage, now_ms: i64) -> Result<(), String> {
     } else {
         Err(errors.join("; "))
     }
+}
+
+fn make_heartbeat_due_for_retry(
+    storage: &Storage,
+    conductor_id: &str,
+    now_ms: i64,
+) -> Result<(), String> {
+    let config = storage
+        .get_conductor_config(conductor_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "conductor config not found".to_string())?;
+    let interval_ms = config.heartbeat_secs.max(0).saturating_mul(1_000);
+    let retry_due_timestamp = now_ms.saturating_sub(interval_ms);
+    storage
+        .update_conductor_last_heartbeat(conductor_id, retry_due_timestamp)
+        .map_err(|e| e.to_string())
 }
 
 pub fn spawn() -> thread::JoinHandle<()> {
@@ -442,5 +468,67 @@ mod tests {
             .unwrap();
         assert_eq!(row.0, ConductorActionStatus::Blocked.as_str());
         assert!(row.1.contains("send_child_response is disabled"));
+    }
+
+    #[test]
+    fn process_queued_actions_respects_max_actions_per_tick() {
+        let (storage, _dir) = test_storage();
+        let mut config = ConductorConfig::default_for_session("conductor-1".to_string());
+        config.max_actions_per_tick = 1;
+        save_conductor(&storage, "conductor-1", config);
+        for child_id in ["child-1", "child-2"] {
+            let mut child = make_test_session(child_id);
+            child.parent_session_id = "conductor-1".to_string();
+            storage.save_session(&child).unwrap();
+            let request = ConductorActionRequest {
+                action_type: ConductorActionType::RecordChildSummary,
+                child_session_id: Some(child_id.to_string()),
+                payload: json!({"summary": child_id}),
+            };
+            storage
+                .enqueue_conductor_action("conductor-1", &request)
+                .unwrap();
+        }
+
+        super::process_queued_actions(&storage).unwrap();
+
+        let completed_count: i64 = storage
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM conductor_actions WHERE status = ?1",
+                [ConductorActionStatus::Completed.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let queued_count: i64 = storage
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM conductor_actions WHERE status = ?1",
+                [ConductorActionStatus::Queued.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(completed_count, 1);
+        assert_eq!(queued_count, 1);
+    }
+
+    #[test]
+    fn failed_heartbeat_send_remains_due_for_retry() {
+        let (storage, _dir) = test_storage();
+        let mut config = ConductorConfig::default_for_session("conductor-1".to_string());
+        config.heartbeat_secs = 5;
+        config.last_heartbeat_at = 5_000;
+        let mut conductor = make_test_session("conductor-1");
+        conductor.role = SessionRole::Conductor;
+        conductor.tmux_session = "nonexistent_session_xyz".to_string();
+        storage.save_session(&conductor).unwrap();
+        storage.save_conductor_config(&config).unwrap();
+        let now_ms = 10_000;
+
+        let err = super::run_once(&storage, now_ms).unwrap_err();
+
+        assert!(err.contains("failed to send conductor heartbeat"));
+        assert_eq!(super::due_conductors(&storage, now_ms).unwrap().len(), 1);
     }
 }

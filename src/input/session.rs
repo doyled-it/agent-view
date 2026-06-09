@@ -638,10 +638,24 @@ mod tests {
         home: Option<std::ffi::OsString>,
     }
 
+    struct McpEnvRestore {
+        claude_config_dir: Option<std::ffi::OsString>,
+        codex_home: Option<std::ffi::OsString>,
+    }
+
     impl HomeRestore {
         fn capture() -> Self {
             Self {
                 home: std::env::var_os("HOME"),
+            }
+        }
+    }
+
+    impl McpEnvRestore {
+        fn capture() -> Self {
+            Self {
+                claude_config_dir: std::env::var_os("CLAUDE_CONFIG_DIR"),
+                codex_home: std::env::var_os("CODEX_HOME"),
             }
         }
     }
@@ -652,6 +666,21 @@ mod tests {
                 std::env::set_var("HOME", value);
             } else {
                 std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    impl Drop for McpEnvRestore {
+        fn drop(&mut self) {
+            if let Some(value) = &self.claude_config_dir {
+                std::env::set_var("CLAUDE_CONFIG_DIR", value);
+            } else {
+                std::env::remove_var("CLAUDE_CONFIG_DIR");
+            }
+            if let Some(value) = &self.codex_home {
+                std::env::set_var("CODEX_HOME", value);
+            } else {
+                std::env::remove_var("CODEX_HOME");
             }
         }
     }
@@ -1039,6 +1068,7 @@ mod tests {
     #[test]
     fn test_new_session_command_auto_syncs_mcp_servers_before_loading_catalog() {
         let _guard = crate::core::runner::hook_io::lock_env();
+        let _env_restore = McpEnvRestore::capture();
         let dir = tempfile::tempdir().unwrap();
         let claude_dir = dir.path().join("claude");
         let codex_dir = dir.path().join("codex");
@@ -1085,9 +1115,6 @@ url = "https://gitlab.example.test/api/v4/mcp"
         assert!(std::fs::read_to_string(codex_dir.join("config.toml"))
             .unwrap()
             .contains("[mcp_servers.wavecrest]"));
-
-        std::env::remove_var("CLAUDE_CONFIG_DIR");
-        std::env::remove_var("CODEX_HOME");
     }
 
     fn assert_server_ids(

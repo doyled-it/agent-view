@@ -76,7 +76,12 @@ pub fn execute_action(
                 .map_err(|e| e.to_string())?;
             Ok("response sent".to_string())
         }
-        _ => Ok("action accepted".to_string()),
+        ConductorActionType::SpawnChild
+        | ConductorActionType::ReadChildSnapshot
+        | ConductorActionType::UpdateConductorPlan => Err(format!(
+            "unsupported conductor action: {}",
+            request.action_type.as_str()
+        )),
     }
 }
 
@@ -344,5 +349,30 @@ mod tests {
         let err = super::execute_action(&storage, "conductor-1", &request).unwrap_err();
 
         assert!(err.contains("child session does not belong to conductor"));
+    }
+
+    #[test]
+    fn unsupported_actions_fail_instead_of_completing_as_noops() {
+        let (storage, _dir) = test_storage();
+        let mut conductor = make_test_session("conductor-1");
+        conductor.role = SessionRole::Conductor;
+        storage.save_session(&conductor).unwrap();
+
+        for action_type in [
+            ConductorActionType::SpawnChild,
+            ConductorActionType::ReadChildSnapshot,
+            ConductorActionType::UpdateConductorPlan,
+        ] {
+            let request = ConductorActionRequest {
+                action_type,
+                child_session_id: None,
+                payload: json!({}),
+            };
+
+            let err = super::execute_action(&storage, "conductor-1", &request).unwrap_err();
+
+            assert!(err.contains("unsupported conductor action"));
+            assert!(err.contains(action_type.as_str()));
+        }
     }
 }

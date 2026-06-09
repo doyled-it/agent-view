@@ -1,4 +1,5 @@
 use rusqlite::{params, Result as SqlResult};
+use std::collections::HashMap;
 
 use super::Storage;
 use crate::types::{
@@ -171,18 +172,32 @@ impl Storage {
 
     pub fn claim_queued_conductor_actions(&self) -> SqlResult<Vec<QueuedConductorAction>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id
+            "SELECT id, conductor_session_id
              FROM conductor_actions
              WHERE status = ?1
              ORDER BY created_at, id",
         )?;
-        let ids = stmt
-            .query_map([ConductorActionStatus::Queued.as_str()], |row| row.get(0))?
-            .collect::<SqlResult<Vec<String>>>()?;
+        let actions = stmt
+            .query_map([ConductorActionStatus::Queued.as_str()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<SqlResult<Vec<(String, String)>>>()?;
         drop(stmt);
 
         let mut claimed = Vec::new();
-        for id in ids {
+        let mut claimed_by_conductor: HashMap<String, usize> = HashMap::new();
+        for (id, conductor_session_id) in actions {
+            if let Some(config) = self.get_conductor_config(&conductor_session_id)? {
+                let limit = usize::try_from(config.max_actions_per_tick).unwrap_or(0);
+                let claimed_count = claimed_by_conductor
+                    .get(&conductor_session_id)
+                    .copied()
+                    .unwrap_or(0);
+                if claimed_count >= limit {
+                    continue;
+                }
+            }
+
             let now = chrono::Utc::now().timestamp_millis();
             let affected = self.conn.execute(
                 "UPDATE conductor_actions
@@ -197,6 +212,9 @@ impl Storage {
             )?;
             if affected == 1 {
                 if let Some(action) = self.load_conductor_action(&id)? {
+                    *claimed_by_conductor
+                        .entry(conductor_session_id.clone())
+                        .or_insert(0) += 1;
                     claimed.push(action);
                 }
             }
