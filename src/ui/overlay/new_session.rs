@@ -16,7 +16,8 @@ const WORKTREE_BRANCH_FIELD: usize = 5;
 const WORKTREE_BASE_FIELD: usize = 6;
 const MCP_FIELD: usize = 7;
 const DEFAULT_OVERLAY_WIDTH: u16 = 64;
-const WIDE_OVERLAY_WIDTH: u16 = 72;
+const MAX_OVERLAY_WIDTH: u16 = 128;
+const OVERLAY_MARGIN: u16 = 4;
 
 /// Render the new session creation form as a centered overlay.
 pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, theme: &Theme) {
@@ -29,15 +30,8 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     let has_completions = has_path_completions || has_branch_completions || has_base_completions;
     let max_completion_rows: usize = 6;
     let mcp_line_specs = build_new_session_mcp_line_specs(form);
-    let mcp_needs_wide_overlay = mcp_line_specs
-        .iter()
-        .any(|line| line.text.chars().count() > DEFAULT_OVERLAY_WIDTH.saturating_sub(2) as usize);
-    let target_overlay_width = if mcp_needs_wide_overlay {
-        WIDE_OVERLAY_WIDTH
-    } else {
-        DEFAULT_OVERLAY_WIDTH
-    };
-    let overlay_width = target_overlay_width.min(area.width.saturating_sub(4));
+    let target_overlay_width = target_new_session_overlay_width(form, &mcp_line_specs);
+    let overlay_width = target_overlay_width.min(area.width.saturating_sub(OVERLAY_MARGIN));
 
     let (num_columns, completion_rows) = if has_completions {
         let inner_w = overlay_width.saturating_sub(2) as usize;
@@ -418,9 +412,91 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
     }
 
     // Help hint line — always last
+    let hint = new_session_help_hint(form);
+    frame.render_widget(
+        Paragraph::new(hint).style(Style::default().fg(theme.text_muted)),
+        chunks[i],
+    );
+}
+
+fn target_new_session_overlay_width(form: &NewSessionForm, mcp_line_specs: &[McpLineSpec]) -> u16 {
+    let content_width = visible_new_session_content_width(form, mcp_line_specs);
+    let desired = content_width.saturating_add(2);
+    desired
+        .max(DEFAULT_OVERLAY_WIDTH as usize)
+        .min(MAX_OVERLAY_WIDTH as usize) as u16
+}
+
+fn visible_new_session_content_width(
+    form: &NewSessionForm,
+    mcp_line_specs: &[McpLineSpec],
+) -> usize {
+    let mut width = 0usize;
+    let mut add = |text: String| {
+        width = width.max(text.chars().count());
+    };
+
+    add("Runner:".to_string());
+    add(format!(
+        "  \u{2039} {} \u{203a}",
+        display_runner_label(form.runner.as_str())
+    ));
+    add(format!(
+        "Role:  \u{2039} {} \u{203a}",
+        role_label(form.role)
+    ));
+    add(format!(
+        "Parent Conductor:  \u{2039} {} \u{203a}",
+        form.parent_label()
+    ));
+    add("Title (leave empty for random):".to_string());
+    add(if form.title.is_empty() {
+        "(auto-generated)".to_string()
+    } else {
+        form.title.clone()
+    });
+    add("Project Path:".to_string());
+    add(form.project_path.clone());
+    let mode_hint = if form.worktree_new_branch {
+        "new (^T attach)"
+    } else {
+        "attach (^T new)"
+    };
+    add(format!("Worktree Branch \u{00b7} {}:", mode_hint));
+    add(if form.worktree_branch.is_empty() {
+        "(no worktree)".to_string()
+    } else {
+        form.worktree_branch.clone()
+    });
+    add(if form.worktree_new_branch {
+        "Branch off from (optional):".to_string()
+    } else {
+        "Branch off from (n/a in attach mode):".to_string()
+    });
+    add(if form.worktree_base.is_empty() {
+        if form.worktree_new_branch {
+            "(currently checked out branch)".to_string()
+        } else {
+            "\u{2014}".to_string()
+        }
+    } else {
+        form.worktree_base.clone()
+    });
+    for spec in mcp_line_specs {
+        add(spec.text.clone());
+    }
+    if let Some(err) = &form.error {
+        add(format!("\u{26a0} {}", err));
+    }
+    add(new_session_help_hint(form));
+
+    width
+}
+
+fn new_session_help_hint(form: &NewSessionForm) -> String {
     let base_hint =
         "^S save · Esc cancel · Tab/\u{2193} next · \u{21e7}Tab/\u{2191} back · ^T toggle";
-    let hint = match form.focused_field {
+    match form.focused_field {
         _ if form.mcp_profile_save_name.is_some() => {
             "Enter save profile · Esc cancel profile save".to_string()
         }
@@ -432,11 +508,7 @@ pub fn render_new_session(frame: &mut Frame, area: Rect, form: &NewSessionForm, 
         }
         MCP_FIELD => format!("Enter MCP   {}", base_hint),
         _ => base_hint.to_string(),
-    };
-    frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(theme.text_muted)),
-        chunks[i],
-    );
+    }
 }
 
 /// ASCII-uppercase the first character of a runner's `name()` for display.
@@ -645,8 +717,12 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn render_new_session_buffer_lines(form: &NewSessionForm) -> Vec<String> {
-        let backend = TestBackend::new(80, 24);
+    fn render_new_session_buffer_lines_with_size(
+        form: &NewSessionForm,
+        width: u16,
+        height: u16,
+    ) -> Vec<String> {
+        let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test backend should initialize");
         let theme = Theme::dark();
         terminal
@@ -662,6 +738,10 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    fn render_new_session_buffer_lines(form: &NewSessionForm) -> Vec<String> {
+        render_new_session_buffer_lines_with_size(form, 80, 24)
     }
 
     fn rendered_row(lines: &[String], needle: &str) -> usize {
@@ -719,6 +799,41 @@ mod tests {
         assert!(
             lines.iter().any(|line| line.contains("server-level only")),
             "rendered lines: {lines:#?}"
+        );
+    }
+
+    #[test]
+    fn new_session_overlay_widens_for_expanded_mcp_rows() {
+        let mut form = NewSessionForm::new();
+        form.runner = Tool::Codex;
+        form.mcp_expanded = true;
+        form.set_mcp_servers_for_test(vec![
+            "very-long-mcp-server-name-for-rust-and-python-projects".into(),
+        ]);
+
+        let lines = render_new_session_buffer_lines_with_size(&form, 160, 32);
+        let expected =
+            "[x] very-long-mcp-server-name-for-rust-and-python-projects  server-level only";
+
+        assert!(
+            lines.iter().any(|line| line.contains(expected)),
+            "expanded MCP row should fit in a wide terminal:\n{lines:#?}"
+        );
+    }
+
+    #[test]
+    fn new_session_overlay_widens_for_expanded_mcp_help_hint() {
+        let mut form = NewSessionForm::new();
+        form.focused_field = MCP_FIELD;
+        form.mcp_expanded = true;
+        form.set_mcp_servers_for_test(vec!["GitLabMITRE".into()]);
+
+        let lines = render_new_session_buffer_lines_with_size(&form, 160, 32);
+        let expected = "Space apply/toggle · d/Del delete · ^P save · ^U update   ^S save · Esc cancel · Tab/↓ next · ⇧Tab/↑ back · ^T toggle";
+
+        assert!(
+            lines.iter().any(|line| line.contains(expected)),
+            "expanded MCP help hint should fit in a wide terminal:\n{lines:#?}"
         );
     }
 

@@ -187,15 +187,17 @@ pub fn create_session(
             args.push(format!("{}={}", key, value));
         }
     }
-    let status = Command::new("tmux")
+    let output = Command::new("tmux")
         .args(&args)
-        .status()
+        .output()
         .map_err(|e| TmuxError::CommandFailed(format!("Failed to spawn tmux: {}", e)))?;
 
-    if !status.success() {
-        return Err(TmuxError::CommandFailed(format!(
-            "tmux new-session failed with status {}",
-            status
+    if !output.status.success() {
+        return Err(TmuxError::CommandFailed(tmux_failure_message(
+            "new-session",
+            &output.status.to_string(),
+            &output.stdout,
+            &output.stderr,
         )));
     }
 
@@ -222,6 +224,27 @@ pub fn create_session(
     }
 
     Ok(())
+}
+
+fn tmux_failure_message(command: &str, status: &str, stdout: &[u8], stderr: &[u8]) -> String {
+    let mut message = format!("tmux {} failed with status {}", command, status);
+    let detail = command_output_detail(stdout, stderr);
+    if !detail.is_empty() {
+        message.push_str(": ");
+        message.push_str(&detail);
+    }
+    message
+}
+
+fn command_output_detail(stdout: &[u8], stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    match (stderr.is_empty(), stdout.is_empty()) {
+        (false, false) => format!("{}; stdout: {}", stderr, stdout),
+        (false, true) => stderr,
+        (true, false) => stdout,
+        (true, true) => String::new(),
+    }
 }
 
 /// Kill a tmux session
@@ -371,6 +394,21 @@ mod tests {
         // (actual tmux interaction tested manually)
         let result = send_keys_raw("nonexistent_session_xyz", "Right");
         assert!(result.is_err()); // session doesn't exist
+    }
+
+    #[test]
+    fn tmux_failure_message_includes_stderr_detail() {
+        let message = tmux_failure_message(
+            "new-session",
+            "exit status: 1",
+            b"",
+            b"create window failed: fork failed: Device not configured\n",
+        );
+
+        assert_eq!(
+            message,
+            "tmux new-session failed with status exit status: 1: create window failed: fork failed: Device not configured"
+        );
     }
 
     #[test]
