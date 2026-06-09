@@ -1,19 +1,36 @@
 use rusqlite::{params, Result as SqlResult};
 
 use super::Storage;
-use crate::types::{ConductorActionRequest, ConductorActionStatus, ConductorConfig, ConductorMode};
+use crate::types::{
+    ConductorActionRequest, ConductorActionStatus, ConductorConfig, ConductorMode, Session,
+};
+
+#[derive(Debug, Clone)]
+pub struct QueuedConductorAction {
+    pub id: String,
+    pub conductor_session_id: String,
+    pub payload: String,
+}
+
+impl QueuedConductorAction {
+    pub fn to_request(&self) -> Result<ConductorActionRequest, String> {
+        serde_json::from_str(&self.payload)
+            .map_err(|e| format!("invalid conductor action payload for {}: {}", self.id, e))
+    }
+}
 
 impl Storage {
     pub fn save_conductor_config(&self, config: &ConductorConfig) -> SqlResult<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO conductor_configs (
-                session_id, mode, heartbeat_secs, max_children, max_actions_per_tick,
+                session_id, mode, heartbeat_secs, last_heartbeat_at, max_children, max_actions_per_tick,
                 allow_spawn_child, allow_send_child_response, enabled, failure_count
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 config.session_id,
                 config.mode.as_str(),
                 config.heartbeat_secs,
+                config.last_heartbeat_at,
                 config.max_children,
                 config.max_actions_per_tick,
                 config.allow_spawn_child as i32,
@@ -106,7 +123,7 @@ impl Storage {
     #[allow(dead_code)]
     pub fn get_conductor_config(&self, session_id: &str) -> SqlResult<Option<ConductorConfig>> {
         let result = self.conn.query_row(
-            "SELECT session_id, mode, heartbeat_secs, max_children, max_actions_per_tick,
+            "SELECT session_id, mode, heartbeat_secs, last_heartbeat_at, max_children, max_actions_per_tick,
                     allow_spawn_child, allow_send_child_response, enabled, failure_count
              FROM conductor_configs WHERE session_id = ?1",
             params![session_id],
@@ -116,12 +133,13 @@ impl Storage {
                     session_id: row.get(0)?,
                     mode: ConductorMode::from_str(&mode),
                     heartbeat_secs: row.get(2)?,
-                    max_children: row.get(3)?,
-                    max_actions_per_tick: row.get(4)?,
-                    allow_spawn_child: row.get::<_, i32>(5)? == 1,
-                    allow_send_child_response: row.get::<_, i32>(6)? == 1,
-                    enabled: row.get::<_, i32>(7)? == 1,
-                    failure_count: row.get(8)?,
+                    last_heartbeat_at: row.get(3)?,
+                    max_children: row.get(4)?,
+                    max_actions_per_tick: row.get(5)?,
+                    allow_spawn_child: row.get::<_, i32>(6)? == 1,
+                    allow_send_child_response: row.get::<_, i32>(7)? == 1,
+                    enabled: row.get::<_, i32>(8)? == 1,
+                    failure_count: row.get(9)?,
                 })
             },
         );
@@ -132,13 +150,131 @@ impl Storage {
             Err(e) => Err(e),
         }
     }
+
+    #[allow(dead_code)]
+    pub fn load_queued_conductor_actions(&self) -> SqlResult<Vec<QueuedConductorAction>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, conductor_session_id, payload
+             FROM conductor_actions
+             WHERE status = ?1
+             ORDER BY created_at, id",
+        )?;
+        let rows = stmt.query_map([ConductorActionStatus::Queued.as_str()], |row| {
+            Ok(QueuedConductorAction {
+                id: row.get(0)?,
+                conductor_session_id: row.get(1)?,
+                payload: row.get(2)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn claim_queued_conductor_actions(&self) -> SqlResult<Vec<QueuedConductorAction>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id
+             FROM conductor_actions
+             WHERE status = ?1
+             ORDER BY created_at, id",
+        )?;
+        let ids = stmt
+            .query_map([ConductorActionStatus::Queued.as_str()], |row| row.get(0))?
+            .collect::<SqlResult<Vec<String>>>()?;
+        drop(stmt);
+
+        let mut claimed = Vec::new();
+        for id in ids {
+            let now = chrono::Utc::now().timestamp_millis();
+            let affected = self.conn.execute(
+                "UPDATE conductor_actions
+                 SET status = ?1, updated_at = ?2
+                 WHERE id = ?3 AND status = ?4",
+                params![
+                    ConductorActionStatus::Processing.as_str(),
+                    now,
+                    id,
+                    ConductorActionStatus::Queued.as_str(),
+                ],
+            )?;
+            if affected == 1 {
+                if let Some(action) = self.load_conductor_action(&id)? {
+                    claimed.push(action);
+                }
+            }
+        }
+
+        Ok(claimed)
+    }
+
+    fn load_conductor_action(&self, action_id: &str) -> SqlResult<Option<QueuedConductorAction>> {
+        let result = self.conn.query_row(
+            "SELECT id, conductor_session_id, payload
+             FROM conductor_actions
+             WHERE id = ?1",
+            params![action_id],
+            |row| {
+                Ok(QueuedConductorAction {
+                    id: row.get(0)?,
+                    conductor_session_id: row.get(1)?,
+                    payload: row.get(2)?,
+                })
+            },
+        );
+
+        match result {
+            Ok(action) => Ok(Some(action)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn count_child_sessions(&self, conductor_session_id: &str) -> SqlResult<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE parent_session_id = ?1",
+            params![conductor_session_id],
+            |row| row.get(0),
+        )?;
+        Ok(usize::try_from(count).unwrap_or(0))
+    }
+
+    pub fn child_sessions(&self, conductor_session_id: &str) -> SqlResult<Vec<Session>> {
+        let mut sessions = self.load_sessions()?;
+        sessions.retain(|session| session.parent_session_id == conductor_session_id);
+        Ok(sessions)
+    }
+
+    #[allow(dead_code)]
+    pub fn update_conductor_last_heartbeat(&self, session_id: &str, now_ms: i64) -> SqlResult<()> {
+        let affected = self.conn.execute(
+            "UPDATE conductor_configs SET last_heartbeat_at = ?1 WHERE session_id = ?2",
+            params![now_ms, session_id],
+        )?;
+        if affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub fn claim_due_conductor_heartbeat(&self, session_id: &str, now_ms: i64) -> SqlResult<bool> {
+        let affected = self.conn.execute(
+            "UPDATE conductor_configs
+             SET last_heartbeat_at = ?1
+             WHERE session_id = ?2
+               AND enabled = 1
+               AND last_heartbeat_at
+                    + ((CASE WHEN heartbeat_secs > 0 THEN heartbeat_secs ELSE 0 END) * 1000)
+                    <= ?1",
+            params![now_ms, session_id],
+        )?;
+        Ok(affected == 1)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
     use crate::types::{
-        ConductorActionRequest, ConductorActionStatus, ConductorActionType, SessionRole,
+        ConductorActionRequest, ConductorActionStatus, ConductorActionType, ConductorConfig,
+        SessionRole,
     };
     use serde_json::json;
 
@@ -284,6 +420,7 @@ mod tests {
 
         for (status, expected) in [
             (ConductorActionStatus::Queued, "queued"),
+            (ConductorActionStatus::Processing, "processing"),
             (ConductorActionStatus::Completed, "completed"),
             (ConductorActionStatus::Blocked, "blocked"),
             (ConductorActionStatus::Failed, "failed"),
@@ -312,6 +449,39 @@ mod tests {
 
             assert_eq!(stored_status, expected);
         }
+    }
+
+    #[test]
+    fn claim_queued_conductor_actions_moves_rows_to_processing_once() {
+        let (storage, _dir) = test_storage();
+        let mut conductor = make_test_session("conductor-1");
+        conductor.role = SessionRole::Conductor;
+        storage.save_session(&conductor).unwrap();
+        let request = ConductorActionRequest {
+            action_type: ConductorActionType::RecordChildSummary,
+            child_session_id: None,
+            payload: json!({}),
+        };
+        let action_id = storage
+            .enqueue_conductor_action("conductor-1", &request)
+            .unwrap();
+
+        let claimed = storage.claim_queued_conductor_actions().unwrap();
+        let claimed_again = storage.claim_queued_conductor_actions().unwrap();
+
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, action_id);
+        assert!(claimed_again.is_empty());
+
+        let status: String = storage
+            .conn()
+            .query_row(
+                "SELECT status FROM conductor_actions WHERE id = ?1",
+                [&action_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, ConductorActionStatus::Processing.as_str());
     }
 
     #[test]
@@ -357,5 +527,20 @@ mod tests {
         assert_eq!(row.3, "done");
         assert_eq!(row.4, r#"{"summary":"done"}"#);
         assert!(row.5 > 0);
+    }
+
+    #[test]
+    fn save_and_load_conductor_config_round_trips_last_heartbeat_at() {
+        let (storage, _dir) = test_storage();
+        let mut conductor = make_test_session("conductor-1");
+        conductor.role = SessionRole::Conductor;
+        storage.save_session(&conductor).unwrap();
+        let mut config = ConductorConfig::default_for_session("conductor-1".to_string());
+        config.last_heartbeat_at = 123_456;
+
+        storage.save_conductor_config(&config).unwrap();
+
+        let loaded = storage.get_conductor_config("conductor-1").unwrap();
+        assert_eq!(loaded, Some(config));
     }
 }

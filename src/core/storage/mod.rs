@@ -15,6 +15,7 @@ mod runs;
 mod schema;
 mod sessions;
 
+pub(crate) use conductors::QueuedConductorAction;
 #[allow(unused_imports)]
 pub use cost_events::{CostEvent, CostTotals};
 

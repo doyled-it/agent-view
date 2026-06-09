@@ -326,6 +326,7 @@ pub struct ConductorConfig {
     pub session_id: String,
     pub mode: ConductorMode,
     pub heartbeat_secs: i64,
+    pub last_heartbeat_at: i64,
     pub max_children: i32,
     pub max_actions_per_tick: i32,
     pub allow_spawn_child: bool,
@@ -340,6 +341,7 @@ impl ConductorConfig {
             session_id,
             mode: ConductorMode::Autonomous,
             heartbeat_secs: 900,
+            last_heartbeat_at: 0,
             max_children: 8,
             max_actions_per_tick: 5,
             allow_spawn_child: true,
@@ -381,6 +383,7 @@ impl ConductorActionType {
 #[serde(rename_all = "snake_case")]
 pub enum ConductorActionStatus {
     Queued,
+    Processing,
     Completed,
     Blocked,
     Failed,
@@ -391,6 +394,7 @@ impl ConductorActionStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Queued => "queued",
+            Self::Processing => "processing",
             Self::Completed => "completed",
             Self::Blocked => "blocked",
             Self::Failed => "failed",
@@ -919,6 +923,7 @@ mod tests {
     #[test]
     fn test_conductor_action_status_strings() {
         assert_eq!(ConductorActionStatus::Queued.as_str(), "queued");
+        assert_eq!(ConductorActionStatus::Processing.as_str(), "processing");
         assert_eq!(ConductorActionStatus::Completed.as_str(), "completed");
         assert_eq!(ConductorActionStatus::Blocked.as_str(), "blocked");
         assert_eq!(ConductorActionStatus::Failed.as_str(), "failed");

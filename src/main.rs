@@ -336,6 +336,9 @@ fn run_tui(
     let bg_sound = config.notifications.sound;
     let _bg_handle = crate::poller::spawn(Arc::clone(&attach_state), event_state.clone(), bg_sound);
 
+    // Spawn conductor worker
+    let _conductor_worker = crate::core::conductor::worker::spawn();
+
     // Spawn usage monitor
     let (usage_shared, _usage_thread) = crate::core::usage::spawn_monitor();
     app.usage_state.shared = Some(usage_shared);

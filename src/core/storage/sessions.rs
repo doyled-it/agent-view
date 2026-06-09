@@ -498,6 +498,7 @@ mod tests {
             session_id: "c1".to_string(),
             mode: ConductorMode::Autonomous,
             heartbeat_secs: 120,
+            last_heartbeat_at: 0,
             max_children: 3,
             max_actions_per_tick: 2,
             allow_spawn_child: false,
