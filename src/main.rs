@@ -67,6 +67,11 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Internal: read-only conductor child session sidecar panel
+    ConductorPanel {
+        /// The conductor session ID to display children for
+        session_id: String,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -119,6 +124,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(std::io::Error::other)?;
         println!("{}", action_id);
         return Ok(());
+    }
+
+    if let Some(Commands::ConductorPanel { session_id }) = &cli.command {
+        return crate::core::conductor::panel::run(session_id.clone());
     }
 
     // Verify tmux is available
@@ -349,40 +358,14 @@ fn run_tui(
 
     // Handle --attach: immediately attach to the session
     if let Some(session_id) = app.attach_session.take() {
-        if let Some(session) = app.sessions.iter().find(|s| s.id == session_id) {
-            if !session.tmux_session.is_empty() {
-                let tmux_name = session.tmux_session.clone();
-                if let Ok(mut guard) = attach_state.lock() {
-                    guard.attached_session = Some(tmux_name.clone());
-                }
-
-                disable_raw_mode()?;
-                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-                let _ = crate::core::tmux::attach_session_sync(&tmux_name);
-
-                if let Ok(mut guard) = attach_state.lock() {
-                    guard.suppress_queue.push(tmux_name.clone());
-                    guard.attached_session = None;
-                }
-
-                enable_raw_mode()?;
-                execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                terminal.clear()?;
-
-                // Fresh reload after returning; restore cursor to attached session
-                if let Ok(sessions) = storage.load_sessions() {
-                    app.sessions = sessions;
-                    app.groups = storage.load_groups().unwrap_or_default();
-                    app.rebuild_list_rows();
-                    if let Some(pos) = app.list_rows.iter().position(|row| {
-                        matches!(row, crate::core::groups::ListRow::Session { session, .. } if session.tmux_session == tmux_name)
-                    }) {
-                        app.selected_index = pos;
-                    }
-                }
-            }
-        }
+        crate::input::attach_session_by_id(
+            &mut app,
+            &session_id,
+            &storage,
+            &mut terminal,
+            &attach_state,
+            true,
+        )?;
     }
 
     loop {
@@ -522,6 +505,17 @@ fn run_tui(
 
         if app.should_quit {
             break;
+        }
+
+        if let Some(session_id) = app.attach_session.take() {
+            crate::input::attach_session_by_id(
+                &mut app,
+                &session_id,
+                &storage,
+                &mut terminal,
+                &attach_state,
+                true,
+            )?;
         }
 
         // Poll storage for changes from the background thread

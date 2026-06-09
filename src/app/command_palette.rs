@@ -22,6 +22,19 @@ mod tests {
 
         assert_eq!(item.label, "New Child Session");
     }
+
+    #[test]
+    fn command_palette_includes_raw_attach_action() {
+        let palette = CommandPalette::new();
+
+        let item = palette
+            .items
+            .iter()
+            .find(|item| item.action == CommandAction::RawAttachSession)
+            .expect("palette should include raw attach action");
+
+        assert_eq!(item.label, "Raw Attach Session");
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +48,7 @@ pub struct CommandItem {
 pub enum CommandAction {
     NewSession,
     NewChildSession,
+    RawAttachSession,
     StopSession,
     RestartSession,
     DeleteSession,
@@ -74,6 +88,11 @@ impl CommandPalette {
                 label: "New Child Session".to_string(),
                 key_hint: String::new(),
                 action: CommandAction::NewChildSession,
+            },
+            CommandItem {
+                label: "Raw Attach Session".to_string(),
+                key_hint: String::new(),
+                action: CommandAction::RawAttachSession,
             },
             CommandItem {
                 label: "Stop Session".to_string(),

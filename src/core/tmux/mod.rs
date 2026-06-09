@@ -5,7 +5,7 @@ mod error;
 mod inspect;
 mod terminal;
 
-pub use attach::attach_session_sync;
+pub use attach::{attach_conductor_workspace_sync, attach_session_sync};
 pub use error::{TmuxError, TmuxResult};
 pub use inspect::attach_inspect_session_sync;
 

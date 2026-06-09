@@ -63,6 +63,93 @@ fn handle_conductor_right(
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttachRoute {
+    Normal,
+    ConductorWorkspace,
+}
+
+pub(crate) fn attach_route_for_session(
+    session: &crate::types::Session,
+    raw_attach: bool,
+) -> AttachRoute {
+    if !raw_attach && session.role == crate::types::SessionRole::Conductor {
+        AttachRoute::ConductorWorkspace
+    } else {
+        AttachRoute::Normal
+    }
+}
+
+pub fn attach_session_by_id(
+    app: &mut crate::app::App,
+    session_id: &str,
+    storage: &crate::core::storage::Storage,
+    terminal: &mut ratatui::Terminal<ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
+    attach_state: &std::sync::Arc<std::sync::Mutex<crate::core::attach_state::AttachState>>,
+    raw_attach: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::{
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen},
+    };
+
+    let Some(session) = app
+        .sessions
+        .iter()
+        .find(|session| session.id == session_id)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    if session.tmux_session.is_empty() || session.status == crate::types::SessionStatus::Stopped {
+        return Ok(());
+    }
+
+    let tmux_name = session.tmux_session.clone();
+    let route = attach_route_for_session(&session, raw_attach);
+    if let Ok(mut guard) = attach_state.lock() {
+        guard.attached_session = Some(tmux_name.clone());
+    }
+
+    disable_raw_mode()?;
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1bc");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+
+    let attach_result = match route {
+        AttachRoute::Normal => crate::core::tmux::attach_session_sync(&tmux_name).map(|_| ()),
+        AttachRoute::ConductorWorkspace => {
+            crate::core::tmux::attach_conductor_workspace_sync(&tmux_name, &session.id)
+        }
+    };
+
+    if let Ok(mut guard) = attach_state.lock() {
+        guard.suppress_queue.push(tmux_name.clone());
+        guard.attached_session = None;
+    }
+
+    enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.clear()?;
+
+    if let Ok(sessions) = storage.load_sessions() {
+        app.sessions = sessions;
+        app.groups = storage.load_groups().unwrap_or_default();
+        app.rebuild_list_rows();
+        if let Some(pos) = app.list_rows.iter().position(|row| {
+            matches!(row, crate::core::groups::ListRow::Session { session, .. } if session.tmux_session == tmux_name)
+        }) {
+            app.selected_index = pos;
+        }
+    }
+
+    if let Err(error) = attach_result {
+        app.toast.message = Some(format!("Attach failed: {}", error));
+        app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+    }
+
+    Ok(())
+}
+
 pub fn handle_main_key(
     app: &mut crate::app::App,
     key: crossterm::event::KeyEvent,
@@ -72,10 +159,6 @@ pub fn handle_main_key(
     attach_state: &std::sync::Arc<std::sync::Mutex<crate::core::attach_state::AttachState>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use crossterm::{
-        execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen},
-    };
 
     // Handle routine overlay input before the main key dispatch
     if let crate::app::Overlay::NewRoutine(_) = &app.overlay {
@@ -175,48 +258,8 @@ pub fn handle_main_key(
                 app.groups = storage.load_groups().unwrap_or_default();
                 app.rebuild_list_rows();
             } else if let Some(session) = app.selected_session() {
-                if !session.tmux_session.is_empty()
-                    && session.status != crate::types::SessionStatus::Stopped
-                {
-                    let tmux_name = session.tmux_session.clone();
-                    if let Ok(mut guard) = attach_state.lock() {
-                        guard.attached_session = Some(tmux_name.clone());
-                    }
-
-                    // Leave TUI for attach
-                    disable_raw_mode()?;
-                    // Full terminal reset (\033c) clears screen, scrollback,
-                    // alternate screen state, and all attributes in one shot.
-                    // This prevents the scroll-to-bottom effect while also
-                    // restoring normal terminal mode for paste etc.
-                    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1bc");
-                    let _ = std::io::Write::flush(&mut std::io::stdout());
-
-                    let _ = crate::core::tmux::attach_session_sync(&tmux_name);
-
-                    if let Ok(mut guard) = attach_state.lock() {
-                        guard.suppress_queue.push(tmux_name.clone());
-                        guard.attached_session = None;
-                    }
-
-                    // Re-enter TUI
-                    enable_raw_mode()?;
-                    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                    terminal.clear()?;
-
-                    // Fresh reload after returning
-                    if let Ok(sessions) = storage.load_sessions() {
-                        app.sessions = sessions;
-                        app.groups = storage.load_groups().unwrap_or_default();
-                        app.rebuild_list_rows();
-                        // Restore cursor to the session we just detached from
-                        if let Some(pos) = app.list_rows.iter().position(|row| {
-                            matches!(row, crate::core::groups::ListRow::Session { session, .. } if session.tmux_session == tmux_name)
-                        }) {
-                            app.selected_index = pos;
-                        }
-                    }
-                }
+                let session_id = session.id.clone();
+                attach_session_by_id(app, &session_id, storage, terminal, attach_state, false)?;
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('s')) => {
@@ -608,6 +651,27 @@ mod tests {
             servers.iter().map(|server| server.id.as_str()).collect();
         let expected: std::collections::BTreeSet<_> = expected.iter().copied().collect();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn attach_route_uses_workspace_only_for_conductor_enter() {
+        let mut session = crate::core::storage::test_helpers::make_test_session("s1");
+
+        session.role = crate::types::SessionRole::Normal;
+        assert_eq!(
+            super::attach_route_for_session(&session, false),
+            super::AttachRoute::Normal
+        );
+
+        session.role = crate::types::SessionRole::Conductor;
+        assert_eq!(
+            super::attach_route_for_session(&session, false),
+            super::AttachRoute::ConductorWorkspace
+        );
+        assert_eq!(
+            super::attach_route_for_session(&session, true),
+            super::AttachRoute::Normal
+        );
     }
 
     #[test]

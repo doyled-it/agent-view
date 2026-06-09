@@ -160,6 +160,15 @@ pub fn execute_command_action(
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
             }
         },
+        CommandAction::RawAttachSession => {
+            if let Some(session) = app.selected_session() {
+                if !session.tmux_session.is_empty()
+                    && session.status != crate::types::SessionStatus::Stopped
+                {
+                    app.attach_session = Some(session.id.clone());
+                }
+            }
+        }
         CommandAction::ManageMcpProfiles => {
             open_mcp_profiles_overlay(app);
         }
