@@ -42,6 +42,7 @@ When working with AI coding agents, you often need multiple agents running on di
 - **Sort Modes** -- Cycle through status, activity, name, and creation time sorting (Shift+S)
 - **Search** -- Fuzzy search across session names (press `/`)
 - **Command Palette** -- Quick access to all actions (Ctrl+K)
+- **Conductor Sessions** -- Create orchestrator sessions with expandable child sessions and a Sub-session Details panel
 - **Account Usage Tracking** -- Live display of Claude account-level rate limits (session, weekly, per-model) with colored progress bars
 - **Token Tracking** -- Monitor token usage for Claude sessions
 - **Session Uptime** -- Tracks time since last tmux session start, not just creation date
@@ -76,6 +77,14 @@ permission replied maps back to Running. Pane parsing still covers idle, busy,
 waiting, exited, and draft states when hook data is absent.
 
 Sessions are sorted with the most attention-needing states first (Crashed, Waiting, Draft, Paused), so anything wanting your eyes floats to the top of the list.
+
+### Conductor sessions
+
+Conductor sessions are parent sessions for coordinating related child sessions in the same repository or project. Create a conductor from the New Session form, then use **New Child Session** from the command palette to create sessions under it. Child sessions inherit the conductor grouping context and appear nested beneath the conductor when the conductor row is expanded.
+
+Use `l` / `Right` to expand a conductor tree and `h` / `Left` to collapse it. Pressing `h` on a child row moves selection back to its parent conductor. Pressing `Enter` on a conductor opens the conductor tmux session with a right-side read-only Sub-session Details panel; normal sessions and child sessions still attach directly. Use **Raw Attach Session** from the command palette if you want to attach to a conductor without the sidecar panel.
+
+The main session detail pane keeps the normal Preview and Details panes, and adds Sub-session Details for selected conductors or children so the conductor hierarchy is visible without entering tmux.
 
 ### MCP profiles for new sessions
 
@@ -217,9 +226,9 @@ av
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Navigate up/down |
-| `Enter` | Attach to session / toggle group |
-| `l` / `Right` | Expand group (or attach) |
-| `h` / `Left` | Collapse group |
+| `Enter` | Attach to session or conductor workspace / toggle group |
+| `l` / `Right` | Expand group or conductor tree |
+| `h` / `Left` | Collapse group or conductor tree; on a child, select parent |
 | `1`-`9` | Jump to group by number |
 | `/` | Search sessions |
 | `Ctrl+K` | Command palette |
