@@ -72,6 +72,38 @@ impl Storage {
     }
 
     #[allow(dead_code)]
+    pub fn insert_conductor_event(
+        &self,
+        conductor_session_id: &str,
+        child_session_id: Option<&str>,
+        event_type: &str,
+        message: &str,
+        payload: &serde_json::Value,
+    ) -> SqlResult<String> {
+        let event_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let payload = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
+
+        self.conn.execute(
+            "INSERT INTO conductor_events (
+                id, conductor_session_id, child_session_id, event_type, message, payload,
+                created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                event_id,
+                conductor_session_id,
+                child_session_id.unwrap_or(""),
+                event_type,
+                message,
+                payload,
+                now,
+            ],
+        )?;
+
+        Ok(event_id)
+    }
+
+    #[allow(dead_code)]
     pub fn get_conductor_config(&self, session_id: &str) -> SqlResult<Option<ConductorConfig>> {
         let result = self.conn.query_row(
             "SELECT session_id, mode, heartbeat_secs, max_children, max_actions_per_tick,
@@ -280,5 +312,50 @@ mod tests {
 
             assert_eq!(stored_status, expected);
         }
+    }
+
+    #[test]
+    fn insert_conductor_event_creates_event_row() {
+        let (storage, _dir) = test_storage();
+        let mut conductor = make_test_session("conductor-1");
+        conductor.role = SessionRole::Conductor;
+        storage.save_session(&conductor).unwrap();
+
+        let event_id = storage
+            .insert_conductor_event(
+                "conductor-1",
+                Some("child1"),
+                "summary",
+                "done",
+                &json!({"summary": "done"}),
+            )
+            .unwrap();
+
+        let row = storage
+            .conn()
+            .query_row(
+                "SELECT conductor_session_id, child_session_id, event_type, message, payload,
+                        created_at
+                 FROM conductor_events WHERE id = ?1",
+                [&event_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(row.0, "conductor-1");
+        assert_eq!(row.1, "child1");
+        assert_eq!(row.2, "summary");
+        assert_eq!(row.3, "done");
+        assert_eq!(row.4, r#"{"summary":"done"}"#);
+        assert!(row.5 > 0);
     }
 }

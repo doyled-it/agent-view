@@ -6,6 +6,7 @@ mod types;
 mod ui;
 
 use clap::Parser;
+use std::io::Read;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -58,6 +59,14 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Queue a conductor action request
+    ConductorAction {
+        /// The conductor session ID that owns the action
+        conductor_session_id: String,
+        /// JSON action request. If omitted, stdin is read.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -86,6 +95,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(Commands::ExecRoutine { routine_id }) = &cli.command {
         return crate::core::routine::exec_routine(routine_id).map_err(|e| e.into());
+    }
+
+    if let Some(Commands::ConductorAction {
+        conductor_session_id,
+        args,
+    }) = &cli.command
+    {
+        let input = if args.is_empty() {
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            input
+        } else {
+            args.join(" ")
+        };
+        let storage = crate::core::storage::Storage::open_default()?;
+        storage.migrate()?;
+        let action_id = crate::core::conductor::actions::enqueue_action_from_json(
+            &storage,
+            conductor_session_id,
+            &input,
+        )
+        .map_err(std::io::Error::other)?;
+        println!("{}", action_id);
+        return Ok(());
     }
 
     // Verify tmux is available
