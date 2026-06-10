@@ -16,6 +16,12 @@ use std::time::Instant;
 
 pub const SESSION_PREFIX: &str = "agentorch_";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxSessionInfo {
+    pub name: String,
+    pub attached: bool,
+}
+
 /// Cache of tmux session activity timestamps
 pub struct SessionCache {
     data: HashMap<String, i64>,
@@ -120,6 +126,53 @@ pub fn is_tmux_available() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// List tmux sessions with their attachment state.
+pub fn list_sessions() -> TmuxResult<Vec<TmuxSessionInfo>> {
+    let output = Command::new("tmux")
+        .args([
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{session_attached}",
+        ])
+        .output()
+        .map_err(|e| TmuxError::CommandFailed(format!("Failed to list tmux sessions: {}", e)))?;
+
+    if !output.status.success() {
+        let detail = command_output_detail(&output.stdout, &output.stderr);
+        if detail.contains("no server running") {
+            return Ok(Vec::new());
+        }
+        return Err(TmuxError::CommandFailed(tmux_failure_message(
+            "list-sessions",
+            &output.status.to_string(),
+            &output.stdout,
+            &output.stderr,
+        )));
+    }
+
+    Ok(parse_session_infos(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn parse_session_infos(output: &str) -> Vec<TmuxSessionInfo> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (name, attached_count) = line.split_once('\t')?;
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let attached = attached_count.trim().parse::<u32>().unwrap_or(0) > 0;
+            Some(TmuxSessionInfo {
+                name: name.to_string(),
+                attached,
+            })
+        })
+        .collect()
 }
 
 /// Generate a unique tmux session name from a title
@@ -408,6 +461,31 @@ mod tests {
         assert_eq!(
             message,
             "tmux new-session failed with status exit status: 1: create window failed: fork failed: Device not configured"
+        );
+    }
+
+    #[test]
+    fn test_parse_session_infos_reads_attachment_state() {
+        let sessions = parse_session_infos(
+            "agentorch_known\t0\nagentorch_attached\t2\nmissing-tab\n\t1\npersonal\tbad\n",
+        );
+
+        assert_eq!(
+            sessions,
+            vec![
+                TmuxSessionInfo {
+                    name: "agentorch_known".to_string(),
+                    attached: false,
+                },
+                TmuxSessionInfo {
+                    name: "agentorch_attached".to_string(),
+                    attached: true,
+                },
+                TmuxSessionInfo {
+                    name: "personal".to_string(),
+                    attached: false,
+                },
+            ]
         );
     }
 

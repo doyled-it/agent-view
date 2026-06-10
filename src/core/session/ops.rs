@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::core::mcp::McpSelection;
 use crate::core::runner::{runner_for, RunnerLaunch, RunnerLaunchContext, RunnerLaunchError};
@@ -357,6 +357,49 @@ impl SessionOps {
         Ok(())
     }
 
+    /// Find detached Agent View tmux sessions that no stored session references.
+    pub fn find_orphan_tmux_sessions(&self, storage: &Storage) -> SessionResult<Vec<String>> {
+        let tmux_sessions = tmux::list_sessions()?;
+        self.find_orphan_tmux_sessions_from(storage, &tmux_sessions)
+    }
+
+    fn find_orphan_tmux_sessions_from(
+        &self,
+        storage: &Storage,
+        tmux_sessions: &[tmux::TmuxSessionInfo],
+    ) -> SessionResult<Vec<String>> {
+        let sessions = storage
+            .load_sessions()
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
+        let known: HashSet<String> = sessions
+            .iter()
+            .map(|s| s.tmux_session.clone())
+            .filter(|name| !name.is_empty())
+            .collect();
+
+        Ok(tmux_sessions
+            .iter()
+            .filter(|session| session.name.starts_with(tmux::SESSION_PREFIX))
+            .filter(|session| !session.attached)
+            .filter(|session| !known.contains(&session.name))
+            .map(|session| session.name.clone())
+            .collect())
+    }
+
+    /// Kill detached Agent View tmux sessions that are no longer in storage.
+    pub fn cleanup_orphan_tmux_sessions(
+        &self,
+        storage: &Storage,
+        cache: &mut SessionCache,
+    ) -> SessionResult<Vec<String>> {
+        let orphan_sessions = self.find_orphan_tmux_sessions(storage)?;
+        for name in &orphan_sessions {
+            tmux::kill_session(name)?;
+            cache.remove(name);
+        }
+        Ok(orphan_sessions)
+    }
+
     /// Finish a session: kill tmux, remove the worktree (force, to nuke any
     /// uncommitted scratch), and optionally delete the branch when it has
     /// been merged into the repository's default upstream (`main` or
@@ -649,6 +692,43 @@ mod tests {
         // Main repo worktree is excluded; orphan-1 has no session row → orphan.
         assert!(orphans.iter().any(|w| w.contains("orphan-1")));
         assert!(!orphans.iter().any(|w| w == &path));
+    }
+
+    #[test]
+    fn test_find_orphan_tmux_sessions_filters_to_detached_untracked_agent_sessions() {
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut known = crate::core::storage::test_helpers::make_test_session("known");
+        known.tmux_session = "agentorch_known".to_string();
+        storage.save_session(&known).unwrap();
+
+        let tmux_sessions = vec![
+            crate::core::tmux::TmuxSessionInfo {
+                name: "agentorch_known".to_string(),
+                attached: false,
+            },
+            crate::core::tmux::TmuxSessionInfo {
+                name: "agentorch_orphan".to_string(),
+                attached: false,
+            },
+            crate::core::tmux::TmuxSessionInfo {
+                name: "agentorch_attached-orphan".to_string(),
+                attached: true,
+            },
+            crate::core::tmux::TmuxSessionInfo {
+                name: "__agentview_meta_usage".to_string(),
+                attached: false,
+            },
+            crate::core::tmux::TmuxSessionInfo {
+                name: "personal".to_string(),
+                attached: false,
+            },
+        ];
+
+        let orphans = SessionOps
+            .find_orphan_tmux_sessions_from(&storage, &tmux_sessions)
+            .unwrap();
+
+        assert_eq!(orphans, vec!["agentorch_orphan".to_string()]);
     }
 
     fn create_options(title: &str, role: SessionRole) -> SessionCreateOptions {

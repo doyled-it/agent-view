@@ -267,6 +267,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.rebuild_list_rows();
     }
 
+    // Clean up detached tmux sessions left behind without a storage record.
+    let session_ops = crate::core::session::SessionOps;
+    let mut cleanup_cache = crate::core::tmux::SessionCache::new();
+    if let Ok(orphan_sessions) =
+        session_ops.cleanup_orphan_tmux_sessions(&storage, &mut cleanup_cache)
+    {
+        if !orphan_sessions.is_empty() {
+            app.toast.message = Some(format!(
+                "Cleaned up {} orphan tmux session(s)",
+                orphan_sessions.len()
+            ));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+        }
+    }
+
     // If --attach was passed, store for immediate attach after TUI starts
     if let Some(ref session_id) = cli.attach {
         app.attach_session = Some(session_id.clone());
