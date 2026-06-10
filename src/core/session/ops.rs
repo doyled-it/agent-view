@@ -14,9 +14,13 @@ use super::generate_title;
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    use std::cell::RefCell;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static SKIP_TMUX_CREATE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static SENT_KEYS: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+    }
 
     pub struct SkipTmuxCreateGuard;
 
@@ -27,12 +31,21 @@ pub(crate) mod test_support {
     }
 
     pub fn skip_tmux_create() -> SkipTmuxCreateGuard {
+        SENT_KEYS.with(|sent| sent.borrow_mut().clear());
         SKIP_TMUX_CREATE_COUNT.fetch_add(1, Ordering::SeqCst);
         SkipTmuxCreateGuard
     }
 
     pub fn should_skip_tmux_create() -> bool {
         SKIP_TMUX_CREATE_COUNT.load(Ordering::SeqCst) > 0
+    }
+
+    pub fn record_sent_keys(name: &str, keys: &str) {
+        SENT_KEYS.with(|sent| sent.borrow_mut().push((name.to_string(), keys.to_string())));
+    }
+
+    pub fn take_sent_keys() -> Vec<(String, String)> {
+        SENT_KEYS.with(|sent| std::mem::take(&mut *sent.borrow_mut()))
     }
 }
 
@@ -139,6 +152,7 @@ impl SessionOps {
         let launch_ctx =
             build_runner_launch_context(working_dir.clone(), id.clone(), requested_mcp_selection);
         let launch = build_session_launch(tool, explicit_command, &launch_ctx, hook_warning)?;
+        let mut warning = launch.warning;
 
         // NOTE: if tmux::create_session fails here, a freshly created worktree
         // at `working_dir` is leaked on disk. Task 8's orphan sweep is the
@@ -199,10 +213,19 @@ impl SessionOps {
             storage.save_conductor_config(&config).map_err(|e| {
                 SessionError::Storage(format!("Failed to save conductor config: {}", e))
             })?;
+            if let Err(error) = crate::core::conductor::instructions::send_startup_prompt(
+                &session.tmux_session,
+                &session.id,
+            ) {
+                warning = combine_warnings(
+                    warning,
+                    Some(format!("conductor startup prompt failed: {}", error)),
+                );
+            }
         }
         storage.touch().ok();
 
-        Ok((session, launch.warning))
+        Ok((session, warning))
     }
 
     /// Stop a session (kill tmux but keep the record)
@@ -770,6 +793,50 @@ mod tests {
         assert_eq!(config.heartbeat_secs, 900);
         assert_eq!(loaded.role, SessionRole::Conductor);
         assert!(loaded.conductor_expanded);
+    }
+
+    #[test]
+    fn test_create_conductor_session_sends_startup_prompt() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (session, _) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                create_options("conductor-startup", SessionRole::Conductor),
+            )
+            .unwrap();
+
+        let sent_keys = test_support::take_sent_keys();
+        assert_eq!(sent_keys.len(), 1);
+        assert_eq!(sent_keys[0].0, session.tmux_session);
+        assert!(sent_keys[0]
+            .1
+            .contains(&format!("agent-view conductor-action {}", session.id)));
+        assert!(sent_keys[0].1.contains("\"action_type\":\"spawn_child\""));
+        assert!(sent_keys[0]
+            .1
+            .contains("Do not use runner-native background agents"));
+    }
+
+    #[test]
+    fn test_create_normal_session_does_not_send_startup_prompt() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        ops.create_session(
+            &storage,
+            &mut cache,
+            create_options("normal-startup", SessionRole::Normal),
+        )
+        .unwrap();
+
+        assert!(test_support::take_sent_keys().is_empty());
     }
 
     #[test]
