@@ -166,14 +166,43 @@ pub fn attach_conductor_workspace_sync(tmux_name: &str, session_id: &str) -> Tmu
     let binary_path = std::env::current_exe()?;
     let binary_path = binary_path.to_string_lossy();
     let commands = build_conductor_workspace_commands(tmux_name, session_id, &binary_path);
-    let main_pane = capture_target_pane_id(tmux_name)?;
-    let sidecar_split_command = retarget_tmux_command(&commands[0], &main_pane);
-    let sidecar_pane = split_conductor_sidecar(&sidecar_split_command)?;
+    attach_conductor_workspace_core(
+        || capture_target_pane_id(tmux_name),
+        |main_pane| {
+            let sidecar_split_command = retarget_tmux_command(&commands[0], main_pane);
+            split_conductor_sidecar(&sidecar_split_command)
+        },
+        |main_pane| run_tmux_command(&build_select_pane_command(main_pane)),
+        || attach_session_sync(tmux_name).map(|_| ()),
+        cleanup_tmux_pane,
+    )
+}
+
+fn attach_conductor_workspace_core<C, S, P, A, K>(
+    capture_main_pane: C,
+    split_sidecar: S,
+    select_main_pane: P,
+    mut attach_normal: A,
+    cleanup_sidecar: K,
+) -> TmuxResult<()>
+where
+    C: FnOnce() -> TmuxResult<String>,
+    S: FnOnce(&str) -> TmuxResult<String>,
+    P: FnOnce(&str) -> TmuxResult<()>,
+    A: FnMut() -> TmuxResult<()>,
+    K: FnOnce(&str),
+{
+    let main_pane = capture_main_pane()?;
+    let sidecar_pane = match split_sidecar(&main_pane) {
+        Ok(sidecar_pane) => sidecar_pane,
+        Err(_) => return attach_normal(),
+    };
+
     let attach_result = (|| {
-        run_tmux_command(&build_select_pane_command(&main_pane))?;
-        attach_session_sync(tmux_name).map(|_| ())
+        select_main_pane(&main_pane)?;
+        attach_normal()
     })();
-    cleanup_tmux_pane(&sidecar_pane);
+    cleanup_sidecar(&sidecar_pane);
     attach_result
 }
 
@@ -402,6 +431,106 @@ mod tests {
         assert_eq!(
             build_kill_pane_command("%42"),
             vec!["kill-pane", "-t", "%42"]
+        );
+    }
+
+    #[test]
+    fn conductor_workspace_falls_back_to_normal_attach_when_sidecar_split_fails() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let result = attach_conductor_workspace_core(
+            {
+                let events = Rc::clone(&events);
+                move || {
+                    events.borrow_mut().push("capture".to_string());
+                    Ok("%1".to_string())
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move |pane| {
+                    events.borrow_mut().push(format!("split:{pane}"));
+                    Err(TmuxError::CommandFailed("out of ptys".to_string()))
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move |pane| {
+                    events.borrow_mut().push(format!("select:{pane}"));
+                    Ok(())
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move || {
+                    events.borrow_mut().push("attach".to_string());
+                    Ok(())
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move |pane| {
+                    events.borrow_mut().push(format!("cleanup:{pane}"));
+                }
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["capture", "split:%1", "attach"]
+        );
+    }
+
+    #[test]
+    fn conductor_workspace_selects_attaches_and_cleans_up_sidecar_when_split_succeeds() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let result = attach_conductor_workspace_core(
+            {
+                let events = Rc::clone(&events);
+                move || {
+                    events.borrow_mut().push("capture".to_string());
+                    Ok("%1".to_string())
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move |pane| {
+                    events.borrow_mut().push(format!("split:{pane}"));
+                    Ok("%2".to_string())
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move |pane| {
+                    events.borrow_mut().push(format!("select:{pane}"));
+                    Ok(())
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move || {
+                    events.borrow_mut().push("attach".to_string());
+                    Ok(())
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move |pane| {
+                    events.borrow_mut().push(format!("cleanup:{pane}"));
+                }
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["capture", "split:%1", "select:%1", "attach", "cleanup:%2"]
         );
     }
 }
