@@ -8,8 +8,6 @@ use crate::core::storage::{QueuedConductorAction, Storage};
 use crate::types::{ConductorActionStatus, Session, SessionRole};
 
 const WORKER_INTERVAL_SECS: u64 = 5;
-const MAX_HEARTBEAT_PROMPT_CHARS: usize = 2_000;
-const MAX_HEARTBEAT_CHILDREN: usize = 12;
 
 pub fn due_conductors(storage: &Storage, now_ms: i64) -> SqlResult<Vec<Session>> {
     let mut due = Vec::new();
@@ -120,58 +118,6 @@ fn mark_action(
         .map_err(|e| format!("failed to update conductor action {}: {}", action_id, e))
 }
 
-pub fn build_heartbeat_prompt(conductor_id: &str, children: &[Session]) -> String {
-    let mut child_lines = Vec::new();
-    for child in children.iter().take(MAX_HEARTBEAT_CHILDREN) {
-        child_lines.push(format!(
-            "{}: {} [{}]",
-            child.id,
-            child.title.trim(),
-            child.status.as_str()
-        ));
-    }
-    if children.len() > MAX_HEARTBEAT_CHILDREN {
-        child_lines.push(format!(
-            "... {} more child session(s)",
-            children.len() - MAX_HEARTBEAT_CHILDREN
-        ));
-    }
-    let child_summary = if child_lines.is_empty() {
-        "No child sessions.".to_string()
-    } else {
-        child_lines.join("; ")
-    };
-    let prompt = format!(
-        concat!(
-            "Conductor heartbeat. Do not use runner-native background agents for durable child work; ",
-            "use Agent View child sessions so the user can see, enter, answer, and clean them up. ",
-            "Queue JSON actions only when useful with: agent-view conductor-action {} '<request-json>'. ",
-            "Spawn child example: {{\"action_type\":\"spawn_child\",\"payload\":{{\"title\":\"Short task name\",\"prompt\":\"Task instructions\"}}}}. ",
-            "Other actions: mark_child_needs_user, send_child_response, record_child_summary. ",
-            "Children: {}"
-        ),
-        conductor_id, child_summary
-    );
-    truncate_chars(&prompt, MAX_HEARTBEAT_PROMPT_CHARS)
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let mut truncated: String = value.chars().take(max_chars.saturating_sub(3)).collect();
-    truncated.push_str("...");
-    truncated
-}
-
-pub fn send_heartbeat_prompt(storage: &Storage, conductor: &Session) -> Result<(), String> {
-    let children = storage
-        .child_sessions(&conductor.id)
-        .map_err(|e| e.to_string())?;
-    let prompt = build_heartbeat_prompt(&conductor.id, &children);
-    crate::core::tmux::send_keys(&conductor.tmux_session, &prompt).map_err(|e| e.to_string())
-}
-
 pub fn run_once(storage: &Storage, now_ms: i64) -> Result<(), String> {
     process_queued_actions(storage)?;
     let due = due_conductors(storage, now_ms).map_err(|e| e.to_string())?;
@@ -188,24 +134,6 @@ pub fn run_once(storage: &Storage, now_ms: i64) -> Result<(), String> {
                 continue;
             }
         }
-
-        match send_heartbeat_prompt(storage, &conductor) {
-            Ok(()) => {}
-            Err(error) => {
-                if let Err(reset_error) =
-                    make_heartbeat_due_for_retry(storage, &conductor.id, now_ms)
-                {
-                    errors.push(format!(
-                        "failed to reset conductor heartbeat {} after send failure: {}",
-                        conductor.id, reset_error
-                    ));
-                }
-                errors.push(format!(
-                    "failed to send conductor heartbeat {}: {}",
-                    conductor.id, error
-                ));
-            }
-        }
     }
 
     if errors.is_empty() {
@@ -213,22 +141,6 @@ pub fn run_once(storage: &Storage, now_ms: i64) -> Result<(), String> {
     } else {
         Err(errors.join("; "))
     }
-}
-
-fn make_heartbeat_due_for_retry(
-    storage: &Storage,
-    conductor_id: &str,
-    now_ms: i64,
-) -> Result<(), String> {
-    let config = storage
-        .get_conductor_config(conductor_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "conductor config not found".to_string())?;
-    let interval_ms = config.heartbeat_secs.max(0).saturating_mul(1_000);
-    let retry_due_timestamp = now_ms.saturating_sub(interval_ms);
-    storage
-        .update_conductor_last_heartbeat(conductor_id, retry_due_timestamp)
-        .map_err(|e| e.to_string())
 }
 
 pub fn spawn() -> thread::JoinHandle<()> {
@@ -305,22 +217,6 @@ mod tests {
         let due = super::due_conductors(&storage, 10_000).unwrap();
 
         assert!(due.is_empty());
-    }
-
-    #[test]
-    fn heartbeat_prompt_instructs_conductors_to_use_agent_view_child_sessions() {
-        let mut child = make_test_session("child-1");
-        child.title = "Investigate issue".to_string();
-        child.status = crate::types::SessionStatus::Waiting;
-
-        let prompt = super::build_heartbeat_prompt("conductor-1", &[child]);
-
-        assert!(prompt.contains("Do not use runner-native background agents"));
-        assert!(prompt.contains("agent-view conductor-action conductor-1"));
-        assert!(prompt.contains(r#""action_type":"spawn_child""#));
-        assert!(prompt.contains(r#""title":"Short task name""#));
-        assert!(prompt.contains(r#""prompt":"Task instructions""#));
-        assert!(prompt.contains("child-1: Investigate issue [waiting]"));
     }
 
     #[test]
@@ -573,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_heartbeat_send_remains_due_for_retry() {
+    fn run_once_claims_due_heartbeat_without_sending_to_runner_pane() {
         let (storage, _dir) = test_storage();
         let mut config = ConductorConfig::default_for_session("conductor-1".to_string());
         config.heartbeat_secs = 5;
@@ -585,9 +481,13 @@ mod tests {
         storage.save_conductor_config(&config).unwrap();
         let now_ms = 10_000;
 
-        let err = super::run_once(&storage, now_ms).unwrap_err();
+        super::run_once(&storage, now_ms).unwrap();
 
-        assert!(err.contains("failed to send conductor heartbeat"));
-        assert_eq!(super::due_conductors(&storage, now_ms).unwrap().len(), 1);
+        assert!(super::due_conductors(&storage, now_ms).unwrap().is_empty());
+        let config = storage
+            .get_conductor_config("conductor-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(config.last_heartbeat_at, now_ms);
     }
 }
