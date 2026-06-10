@@ -82,6 +82,8 @@ Sessions are sorted with the most attention-needing states first (Crashed, Waiti
 
 Conductor sessions are parent sessions for coordinating related child sessions in the same repository or project. Create a conductor from the New Session form, then use **New Child Session** from the command palette to create sessions under it. Child sessions inherit the conductor grouping context and appear nested beneath the conductor when the conductor row is expanded.
 
+Conductor runners receive a heartbeat instruction to use Agent View child sessions for durable child work instead of runner-native background worker features. They can queue a child spawn with `agent-view conductor-action <conductor-id> '{"action_type":"spawn_child","payload":{"title":"Short task name","prompt":"Task instructions"}}'`; the resulting child is a normal Agent View session that appears in the conductor tree and Sub-session Details.
+
 Use `l` / `Right` to expand a conductor tree and `h` / `Left` to collapse it. Pressing `h` on a child row moves selection back to its parent conductor. Pressing `Enter` on a conductor opens the conductor tmux session with a right-side read-only Sub-session Details panel; normal sessions and child sessions still attach directly. Use **Raw Attach Session** from the command palette if you want to attach to a conductor without the sidecar panel.
 
 The main session detail pane keeps the normal Preview and Details panes, and adds Sub-session Details for selected conductors or children so the conductor hierarchy is visible without entering tmux.

@@ -1,5 +1,7 @@
 use crate::core::storage::Storage;
-use crate::types::{ConductorActionRequest, ConductorActionType, Session};
+use crate::types::{
+    ConductorActionRequest, ConductorActionType, Session, SessionCreateOptions, SessionRole, Tool,
+};
 
 pub fn parse_action_request(input: &str) -> Result<ConductorActionRequest, String> {
     serde_json::from_str(input).map_err(|e| format!("invalid conductor action JSON: {}", e))
@@ -23,6 +25,7 @@ pub fn execute_action(
     request: &ConductorActionRequest,
 ) -> Result<String, String> {
     match request.action_type {
+        ConductorActionType::SpawnChild => spawn_child(storage, conductor_session_id, request),
         ConductorActionType::RecordChildSummary => {
             let child = load_conductor_child(
                 storage,
@@ -76,13 +79,62 @@ pub fn execute_action(
                 .map_err(|e| e.to_string())?;
             Ok("response sent".to_string())
         }
-        ConductorActionType::SpawnChild
-        | ConductorActionType::ReadChildSnapshot
-        | ConductorActionType::UpdateConductorPlan => Err(format!(
-            "unsupported conductor action: {}",
-            request.action_type.as_str()
-        )),
+        ConductorActionType::ReadChildSnapshot | ConductorActionType::UpdateConductorPlan => {
+            Err(format!(
+                "unsupported conductor action: {}",
+                request.action_type.as_str()
+            ))
+        }
     }
+}
+
+fn spawn_child(
+    storage: &Storage,
+    conductor_session_id: &str,
+    request: &ConductorActionRequest,
+) -> Result<String, String> {
+    let conductor = load_conductor(storage, conductor_session_id)?;
+    let title = required_payload_string(&request.payload, "title")?;
+    let prompt = required_payload_string(&request.payload, "prompt")?;
+    let tool = optional_tool(&request.payload, "tool", conductor.tool)?;
+    let project_path = optional_payload_string(&request.payload, "project_path")
+        .unwrap_or_else(|| conductor.project_path.clone());
+
+    let mut cache = crate::core::tmux::SessionCache::new();
+    let ops = crate::core::session::SessionOps;
+    let (child, _) = ops
+        .create_session(
+            storage,
+            &mut cache,
+            SessionCreateOptions {
+                title: Some(title),
+                project_path,
+                group_path: None,
+                tool,
+                command: None,
+                mcp_selection: Some(conductor.mcp_selection.clone()),
+                role: SessionRole::Normal,
+                parent_session_id: Some(conductor.id),
+                conductor_config: None,
+                worktree: None,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+    send_initial_child_prompt(&child.tmux_session, &prompt)?;
+
+    Ok(format!("child spawned: {}", child.id))
+}
+
+fn load_conductor(storage: &Storage, conductor_session_id: &str) -> Result<Session, String> {
+    let conductor = storage
+        .get_session(conductor_session_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("conductor session not found: {}", conductor_session_id))?;
+    if conductor.role != SessionRole::Conductor {
+        return Err("session is not a conductor".to_string());
+    }
+    Ok(conductor)
 }
 
 fn load_conductor_child(
@@ -102,10 +154,57 @@ fn load_conductor_child(
     Ok(child)
 }
 
+fn required_payload_string(payload: &serde_json::Value, key: &str) -> Result<String, String> {
+    let value = payload
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("payload.{} is required", key))?;
+    Ok(value.to_string())
+}
+
+fn optional_payload_string(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn optional_tool(
+    payload: &serde_json::Value,
+    key: &str,
+    default_tool: Tool,
+) -> Result<Tool, String> {
+    let Some(value) = optional_payload_string(payload, key) else {
+        return Ok(default_tool);
+    };
+    match value.as_str() {
+        "claude" => Ok(Tool::Claude),
+        "codex" => Ok(Tool::Codex),
+        "opencode" => Ok(Tool::Opencode),
+        "gemini" => Ok(Tool::Gemini),
+        "shell" => Ok(Tool::Shell),
+        "custom" => Ok(Tool::Custom),
+        _ => Err(format!("payload.{} has unsupported tool: {}", key, value)),
+    }
+}
+
+fn send_initial_child_prompt(tmux_session: &str, prompt: &str) -> Result<(), String> {
+    #[cfg(test)]
+    if crate::core::session::test_support::should_skip_tmux_create() {
+        return Ok(());
+    }
+
+    crate::core::tmux::send_keys(tmux_session, prompt).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::core::storage::test_helpers::{make_test_session, test_storage};
-    use crate::types::{ConductorActionRequest, ConductorActionType, SessionRole};
+    use crate::types::{ConductorActionRequest, ConductorActionType, SessionRole, Tool};
     use serde_json::json;
 
     fn conductor_event_count(storage: &crate::core::storage::Storage) -> i64 {
@@ -352,6 +451,64 @@ mod tests {
     }
 
     #[test]
+    fn executor_spawns_child_session_with_conductor_defaults() {
+        let _guard = crate::core::session::test_support::skip_tmux_create();
+        let (storage, _dir) = test_storage();
+        let mut conductor = make_test_session("conductor-1");
+        conductor.role = SessionRole::Conductor;
+        conductor.tool = Tool::Codex;
+        conductor.project_path = "/tmp/conductor-project".to_string();
+        conductor.group_path = "projects/example".to_string();
+        storage.save_session(&conductor).unwrap();
+        let request = ConductorActionRequest {
+            action_type: ConductorActionType::SpawnChild,
+            child_session_id: None,
+            payload: json!({
+                "title": "Investigate flaky test",
+                "prompt": "Find the flaky test root cause and report back."
+            }),
+        };
+
+        let result = super::execute_action(&storage, "conductor-1", &request).unwrap();
+
+        assert!(result.starts_with("child spawned: "));
+        let child_id = result.trim_start_matches("child spawned: ");
+        let child = storage.get_session(child_id).unwrap().unwrap();
+        assert_eq!(child.title, "Investigate flaky test");
+        assert_eq!(child.parent_session_id, "conductor-1");
+        assert_eq!(child.role, SessionRole::Normal);
+        assert_eq!(child.tool, Tool::Codex);
+        assert_eq!(child.project_path, "/tmp/conductor-project");
+        assert_eq!(child.group_path, "projects/example");
+    }
+
+    #[test]
+    fn spawn_child_requires_title_and_prompt() {
+        let (storage, _dir) = test_storage();
+        let mut conductor = make_test_session("conductor-1");
+        conductor.role = SessionRole::Conductor;
+        storage.save_session(&conductor).unwrap();
+
+        let missing_title = ConductorActionRequest {
+            action_type: ConductorActionType::SpawnChild,
+            child_session_id: None,
+            payload: json!({"prompt": "Do the work."}),
+        };
+        let missing_prompt = ConductorActionRequest {
+            action_type: ConductorActionType::SpawnChild,
+            child_session_id: None,
+            payload: json!({"title": "Worker"}),
+        };
+
+        let title_err = super::execute_action(&storage, "conductor-1", &missing_title).unwrap_err();
+        let prompt_err =
+            super::execute_action(&storage, "conductor-1", &missing_prompt).unwrap_err();
+
+        assert!(title_err.contains("payload.title"));
+        assert!(prompt_err.contains("payload.prompt"));
+    }
+
+    #[test]
     fn unsupported_actions_fail_instead_of_completing_as_noops() {
         let (storage, _dir) = test_storage();
         let mut conductor = make_test_session("conductor-1");
@@ -359,7 +516,6 @@ mod tests {
         storage.save_session(&conductor).unwrap();
 
         for action_type in [
-            ConductorActionType::SpawnChild,
             ConductorActionType::ReadChildSnapshot,
             ConductorActionType::UpdateConductorPlan,
         ] {

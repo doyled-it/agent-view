@@ -142,7 +142,14 @@ pub fn build_heartbeat_prompt(conductor_id: &str, children: &[Session]) -> Strin
         child_lines.join("; ")
     };
     let prompt = format!(
-        "Heartbeat check. Review child sessions and queue a JSON action only if needed with: agent-view conductor-action {} '<request-json>'. Children: {}",
+        concat!(
+            "Conductor heartbeat. Do not use runner-native background agents for durable child work; ",
+            "use Agent View child sessions so the user can see, enter, answer, and clean them up. ",
+            "Queue JSON actions only when useful with: agent-view conductor-action {} '<request-json>'. ",
+            "Spawn child example: {{\"action_type\":\"spawn_child\",\"payload\":{{\"title\":\"Short task name\",\"prompt\":\"Task instructions\"}}}}. ",
+            "Other actions: mark_child_needs_user, send_child_response, record_child_summary. ",
+            "Children: {}"
+        ),
         conductor_id, child_summary
     );
     truncate_chars(&prompt, MAX_HEARTBEAT_PROMPT_CHARS)
@@ -301,6 +308,22 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_prompt_instructs_conductors_to_use_agent_view_child_sessions() {
+        let mut child = make_test_session("child-1");
+        child.title = "Investigate issue".to_string();
+        child.status = crate::types::SessionStatus::Waiting;
+
+        let prompt = super::build_heartbeat_prompt("conductor-1", &[child]);
+
+        assert!(prompt.contains("Do not use runner-native background agents"));
+        assert!(prompt.contains("agent-view conductor-action conductor-1"));
+        assert!(prompt.contains(r#""action_type":"spawn_child""#));
+        assert!(prompt.contains(r#""title":"Short task name""#));
+        assert!(prompt.contains(r#""prompt":"Task instructions""#));
+        assert!(prompt.contains("child-1: Investigate issue [waiting]"));
+    }
+
+    #[test]
     fn process_queued_actions_completes_allowed_record_child_summary() {
         let (storage, _dir) = test_storage();
         let config = ConductorConfig::default_for_session("conductor-1".to_string());
@@ -342,6 +365,42 @@ mod tests {
         assert_eq!(event.0, "child-1");
         assert_eq!(event.1, "summary");
         assert_eq!(event.2, "ready");
+    }
+
+    #[test]
+    fn process_queued_actions_completes_allowed_spawn_child() {
+        let _guard = crate::core::session::test_support::skip_tmux_create();
+        let (storage, _dir) = test_storage();
+        let config = ConductorConfig::default_for_session("conductor-1".to_string());
+        save_conductor(&storage, "conductor-1", config);
+        let request = ConductorActionRequest {
+            action_type: ConductorActionType::SpawnChild,
+            child_session_id: None,
+            payload: json!({
+                "title": "Worker",
+                "prompt": "Do the child task."
+            }),
+        };
+        let action_id = storage
+            .enqueue_conductor_action("conductor-1", &request)
+            .unwrap();
+
+        super::process_queued_actions(&storage).unwrap();
+
+        let row: (String, String) = storage
+            .conn()
+            .query_row(
+                "SELECT status, result FROM conductor_actions WHERE id = ?1",
+                [&action_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0, ConductorActionStatus::Completed.as_str());
+        assert!(row.1.starts_with("child spawned: "));
+        let child_id = row.1.trim_start_matches("child spawned: ");
+        let child = storage.get_session(child_id).unwrap().unwrap();
+        assert_eq!(child.title, "Worker");
+        assert_eq!(child.parent_session_id, "conductor-1");
     }
 
     #[test]

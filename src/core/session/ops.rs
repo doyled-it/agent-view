@@ -13,7 +13,7 @@ use crate::types::{
 use super::generate_title;
 
 #[cfg(test)]
-mod test_support {
+pub(crate) mod test_support {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static SKIP_TMUX_CREATE_COUNT: AtomicUsize = AtomicUsize::new(0);
