@@ -71,6 +71,49 @@ pub(super) fn convert_core_line(l: ratatui_core::text::Line<'_>) -> Line<'_> {
     )
 }
 
+/// Hard-wrap a styled line to `width` display columns, preserving span styles.
+///
+/// Captured tmux panes are sized to the agent's terminal, which is often wider
+/// than the preview pane — without wrapping, over-width lines are clipped on the
+/// right. We wrap at column boundaries (like a terminal) rather than word
+/// boundaries so the resulting row count is exact, which lets the caller align
+/// the visible window to the tail without guessing wrapped heights.
+pub(super) fn wrap_line_to_width<'a>(line: Line<'a>, width: usize) -> Vec<Line<'a>> {
+    use unicode_width::UnicodeWidthChar;
+
+    if width == 0 || line.width() <= width {
+        return vec![line];
+    }
+
+    let mut rows: Vec<Line<'a>> = Vec::new();
+    let mut cur_spans: Vec<Span<'a>> = Vec::new();
+    let mut cur_width = 0usize;
+
+    for span in line.spans {
+        let style = span.style;
+        let mut buf = String::new();
+        for ch in span.content.chars() {
+            let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+            // Break before a char that would overflow, but never on an empty
+            // row (guards against a single char wider than the whole pane).
+            if cur_width > 0 && cur_width + cw > width {
+                if !buf.is_empty() {
+                    cur_spans.push(Span::styled(std::mem::take(&mut buf), style));
+                }
+                rows.push(Line::from(std::mem::take(&mut cur_spans)));
+                cur_width = 0;
+            }
+            buf.push(ch);
+            cur_width += cw;
+        }
+        if !buf.is_empty() {
+            cur_spans.push(Span::styled(buf, style));
+        }
+    }
+    rows.push(Line::from(cur_spans));
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +162,63 @@ mod tests {
 
         assert!(!modifiers.contains(Modifier::DIM));
         assert!(modifiers.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn wrap_leaves_short_lines_untouched() {
+        let line = Line::from("short");
+        let rows = wrap_line_to_width(line, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].width(), 5);
+    }
+
+    #[test]
+    fn wrap_splits_wide_line_at_column_boundary() {
+        let line = Line::from("A".repeat(25));
+        let rows = wrap_line_to_width(line, 10);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].width(), 10);
+        assert_eq!(rows[1].width(), 10);
+        assert_eq!(rows[2].width(), 5);
+        let total: usize = rows.iter().map(|r| r.width()).sum();
+        assert_eq!(total, 25);
+    }
+
+    #[test]
+    fn wrap_preserves_span_styles_across_breaks() {
+        let line = Line::from(vec![
+            Span::styled("aaaaaa", Style::default().fg(Color::Red)),
+            Span::styled("bbbbbb", Style::default().fg(Color::Blue)),
+        ]);
+        let rows = wrap_line_to_width(line, 4);
+        // 12 columns / width 4 => 3 rows.
+        assert_eq!(rows.len(), 3);
+        // Every produced span keeps either the red or blue foreground.
+        for row in &rows {
+            for span in &row.spans {
+                assert!(
+                    span.style.fg == Some(Color::Red) || span.style.fg == Some(Color::Blue),
+                    "span lost its style: {span:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wrap_handles_wide_unicode_chars() {
+        // Each CJK char is 2 columns wide; 4 chars = 8 columns, width 4 => 2 rows.
+        let line = Line::from("漢字漢字");
+        let rows = wrap_line_to_width(line, 4);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].width(), 4);
+        assert_eq!(rows[1].width(), 4);
+    }
+
+    #[test]
+    fn wrap_with_zero_width_is_noop() {
+        let line = Line::from("anything");
+        let rows = wrap_line_to_width(line, 0);
+        assert_eq!(rows.len(), 1);
     }
 
     #[test]

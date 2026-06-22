@@ -12,7 +12,7 @@ use crate::core::tokens::format_tokens;
 use crate::types::{Session, SessionStatus};
 use crate::ui::theme::{status_color, Theme};
 
-use super::compat::convert_core_line;
+use super::compat::{convert_core_line, wrap_line_to_width};
 use super::format::{format_note_age, format_session_duration, format_timestamp};
 
 /// Render the terminal preview pane
@@ -50,8 +50,11 @@ pub(super) fn render_preview(
         return;
     }
 
-    // Convert ANSI content to ratatui Text, keeping only lines that fit
+    // Convert ANSI content to ratatui Text, wrapping over-width lines (the
+    // captured pane is sized to the agent's terminal, often wider than this
+    // pane) and keeping only the tail rows that fit.
     let height = inner.height as usize;
+    let width = inner.width as usize;
 
     match preview_content.into_text() {
         Ok(core_text) => {
@@ -65,13 +68,13 @@ pub(super) fn render_preview(
             {
                 lines.pop();
             }
-            let line_count = lines.len();
-            let skip = line_count.saturating_sub(height);
-            let visible_lines: Vec<Line> = lines
+            let wrapped: Vec<Line> = lines
                 .into_iter()
-                .skip(skip)
                 .map(convert_core_line)
+                .flat_map(|l| wrap_line_to_width(l, width))
                 .collect();
+            let skip = wrapped.len().saturating_sub(height);
+            let visible_lines: Vec<Line> = wrapped.into_iter().skip(skip).collect();
             frame.render_widget(Paragraph::new(visible_lines), inner);
         }
         Err(_) => {
@@ -80,8 +83,12 @@ pub(super) fn render_preview(
             while lines.last().is_some_and(|l| l.trim().is_empty()) {
                 lines.pop();
             }
-            let skip = lines.len().saturating_sub(height);
-            let visible: Vec<Line> = lines.into_iter().skip(skip).map(Line::raw).collect();
+            let wrapped: Vec<Line> = lines
+                .into_iter()
+                .flat_map(|l| wrap_line_to_width(Line::raw(l), width))
+                .collect();
+            let skip = wrapped.len().saturating_sub(height);
+            let visible: Vec<Line> = wrapped.into_iter().skip(skip).collect();
             frame.render_widget(Paragraph::new(visible), inner);
         }
     }
@@ -376,6 +383,75 @@ mod tests {
 
     fn test_session() -> Session {
         crate::core::storage::test_helpers::make_test_session("test-session")
+    }
+
+    fn buffer_char_count(buf: &ratatui::buffer::Buffer, ch: &str) -> usize {
+        buf.content.iter().filter(|c| c.symbol() == ch).count()
+    }
+
+    #[test]
+    fn preview_wraps_wide_lines_so_full_text_is_visible() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut session = test_session();
+        session.status = SessionStatus::Running;
+
+        // A line far wider than the preview pane's inner width.
+        let wide = "A".repeat(120);
+
+        let backend = TestBackend::new(40, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+
+        terminal
+            .draw(|frame| {
+                render_preview(frame, frame.area(), &session, &theme, &wide);
+            })
+            .unwrap();
+
+        // Inner width is 38 (40 - 2 borders), height 18. 120 chars wrap to
+        // 4 rows, all of which fit — so every 'A' must be rendered.
+        let count = buffer_char_count(terminal.backend().buffer(), "A");
+        assert_eq!(
+            count, 120,
+            "expected all 120 chars visible via wrapping, got {count}"
+        );
+    }
+
+    #[test]
+    fn preview_keeps_tail_visible_when_wide_lines_wrap() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut session = test_session();
+        session.status = SessionStatus::Running;
+
+        // Many wide lines; the newest (tail) line must remain visible after
+        // wrapping pushes earlier content off the top.
+        let mut content = String::new();
+        for _ in 0..30 {
+            content.push_str(&"X".repeat(100));
+            content.push('\n');
+        }
+        content.push_str(&"Z".repeat(100));
+
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+
+        terminal
+            .draw(|frame| {
+                render_preview(frame, frame.area(), &session, &theme, &content);
+            })
+            .unwrap();
+
+        // The tail 'Z' line must be fully visible (100 chars wrapped).
+        let count = buffer_char_count(terminal.backend().buffer(), "Z");
+        assert_eq!(
+            count, 100,
+            "expected the tail line fully visible, got {count}"
+        );
     }
 
     #[test]
