@@ -25,6 +25,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml_edit",
+ "unicode-width 0.1.14",
  "ureq",
  "uuid",
  "zstd",

@@ -14,7 +14,7 @@ use crate::core::schedule::human_readable;
 use crate::types::{Routine, RoutineStep};
 use crate::ui::theme::Theme;
 
-use super::compat::convert_core_line;
+use super::compat::{convert_core_line, wrap_line_to_width};
 use super::format::truncate;
 
 pub(super) fn render_routine_preview(
@@ -39,6 +39,7 @@ pub(super) fn render_routine_preview(
     }
 
     let height = inner.height as usize;
+    let width = inner.width as usize;
 
     match preview_content.into_text() {
         Ok(core_text) => {
@@ -53,13 +54,13 @@ pub(super) fn render_routine_preview(
             {
                 lines.pop();
             }
-            let line_count = lines.len();
-            let skip = line_count.saturating_sub(height);
-            let visible_lines: Vec<Line> = lines
+            let wrapped: Vec<Line> = lines
                 .into_iter()
-                .skip(skip)
                 .map(convert_core_line)
+                .flat_map(|l| wrap_line_to_width(l, width))
                 .collect();
+            let skip = wrapped.len().saturating_sub(height);
+            let visible_lines: Vec<Line> = wrapped.into_iter().skip(skip).collect();
             frame.render_widget(Paragraph::new(visible_lines), inner);
         }
         Err(_) => {
@@ -68,8 +69,12 @@ pub(super) fn render_routine_preview(
             while lines.last().is_some_and(|l| l.trim().is_empty()) {
                 lines.pop();
             }
-            let skip = lines.len().saturating_sub(height);
-            let visible: Vec<Line> = lines.into_iter().skip(skip).map(Line::raw).collect();
+            let wrapped: Vec<Line> = lines
+                .into_iter()
+                .flat_map(|l| wrap_line_to_width(Line::raw(l), width))
+                .collect();
+            let skip = wrapped.len().saturating_sub(height);
+            let visible: Vec<Line> = wrapped.into_iter().skip(skip).collect();
             frame.render_widget(Paragraph::new(visible), inner);
         }
     }
