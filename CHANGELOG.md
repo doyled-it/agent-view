@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.1] - 2026-06-23
+
+### Changed
+
+- fix(ui): wrap preview pane lines to prevent right-side clipping (#73) (@doyled-it)
+
 ## [1.18.0] - 2026-06-08
 
 ### Changed
