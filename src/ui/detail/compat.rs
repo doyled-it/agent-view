@@ -71,47 +71,144 @@ pub(super) fn convert_core_line(l: ratatui_core::text::Line<'_>) -> Line<'_> {
     )
 }
 
-/// Hard-wrap a styled line to `width` display columns, preserving span styles.
+/// Word-wrap a styled line to `width` display columns, preserving span styles.
 ///
 /// Captured tmux panes are sized to the agent's terminal, which is often wider
 /// than the preview pane — without wrapping, over-width lines are clipped on the
-/// right. We wrap at column boundaries (like a terminal) rather than word
-/// boundaries so the resulting row count is exact, which lets the caller align
-/// the visible window to the tail without guessing wrapped heights.
+/// right. Wrapping happens at word boundaries (a word longer than the pane is
+/// hard-broken as a fallback) so prose stays readable, and the produced row
+/// count is exact, which lets the caller align the visible window to the tail
+/// without guessing wrapped heights.
+///
+/// Decorative rule lines (box-drawing borders, runs of dashes/equals — e.g. the
+/// Claude/Codex input box) carry the same meaning at any length, so they are
+/// left as a single row (clipped to the pane) rather than stacked into copies.
 pub(super) fn wrap_line_to_width<'a>(line: Line<'a>, width: usize) -> Vec<Line<'a>> {
-    use unicode_width::UnicodeWidthChar;
-
     if width == 0 || line.width() <= width {
         return vec![line];
     }
+    if is_separator_line(&line) {
+        return vec![line];
+    }
 
-    let mut rows: Vec<Line<'a>> = Vec::new();
-    let mut cur_spans: Vec<Span<'a>> = Vec::new();
-    let mut cur_width = 0usize;
+    // Flatten to styled chars so wrapping can move words across span boundaries,
+    // then coalesce each produced row back into styled spans.
+    let chars: Vec<(char, Style)> = line
+        .spans
+        .iter()
+        .flat_map(|span| {
+            let style = span.style;
+            span.content.chars().map(move |ch| (ch, style))
+        })
+        .collect();
 
-    for span in line.spans {
-        let style = span.style;
-        let mut buf = String::new();
-        for ch in span.content.chars() {
-            let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-            // Break before a char that would overflow, but never on an empty
-            // row (guards against a single char wider than the whole pane).
-            if cur_width > 0 && cur_width + cw > width {
-                if !buf.is_empty() {
-                    cur_spans.push(Span::styled(std::mem::take(&mut buf), style));
-                }
-                rows.push(Line::from(std::mem::take(&mut cur_spans)));
-                cur_width = 0;
-            }
-            buf.push(ch);
-            cur_width += cw;
+    word_wrap_chars(&chars, width)
+        .into_iter()
+        .map(chars_to_line)
+        .collect()
+}
+
+/// Greedy word-wrap over styled chars. Breaks at whitespace; a single token
+/// wider than `width` is hard-broken at column boundaries.
+fn word_wrap_chars(chars: &[(char, Style)], width: usize) -> Vec<Vec<(char, Style)>> {
+    use unicode_width::UnicodeWidthChar;
+
+    let char_w = |c: char| UnicodeWidthChar::width(c).unwrap_or(0);
+
+    let mut rows: Vec<Vec<(char, Style)>> = Vec::new();
+    let mut cur: Vec<(char, Style)> = Vec::new();
+    let mut cur_w = 0usize;
+
+    // Split into tokens of all-whitespace or all-non-whitespace runs.
+    let mut i = 0;
+    while i < chars.len() {
+        let space = chars[i].0.is_whitespace();
+        let start = i;
+        while i < chars.len() && chars[i].0.is_whitespace() == space {
+            i += 1;
         }
-        if !buf.is_empty() {
-            cur_spans.push(Span::styled(buf, style));
+        let token = &chars[start..i];
+        let token_w: usize = token.iter().map(|&(c, _)| char_w(c)).sum();
+
+        if cur_w + token_w <= width {
+            cur.extend_from_slice(token);
+            cur_w += token_w;
+        } else if space {
+            // Whitespace at a wrap point is dropped instead of leading the next row.
+            rows.push(std::mem::take(&mut cur));
+            cur_w = 0;
+        } else if token_w <= width {
+            // Word fits on a fresh row.
+            if !cur.is_empty() {
+                rows.push(std::mem::take(&mut cur));
+            }
+            cur.extend_from_slice(token);
+            cur_w = token_w;
+        } else {
+            // Word longer than the pane: hard-break across rows.
+            for &(c, st) in token {
+                let cw = char_w(c);
+                if cur_w > 0 && cur_w + cw > width {
+                    rows.push(std::mem::take(&mut cur));
+                    cur_w = 0;
+                }
+                cur.push((c, st));
+                cur_w += cw;
+            }
         }
     }
-    rows.push(Line::from(cur_spans));
+    rows.push(cur);
     rows
+}
+
+/// Coalesce consecutive same-style chars back into styled spans.
+fn chars_to_line<'a>(chars: Vec<(char, Style)>) -> Line<'a> {
+    let mut spans: Vec<Span<'a>> = Vec::new();
+    let mut buf = String::new();
+    let mut cur_style: Option<Style> = None;
+
+    for (ch, style) in chars {
+        match cur_style {
+            Some(s) if s == style => buf.push(ch),
+            _ => {
+                if let Some(s) = cur_style {
+                    spans.push(Span::styled(std::mem::take(&mut buf), s));
+                }
+                buf.push(ch);
+                cur_style = Some(style);
+            }
+        }
+    }
+    if let Some(s) = cur_style {
+        spans.push(Span::styled(buf, s));
+    }
+    Line::from(spans)
+}
+
+/// True if the line is purely decorative (whitespace plus box-drawing or rule
+/// characters), so wrapping it into multiple rows would only add visual noise.
+fn is_separator_line(line: &Line) -> bool {
+    let mut saw_decoration = false;
+    for span in &line.spans {
+        for ch in span.content.chars() {
+            if ch.is_whitespace() {
+                continue;
+            }
+            if !is_rule_char(ch) {
+                return false;
+            }
+            saw_decoration = true;
+        }
+    }
+    saw_decoration
+}
+
+fn is_rule_char(ch: char) -> bool {
+    matches!(ch, '-' | '=' | '_' | '~' | '*' | '·' | '…' | '—' | '–')
+        // Box Drawing block covers ─ ━ │ ┃ ┄ ╌ ═ ╭ ╮ ╰ ╯ etc.
+        || ('\u{2500}'..='\u{257F}').contains(&ch)
+        // Block Elements block covers ▀ ▁ ▔ █ ▏ etc.
+        || ('\u{2580}'..='\u{259F}').contains(&ch)
 }
 
 #[cfg(test)]
@@ -202,6 +299,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn words_in(rows: &[Line]) -> Vec<String> {
+        let mut out = Vec::new();
+        for row in rows {
+            let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
+            for w in text.split_whitespace() {
+                out.push(w.to_string());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn wrap_breaks_on_word_boundaries_not_mid_word() {
+        let line = Line::from("alpha bravo charlie delta");
+        let rows = wrap_line_to_width(line, 8);
+        for row in &rows {
+            assert!(row.width() <= 8, "row exceeds width: {row:?}");
+        }
+        // Every original word survives intact and in order.
+        assert_eq!(words_in(&rows), vec!["alpha", "bravo", "charlie", "delta"]);
+    }
+
+    #[test]
+    fn wrap_hard_breaks_words_longer_than_width() {
+        let line = Line::from("hi supercalifragilistic ok");
+        let rows = wrap_line_to_width(line, 6);
+        for row in &rows {
+            assert!(row.width() <= 6, "row exceeds width: {row:?}");
+        }
+        // The long word is split, but the short words stay whole.
+        let words = words_in(&rows);
+        assert!(words.contains(&"hi".to_string()));
+        assert!(words.contains(&"ok".to_string()));
+    }
+
+    #[test]
+    fn wrap_collapses_separator_lines_to_one_row() {
+        for rule in ["─".repeat(200), "-".repeat(200), "═".repeat(200)] {
+            let rows = wrap_line_to_width(Line::from(rule.clone()), 40);
+            assert_eq!(rows.len(), 1, "separator should stay one row: {rule:?}");
+        }
+    }
+
+    #[test]
+    fn wrap_does_not_treat_text_with_letters_as_separator() {
+        let line = Line::from("------ Section header that is quite long ------");
+        let rows = wrap_line_to_width(line, 20);
+        assert!(rows.len() > 1, "text line should still wrap");
     }
 
     #[test]
