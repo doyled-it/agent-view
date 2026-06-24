@@ -1,13 +1,53 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::core::mcp::McpSelection;
 use crate::core::runner::{runner_for, RunnerLaunch, RunnerLaunchContext, RunnerLaunchError};
 use crate::core::storage::Storage;
 use crate::core::tmux;
 use crate::core::tmux::{SessionCache, TmuxError};
-use crate::types::{Session, SessionCreateOptions, SessionStatus, StatusHistoryEntry, Tool};
+use crate::types::{
+    ConductorConfig, Session, SessionCreateOptions, SessionRole, SessionStatus, StatusHistoryEntry,
+    Tool,
+};
 
 use super::generate_title;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static SKIP_TMUX_CREATE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static SENT_KEYS: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub struct SkipTmuxCreateGuard;
+
+    impl Drop for SkipTmuxCreateGuard {
+        fn drop(&mut self) {
+            SKIP_TMUX_CREATE_COUNT.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    pub fn skip_tmux_create() -> SkipTmuxCreateGuard {
+        SENT_KEYS.with(|sent| sent.borrow_mut().clear());
+        SKIP_TMUX_CREATE_COUNT.fetch_add(1, Ordering::SeqCst);
+        SkipTmuxCreateGuard
+    }
+
+    pub fn should_skip_tmux_create() -> bool {
+        SKIP_TMUX_CREATE_COUNT.load(Ordering::SeqCst) > 0
+    }
+
+    pub fn record_sent_keys(name: &str, keys: &str) {
+        SENT_KEYS.with(|sent| sent.borrow_mut().push((name.to_string(), keys.to_string())));
+    }
+
+    pub fn take_sent_keys() -> Vec<(String, String)> {
+        SENT_KEYS.with(|sent| std::mem::take(&mut *sent.borrow_mut()))
+    }
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum SessionError {
@@ -43,6 +83,29 @@ impl SessionOps {
         let requested_mcp_selection = options.mcp_selection.clone();
         let mcp_selection = requested_mcp_selection.clone().unwrap_or_default();
         let tool = options.tool;
+        let role = options.role;
+        let parent_session = if let Some(parent_id) = options.parent_session_id.as_deref() {
+            match storage
+                .get_session(parent_id)
+                .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?
+            {
+                Some(session) if session.role == SessionRole::Conductor => Some(session),
+                _ => {
+                    return Err(SessionError::Storage(
+                        "Child sessions require a conductor parent".to_string(),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        let parent_session_id = options.parent_session_id.clone().unwrap_or_default();
+        let group_path = parent_session
+            .as_ref()
+            .map(|session| session.group_path.clone())
+            .or_else(|| options.group_path.clone())
+            .unwrap_or_else(|| crate::core::groups::DEFAULT_GROUP_PATH.to_string());
+        let conductor_config = options.conductor_config.clone();
         let id = uuid::Uuid::new_v4().to_string();
         let tmux_name = tmux::generate_session_name(&title);
 
@@ -89,11 +152,12 @@ impl SessionOps {
         let launch_ctx =
             build_runner_launch_context(working_dir.clone(), id.clone(), requested_mcp_selection);
         let launch = build_session_launch(tool, explicit_command, &launch_ctx, hook_warning)?;
+        let mut warning = launch.warning;
 
         // NOTE: if tmux::create_session fails here, a freshly created worktree
         // at `working_dir` is leaked on disk. Task 8's orphan sweep is the
         // recovery path; no inline rollback to keep the failure message simple.
-        tmux::create_session(
+        create_tmux_session(
             &tmux_name,
             launch.command.as_deref(),
             Some(&working_dir),
@@ -106,9 +170,7 @@ impl SessionOps {
             id: id.clone(),
             title,
             project_path: options.project_path,
-            group_path: options
-                .group_path
-                .unwrap_or_else(|| "my-sessions".to_string()),
+            group_path,
             order: storage.load_sessions().unwrap_or_default().len() as i32,
             command: launch.command.unwrap_or_default(),
             wrapper: String::new(),
@@ -117,7 +179,9 @@ impl SessionOps {
             tmux_session: tmux_name,
             created_at: now,
             last_accessed: now,
-            parent_session_id: String::new(),
+            parent_session_id,
+            role,
+            conductor_expanded: role == SessionRole::Conductor,
             worktree_path,
             worktree_repo,
             worktree_branch,
@@ -142,9 +206,26 @@ impl SessionOps {
         storage
             .save_session(&session)
             .map_err(|e| SessionError::Storage(format!("Failed to save session: {}", e)))?;
+        if role == SessionRole::Conductor {
+            let mut config = conductor_config
+                .unwrap_or_else(|| ConductorConfig::default_for_session(session.id.clone()));
+            config.session_id = session.id.clone();
+            storage.save_conductor_config(&config).map_err(|e| {
+                SessionError::Storage(format!("Failed to save conductor config: {}", e))
+            })?;
+            if let Err(error) = crate::core::conductor::instructions::send_startup_prompt(
+                &session.tmux_session,
+                &session.id,
+            ) {
+                warning = combine_warnings(
+                    warning,
+                    Some(format!("conductor startup prompt failed: {}", error)),
+                );
+            }
+        }
         storage.touch().ok();
 
-        Ok((session, launch.warning))
+        Ok((session, warning))
     }
 
     /// Stop a session (kill tmux but keep the record)
@@ -299,6 +380,49 @@ impl SessionOps {
         Ok(())
     }
 
+    /// Find detached Agent View tmux sessions that no stored session references.
+    pub fn find_orphan_tmux_sessions(&self, storage: &Storage) -> SessionResult<Vec<String>> {
+        let tmux_sessions = tmux::list_sessions()?;
+        self.find_orphan_tmux_sessions_from(storage, &tmux_sessions)
+    }
+
+    fn find_orphan_tmux_sessions_from(
+        &self,
+        storage: &Storage,
+        tmux_sessions: &[tmux::TmuxSessionInfo],
+    ) -> SessionResult<Vec<String>> {
+        let sessions = storage
+            .load_sessions()
+            .map_err(|e| SessionError::Storage(format!("DB error: {}", e)))?;
+        let known: HashSet<String> = sessions
+            .iter()
+            .map(|s| s.tmux_session.clone())
+            .filter(|name| !name.is_empty())
+            .collect();
+
+        Ok(tmux_sessions
+            .iter()
+            .filter(|session| session.name.starts_with(tmux::SESSION_PREFIX))
+            .filter(|session| !session.attached)
+            .filter(|session| !known.contains(&session.name))
+            .map(|session| session.name.clone())
+            .collect())
+    }
+
+    /// Kill detached Agent View tmux sessions that are no longer in storage.
+    pub fn cleanup_orphan_tmux_sessions(
+        &self,
+        storage: &Storage,
+        cache: &mut SessionCache,
+    ) -> SessionResult<Vec<String>> {
+        let orphan_sessions = self.find_orphan_tmux_sessions(storage)?;
+        for name in &orphan_sessions {
+            tmux::kill_session(name)?;
+            cache.remove(name);
+        }
+        Ok(orphan_sessions)
+    }
+
     /// Finish a session: kill tmux, remove the worktree (force, to nuke any
     /// uncommitted scratch), and optionally delete the branch when it has
     /// been merged into the repository's default upstream (`main` or
@@ -426,6 +550,21 @@ struct SessionLaunch {
     warning: Option<String>,
 }
 
+fn create_tmux_session(
+    name: &str,
+    command: Option<&str>,
+    cwd: Option<&str>,
+    env: Option<&HashMap<String, String>>,
+) -> SessionResult<()> {
+    #[cfg(test)]
+    if test_support::should_skip_tmux_create() {
+        return Ok(());
+    }
+
+    tmux::create_session(name, command, cwd, env)?;
+    Ok(())
+}
+
 fn build_session_launch(
     tool: Tool,
     explicit_command: Option<String>,
@@ -533,7 +672,9 @@ fn combine_warnings(first: Option<String>, second: Option<String>) -> Option<Str
 mod tests {
     use super::*;
     use crate::core::tmux::SessionCache;
-    use crate::types::{SessionCreateOptions, Tool, WorktreeCreateOptions};
+    use crate::types::{
+        ConductorMode, SessionCreateOptions, SessionRole, Tool, WorktreeCreateOptions,
+    };
     use std::process::Command as Cmd;
 
     fn init_repo() -> tempfile::TempDir {
@@ -577,6 +718,178 @@ mod tests {
     }
 
     #[test]
+    fn test_find_orphan_tmux_sessions_filters_to_detached_untracked_agent_sessions() {
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut known = crate::core::storage::test_helpers::make_test_session("known");
+        known.tmux_session = "agentorch_known".to_string();
+        storage.save_session(&known).unwrap();
+
+        let tmux_sessions = vec![
+            crate::core::tmux::TmuxSessionInfo {
+                name: "agentorch_known".to_string(),
+                attached: false,
+            },
+            crate::core::tmux::TmuxSessionInfo {
+                name: "agentorch_orphan".to_string(),
+                attached: false,
+            },
+            crate::core::tmux::TmuxSessionInfo {
+                name: "agentorch_attached-orphan".to_string(),
+                attached: true,
+            },
+            crate::core::tmux::TmuxSessionInfo {
+                name: "__agentview_meta_usage".to_string(),
+                attached: false,
+            },
+            crate::core::tmux::TmuxSessionInfo {
+                name: "personal".to_string(),
+                attached: false,
+            },
+        ];
+
+        let orphans = SessionOps
+            .find_orphan_tmux_sessions_from(&storage, &tmux_sessions)
+            .unwrap();
+
+        assert_eq!(orphans, vec!["agentorch_orphan".to_string()]);
+    }
+
+    fn create_options(title: &str, role: SessionRole) -> SessionCreateOptions {
+        SessionCreateOptions {
+            title: Some(title.to_string()),
+            project_path: "/tmp".to_string(),
+            group_path: None,
+            tool: Tool::Shell,
+            command: Some("true".to_string()),
+            mcp_selection: None,
+            role,
+            parent_session_id: None,
+            conductor_config: None,
+            worktree: None,
+        }
+    }
+
+    #[test]
+    fn test_create_conductor_session_persists_default_config() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (session, _) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                create_options("conductor-test", SessionRole::Conductor),
+            )
+            .unwrap();
+
+        let config = storage.get_conductor_config(&session.id).unwrap();
+        let loaded = storage.get_session(&session.id).unwrap().unwrap();
+
+        let config = config.unwrap();
+        assert_eq!(config.session_id, session.id);
+        assert_eq!(config.mode, ConductorMode::Autonomous);
+        assert_eq!(config.heartbeat_secs, 900);
+        assert_eq!(loaded.role, SessionRole::Conductor);
+        assert!(loaded.conductor_expanded);
+    }
+
+    #[test]
+    fn test_create_conductor_session_sends_startup_prompt() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (session, _) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                create_options("conductor-startup", SessionRole::Conductor),
+            )
+            .unwrap();
+
+        let sent_keys = test_support::take_sent_keys();
+        assert_eq!(sent_keys.len(), 1);
+        assert_eq!(sent_keys[0].0, session.tmux_session);
+        assert!(sent_keys[0]
+            .1
+            .contains(&format!("agent-view conductor-action {}", session.id)));
+        assert!(sent_keys[0].1.contains("\"action_type\":\"spawn_child\""));
+        assert!(sent_keys[0]
+            .1
+            .contains("Do not use runner-native background agents"));
+    }
+
+    #[test]
+    fn test_create_normal_session_does_not_send_startup_prompt() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        ops.create_session(
+            &storage,
+            &mut cache,
+            create_options("normal-startup", SessionRole::Normal),
+        )
+        .unwrap();
+
+        assert!(test_support::take_sent_keys().is_empty());
+    }
+
+    #[test]
+    fn test_create_child_session_persists_parent() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let mut parent_options = create_options("parent-conductor", SessionRole::Conductor);
+        parent_options.group_path = Some("conductors/project-a".to_string());
+        let (parent, _) = ops
+            .create_session(&storage, &mut cache, parent_options)
+            .unwrap();
+
+        let mut child_options = create_options("child-session", SessionRole::Normal);
+        child_options.parent_session_id = Some(parent.id.clone());
+        let (child, _) = ops
+            .create_session(&storage, &mut cache, child_options)
+            .unwrap();
+
+        let loaded_child = storage.get_session(&child.id).unwrap().unwrap();
+
+        assert_eq!(loaded_child.parent_session_id, parent.id);
+        assert_eq!(loaded_child.group_path, parent.group_path);
+    }
+
+    #[test]
+    fn test_create_child_session_requires_conductor_parent() {
+        let _guard = test_support::skip_tmux_create();
+        let (storage, _db_dir) = crate::core::storage::test_helpers::test_storage();
+        let mut cache = SessionCache::new();
+        let ops = SessionOps;
+
+        let (parent, _) = ops
+            .create_session(
+                &storage,
+                &mut cache,
+                create_options("normal-parent", SessionRole::Normal),
+            )
+            .unwrap();
+
+        let mut child_options = create_options("child-session", SessionRole::Normal);
+        child_options.parent_session_id = Some(parent.id.clone());
+        let result = ops.create_session(&storage, &mut cache, child_options);
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, SessionError::Storage(message) if message.contains("conductor parent"))
+        );
+    }
+
+    #[test]
     #[ignore = "creates a real tmux session — run locally with `cargo test -- --ignored`"]
     fn test_create_session_with_worktree_populates_fields_and_uses_wt_path() {
         let repo = init_repo();
@@ -596,6 +909,9 @@ mod tests {
                     tool: Tool::Shell,
                     command: Some("sleep 1".to_string()),
                     mcp_selection: None,
+                    role: crate::types::SessionRole::Normal,
+                    parent_session_id: None,
+                    conductor_config: None,
                     worktree: Some(WorktreeCreateOptions {
                         branch: "wt-feature".to_string(),
                         new_branch: true,
@@ -636,6 +952,9 @@ mod tests {
                     tool: Tool::Shell,
                     command: Some("sleep 5".to_string()),
                     mcp_selection: None,
+                    role: crate::types::SessionRole::Normal,
+                    parent_session_id: None,
+                    conductor_config: None,
                     worktree: Some(WorktreeCreateOptions {
                         branch: "merged-branch".to_string(),
                         new_branch: true,

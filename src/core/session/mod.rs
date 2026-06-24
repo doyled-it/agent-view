@@ -9,6 +9,9 @@ pub use crash::detect_crashed_statuses;
 pub use ops::SessionOps;
 pub use processor::StatusProcessor;
 
+#[cfg(test)]
+pub(crate) use ops::test_support;
+
 // Name generation word lists
 const ADJECTIVES: &[&str] = &[
     "swift", "bright", "calm", "deep", "eager", "fair", "gentle", "happy", "keen", "light", "mild",

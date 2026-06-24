@@ -15,7 +15,10 @@ pub enum ListRow {
         running_count: usize,
         waiting_count: usize,
     },
-    Session(Box<Session>),
+    Session {
+        session: Box<Session>,
+        depth: usize,
+    },
 }
 
 /// Ensure the default "Ungrouped" group exists in the list.
@@ -76,9 +79,22 @@ pub fn flatten_group_tree(
     let mut sorted_groups = groups.to_vec();
     sorted_groups.sort_by_key(|g| g.order);
 
-    // Build map: group_path -> Vec<Session>
+    // Build maps for root sessions and conductor children.
     let mut by_group: HashMap<String, Vec<&Session>> = HashMap::new();
+    let mut by_parent: HashMap<String, Vec<&Session>> = HashMap::new();
+    let session_ids: std::collections::HashSet<&str> =
+        sessions.iter().map(|session| session.id.as_str()).collect();
     for session in sessions {
+        if !session.parent_session_id.is_empty()
+            && session_ids.contains(session.parent_session_id.as_str())
+        {
+            by_parent
+                .entry(session.parent_session_id.clone())
+                .or_default()
+                .push(session);
+            continue;
+        }
+
         let path = if session.group_path.is_empty() {
             DEFAULT_GROUP_PATH.to_string()
         } else {
@@ -90,6 +106,9 @@ pub fn flatten_group_tree(
     // Sort sessions within each group by the requested sort mode
     for group_sessions in by_group.values_mut() {
         sort_sessions(group_sessions, sort_mode);
+    }
+    for child_sessions in by_parent.values_mut() {
+        sort_sessions(child_sessions, sort_mode);
     }
 
     let known_paths: std::collections::HashSet<&str> =
@@ -124,7 +143,22 @@ pub fn flatten_group_tree(
 
         if group.expanded {
             for session in group_sessions {
-                result.push(ListRow::Session(Box::new((*session).clone())));
+                result.push(ListRow::Session {
+                    session: Box::new((*session).clone()),
+                    depth: 0,
+                });
+                if session.role == crate::types::SessionRole::Conductor
+                    && session.conductor_expanded
+                {
+                    if let Some(children) = by_parent.get(&session.id) {
+                        for child in children {
+                            result.push(ListRow::Session {
+                                session: Box::new((*child).clone()),
+                                depth: 1,
+                            });
+                        }
+                    }
+                }
             }
         }
     }
@@ -157,7 +191,20 @@ pub fn flatten_group_tree(
         });
 
         for session in orphans {
-            result.push(ListRow::Session(Box::new((*session).clone())));
+            result.push(ListRow::Session {
+                session: Box::new((*session).clone()),
+                depth: 0,
+            });
+            if session.role == crate::types::SessionRole::Conductor && session.conductor_expanded {
+                if let Some(children) = by_parent.get(&session.id) {
+                    for child in children {
+                        result.push(ListRow::Session {
+                            session: Box::new((*child).clone()),
+                            depth: 1,
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -184,6 +231,8 @@ mod tests {
             created_at: 1700000000000,
             last_accessed: 0,
             parent_session_id: String::new(),
+            role: crate::types::SessionRole::Normal,
+            conductor_expanded: false,
             worktree_path: String::new(),
             worktree_repo: String::new(),
             worktree_branch: String::new(),
@@ -213,6 +262,19 @@ mod tests {
         }
     }
 
+    fn conductor_session(id: &str, group: &str, expanded: bool) -> Session {
+        let mut session = make_session(id, group, SessionStatus::Idle);
+        session.role = crate::types::SessionRole::Conductor;
+        session.conductor_expanded = expanded;
+        session
+    }
+
+    fn child_session(id: &str, group: &str, parent_id: &str) -> Session {
+        let mut session = make_session(id, group, SessionStatus::Idle);
+        session.parent_session_id = parent_id.to_string();
+        session
+    }
+
     #[test]
     fn test_ensure_default_group_adds_when_missing() {
         let groups = vec![make_group("work", "Work", 0)];
@@ -238,7 +300,7 @@ mod tests {
         let rows = flatten_group_tree(&sessions, &groups, SortMode::Created);
         assert_eq!(rows.len(), 3); // 1 group header + 2 sessions
         assert!(matches!(rows[0], ListRow::Group { .. }));
-        assert!(matches!(rows[1], ListRow::Session(_)));
+        assert!(matches!(rows[1], ListRow::Session { .. }));
     }
 
     #[test]
@@ -248,6 +310,69 @@ mod tests {
         let sessions = vec![make_session("s1", "work", SessionStatus::Idle)];
         let rows = flatten_group_tree(&sessions, &[group], SortMode::Created);
         assert_eq!(rows.len(), 1); // only group header
+    }
+
+    #[test]
+    fn test_flatten_expanded_conductor_shows_children_beneath_parent() {
+        let parent = conductor_session("parent", "work", true);
+        let child = child_session("child", "work", "parent");
+        let sibling = make_session("sibling", "work", SessionStatus::Idle);
+        let rows = flatten_group_tree(
+            &[child, sibling, parent],
+            &[make_group("work", "Work", 0)],
+            SortMode::Name,
+        );
+
+        let session_rows: Vec<(&str, usize)> = rows
+            .iter()
+            .filter_map(|row| match row {
+                ListRow::Session { session, depth } => Some((session.id.as_str(), *depth)),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            session_rows,
+            vec![("parent", 0), ("child", 1), ("sibling", 0)]
+        );
+    }
+
+    #[test]
+    fn test_flatten_collapsed_conductor_hides_children() {
+        let parent = conductor_session("parent", "work", false);
+        let child = child_session("child", "work", "parent");
+        let sibling = make_session("sibling", "work", SessionStatus::Idle);
+        let rows = flatten_group_tree(
+            &[child, sibling, parent],
+            &[make_group("work", "Work", 0)],
+            SortMode::Name,
+        );
+
+        let session_rows: Vec<(&str, usize)> = rows
+            .iter()
+            .filter_map(|row| match row {
+                ListRow::Session { session, depth } => Some((session.id.as_str(), *depth)),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(session_rows, vec![("parent", 0), ("sibling", 0)]);
+    }
+
+    #[test]
+    fn test_flatten_child_with_missing_parent_remains_visible_as_root() {
+        let child = child_session("child", "work", "missing");
+        let rows = flatten_group_tree(&[child], &[make_group("work", "Work", 0)], SortMode::Name);
+
+        let session_rows: Vec<(&str, usize)> = rows
+            .iter()
+            .filter_map(|row| match row {
+                ListRow::Session { session, depth } => Some((session.id.as_str(), *depth)),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(session_rows, vec![("child", 0)]);
     }
 
     #[test]
@@ -303,7 +428,7 @@ mod tests {
         let groups = vec![make_group("work", "Work", 0)];
         let rows = flatten_group_tree(&[s1, s2], &groups, SortMode::Created);
         // s2 is pinned so should appear first after group header
-        if let ListRow::Session(first) = &rows[1] {
+        if let ListRow::Session { session: first, .. } = &rows[1] {
             assert_eq!(first.id, "s2");
             assert!(first.pinned);
         } else {
@@ -322,13 +447,16 @@ mod tests {
         let groups = vec![make_group("work", "Work", 0)];
         let rows = flatten_group_tree(&[s1, s2, s3], &groups, SortMode::StatusPriority);
         // Group header + 3 sessions
-        if let ListRow::Session(first) = &rows[1] {
+        if let ListRow::Session { session: first, .. } = &rows[1] {
             assert_eq!(first.id, "s2");
         } // waiting first
-        if let ListRow::Session(second) = &rows[2] {
+        if let ListRow::Session {
+            session: second, ..
+        } = &rows[2]
+        {
             assert_eq!(second.id, "s3");
         } // running second
-        if let ListRow::Session(third) = &rows[3] {
+        if let ListRow::Session { session: third, .. } = &rows[3] {
             assert_eq!(third.id, "s1");
         } // idle last
     }
@@ -431,7 +559,7 @@ mod tests {
         );
         let session_row = rows
             .iter()
-            .find(|r| matches!(r, ListRow::Session(s) if s.id == "s1"));
+            .find(|r| matches!(r, ListRow::Session { session, .. } if session.id == "s1"));
         assert!(
             session_row.is_some(),
             "session should appear under default group"
@@ -448,8 +576,12 @@ mod tests {
         s2_ref.title = "Aardvark".to_string();
         let groups = vec![make_group("work", "Work", 0)];
         let rows = flatten_group_tree(&[s1_ref, s2_ref], &groups, SortMode::Name);
-        if let (Some(ListRow::Session(first)), Some(ListRow::Session(second))) =
-            (rows.get(1), rows.get(2))
+        if let (
+            Some(ListRow::Session { session: first, .. }),
+            Some(ListRow::Session {
+                session: second, ..
+            }),
+        ) = (rows.get(1), rows.get(2))
         {
             assert_eq!(first.title, "Aardvark");
             assert_eq!(second.title, "Zephyr");
@@ -467,8 +599,12 @@ mod tests {
         let groups = vec![make_group("work", "Work", 0)];
         let rows = flatten_group_tree(&[s1, s2], &groups, SortMode::LastActivity);
         // Higher timestamp (more recent) comes first
-        if let (Some(ListRow::Session(first)), Some(ListRow::Session(second))) =
-            (rows.get(1), rows.get(2))
+        if let (
+            Some(ListRow::Session { session: first, .. }),
+            Some(ListRow::Session {
+                session: second, ..
+            }),
+        ) = (rows.get(1), rows.get(2))
         {
             assert_eq!(first.id, "s2"); // status_changed_at = 2000
             assert_eq!(second.id, "s1"); // status_changed_at = 1000
@@ -486,8 +622,12 @@ mod tests {
         let groups = vec![make_group("work", "Work", 0)];
         let rows = flatten_group_tree(&[s1, s2], &groups, SortMode::Created);
         // Newer created_at (descending) comes first
-        if let (Some(ListRow::Session(first)), Some(ListRow::Session(second))) =
-            (rows.get(1), rows.get(2))
+        if let (
+            Some(ListRow::Session { session: first, .. }),
+            Some(ListRow::Session {
+                session: second, ..
+            }),
+        ) = (rows.get(1), rows.get(2))
         {
             assert_eq!(first.id, "s2"); // created_at = 2000
             assert_eq!(second.id, "s1"); // created_at = 1000

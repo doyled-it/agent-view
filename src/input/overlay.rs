@@ -88,6 +88,8 @@ pub fn handle_palette_key(
     Ok(())
 }
 
+const NEW_SESSION_PARENT_FIELD: usize = 2;
+
 pub fn open_new_session_overlay(app: &mut crate::app::App) {
     match crate::core::mcp::default_sync_config_paths()
         .and_then(|paths| crate::core::mcp::sync_all_missing_mcp_servers_from_paths(&paths))
@@ -102,8 +104,23 @@ pub fn open_new_session_overlay(app: &mut crate::app::App) {
             app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(6));
         }
     }
-    app.overlay =
-        crate::app::Overlay::NewSession(crate::app::NewSessionForm::from_app_config(&app.config));
+    let mut form = crate::app::NewSessionForm::from_app_config(&app.config);
+    form.parent_conductors = parent_conductor_choices(app);
+    app.overlay = crate::app::Overlay::NewSession(form);
+}
+
+pub fn open_child_session_overlay(app: &mut crate::app::App, parent_id: &str) {
+    open_new_session_overlay(app);
+    if let crate::app::Overlay::NewSession(ref mut form) = app.overlay {
+        form.role = crate::types::SessionRole::Normal;
+        if let Some(index) = form
+            .parent_conductors
+            .iter()
+            .position(|(id, _)| id == parent_id)
+        {
+            form.select_parent_at_index(index);
+        }
+    }
 }
 
 pub fn open_mcp_profiles_overlay(app: &mut crate::app::App) {
@@ -124,6 +141,33 @@ pub fn execute_command_action(
     match action {
         CommandAction::NewSession => {
             open_new_session_overlay(app);
+        }
+        CommandAction::NewChildSession => match resolve_new_child_session(app) {
+            NewChildSessionResolution::Parent(parent_id) => {
+                open_child_session_overlay(app, &parent_id);
+            }
+            NewChildSessionResolution::ChooseParent => {
+                open_new_session_overlay(app);
+                if let Overlay::NewSession(ref mut form) = app.overlay {
+                    form.role = crate::types::SessionRole::Normal;
+                    form.parent_session_id = None;
+                    form.focused_field = NEW_SESSION_PARENT_FIELD;
+                }
+            }
+            NewChildSessionResolution::NoConductors => {
+                app.toast.message = Some("Create a conductor session first.".to_string());
+                app.toast.expire =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+            }
+        },
+        CommandAction::RawAttachSession => {
+            if let Some(session) = app.selected_session() {
+                if !session.tmux_session.is_empty()
+                    && session.status != crate::types::SessionStatus::Stopped
+                {
+                    app.attach_session = Some(session.id.clone());
+                }
+            }
         }
         CommandAction::ManageMcpProfiles => {
             open_mcp_profiles_overlay(app);
@@ -442,6 +486,50 @@ pub fn execute_command_action(
         }
     }
     Ok(())
+}
+
+enum NewChildSessionResolution {
+    Parent(String),
+    ChooseParent,
+    NoConductors,
+}
+
+fn resolve_new_child_session(app: &crate::app::App) -> NewChildSessionResolution {
+    if let Some(parent_id) = selected_child_parent_conductor_id(app) {
+        return NewChildSessionResolution::Parent(parent_id);
+    }
+
+    let conductors = parent_conductor_choices(app);
+    match conductors.as_slice() {
+        [] => NewChildSessionResolution::NoConductors,
+        [(id, _)] => NewChildSessionResolution::Parent(id.clone()),
+        _ => NewChildSessionResolution::ChooseParent,
+    }
+}
+
+fn parent_conductor_choices(app: &crate::app::App) -> Vec<(String, String)> {
+    app.sessions
+        .iter()
+        .filter(|session| session.role == crate::types::SessionRole::Conductor)
+        .map(|session| (session.id.clone(), session.title.clone()))
+        .collect()
+}
+
+fn selected_child_parent_conductor_id(app: &crate::app::App) -> Option<String> {
+    let session = app.selected_session()?;
+    if session.role == crate::types::SessionRole::Conductor {
+        return Some(session.id.clone());
+    }
+    if session.parent_session_id.is_empty() {
+        return None;
+    }
+    app.sessions
+        .iter()
+        .any(|candidate| {
+            candidate.id == session.parent_session_id
+                && candidate.role == crate::types::SessionRole::Conductor
+        })
+        .then(|| session.parent_session_id.clone())
 }
 
 pub fn handle_mcp_profiles_key(
@@ -792,6 +880,72 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
+    fn test_session(
+        id: &str,
+        title: &str,
+        role: crate::types::SessionRole,
+        parent_session_id: &str,
+    ) -> crate::types::Session {
+        crate::types::Session {
+            id: id.to_string(),
+            title: title.to_string(),
+            project_path: "/tmp/project".to_string(),
+            group_path: "my-sessions".to_string(),
+            order: 0,
+            command: String::new(),
+            wrapper: String::new(),
+            tool: crate::types::Tool::Claude,
+            status: crate::types::SessionStatus::Idle,
+            tmux_session: String::new(),
+            created_at: 0,
+            last_accessed: 0,
+            parent_session_id: parent_session_id.to_string(),
+            role,
+            conductor_expanded: true,
+            worktree_path: String::new(),
+            worktree_repo: String::new(),
+            worktree_branch: String::new(),
+            tool_data: String::new(),
+            mcp_selection: crate::core::mcp::McpSelection::default(),
+            acknowledged: false,
+            notify: false,
+            follow_up: false,
+            user_waiting: false,
+            status_changed_at: 0,
+            restart_count: 0,
+            last_started_at: 0,
+            notes: Vec::new(),
+            status_history: Vec::new(),
+            pinned: false,
+            tokens_used: 0,
+        }
+    }
+
+    fn select_session_row(app: &mut crate::app::App, session_id: &str) {
+        app.selected_index = app
+            .list_rows
+            .iter()
+            .position(|row| {
+                matches!(row, crate::core::groups::ListRow::Session { session, .. } if session.id == session_id)
+            })
+            .unwrap();
+    }
+
+    fn assert_new_child_form(
+        app: crate::app::App,
+        expected_parent_id: Option<&str>,
+        expected_parent_count: usize,
+    ) {
+        match app.overlay {
+            crate::app::Overlay::NewSession(form) => {
+                assert_eq!(form.role, crate::types::SessionRole::Normal);
+                assert_eq!(form.parent_session_id.as_deref(), expected_parent_id);
+                assert_eq!(form.parent_conductors.len(), expected_parent_count);
+            }
+            _ => panic!("expected new session overlay"),
+        }
+    }
+
     struct HomeRestore {
         home: Option<std::ffi::OsString>,
     }
@@ -932,6 +1086,245 @@ url = "https://gitlab.example.test/api/v4/mcp"
                 assert_eq!(form.profiles[0].id, "rust");
             }
             _ => panic!("expected MCP profiles overlay"),
+        }
+    }
+
+    #[test]
+    fn new_child_session_action_opens_child_form_for_selected_conductor() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.sessions = vec![test_session(
+            "parent-1",
+            "Parent Conductor",
+            crate::types::SessionRole::Conductor,
+            "",
+        )];
+        app.rebuild_list_rows();
+        select_session_row(&mut app, "parent-1");
+
+        super::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewChildSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        assert_new_child_form(app, Some("parent-1"), 1);
+    }
+
+    #[test]
+    fn new_child_session_action_uses_parent_when_child_selected() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.sessions = vec![
+            test_session(
+                "parent-1",
+                "Parent Conductor",
+                crate::types::SessionRole::Conductor,
+                "",
+            ),
+            test_session(
+                "child-1",
+                "Child Session",
+                crate::types::SessionRole::Normal,
+                "parent-1",
+            ),
+        ];
+        app.rebuild_list_rows();
+        select_session_row(&mut app, "child-1");
+
+        super::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewChildSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        assert_new_child_form(app, Some("parent-1"), 1);
+    }
+
+    #[test]
+    fn new_child_session_action_without_conductors_shows_toast_only() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.sessions = vec![test_session(
+            "session-1",
+            "Standalone Session",
+            crate::types::SessionRole::Normal,
+            "",
+        )];
+        app.rebuild_list_rows();
+        select_session_row(&mut app, "session-1");
+
+        super::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewChildSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        assert!(matches!(app.overlay, crate::app::Overlay::None));
+        assert_eq!(
+            app.toast.message.as_deref(),
+            Some("Create a conductor session first.")
+        );
+    }
+
+    #[test]
+    fn new_child_session_action_uses_only_conductor_from_standalone_session() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.sessions = vec![
+            test_session(
+                "session-1",
+                "Standalone Session",
+                crate::types::SessionRole::Normal,
+                "",
+            ),
+            test_session(
+                "parent-1",
+                "Parent Conductor",
+                crate::types::SessionRole::Conductor,
+                "",
+            ),
+        ];
+        app.rebuild_list_rows();
+        select_session_row(&mut app, "session-1");
+
+        super::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewChildSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        assert_new_child_form(app, Some("parent-1"), 1);
+    }
+
+    #[test]
+    fn new_child_session_action_uses_only_conductor_from_group_row() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.sessions = vec![test_session(
+            "parent-1",
+            "Parent Conductor",
+            crate::types::SessionRole::Conductor,
+            "",
+        )];
+        app.rebuild_list_rows();
+        assert!(matches!(
+            app.list_rows.get(app.selected_index),
+            Some(crate::core::groups::ListRow::Group { .. })
+        ));
+
+        super::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewChildSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        assert_new_child_form(app, Some("parent-1"), 1);
+    }
+
+    #[test]
+    fn new_child_session_action_with_standalone_and_multiple_conductors_selects_no_parent() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.sessions = vec![
+            test_session(
+                "session-1",
+                "Standalone Session",
+                crate::types::SessionRole::Normal,
+                "",
+            ),
+            test_session(
+                "parent-1",
+                "Parent Conductor",
+                crate::types::SessionRole::Conductor,
+                "",
+            ),
+            test_session(
+                "parent-2",
+                "Other Conductor",
+                crate::types::SessionRole::Conductor,
+                "",
+            ),
+        ];
+        app.rebuild_list_rows();
+        select_session_row(&mut app, "session-1");
+
+        super::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewChildSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        match app.overlay {
+            crate::app::Overlay::NewSession(form) => {
+                assert_eq!(form.role, crate::types::SessionRole::Normal);
+                assert_eq!(form.parent_session_id, None);
+                assert_eq!(form.parent_conductors.len(), 2);
+                assert_eq!(form.focused_field, 2);
+            }
+            _ => panic!("expected new session overlay"),
+        }
+    }
+
+    #[test]
+    fn new_child_session_action_with_group_and_multiple_conductors_selects_no_parent() {
+        let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
+        let session_ops = crate::core::session::SessionOps;
+        let mut app = crate::app::App::new(false);
+        app.sessions = vec![
+            test_session(
+                "parent-1",
+                "Parent Conductor",
+                crate::types::SessionRole::Conductor,
+                "",
+            ),
+            test_session(
+                "parent-2",
+                "Other Conductor",
+                crate::types::SessionRole::Conductor,
+                "",
+            ),
+        ];
+        app.rebuild_list_rows();
+        assert!(matches!(
+            app.list_rows.get(app.selected_index),
+            Some(crate::core::groups::ListRow::Group { .. })
+        ));
+
+        super::execute_command_action(
+            &mut app,
+            crate::app::CommandAction::NewChildSession,
+            &storage,
+            &session_ops,
+        )
+        .unwrap();
+
+        match app.overlay {
+            crate::app::Overlay::NewSession(form) => {
+                assert_eq!(form.role, crate::types::SessionRole::Normal);
+                assert_eq!(form.parent_session_id, None);
+                assert_eq!(form.parent_conductors.len(), 2);
+                assert_eq!(form.focused_field, 2);
+            }
+            _ => panic!("expected new session overlay"),
         }
     }
 

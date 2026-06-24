@@ -5,7 +5,7 @@ mod error;
 mod inspect;
 mod terminal;
 
-pub use attach::attach_session_sync;
+pub use attach::{attach_conductor_workspace_sync, attach_session_sync};
 pub use error::{TmuxError, TmuxResult};
 pub use inspect::attach_inspect_session_sync;
 
@@ -15,6 +15,12 @@ use std::sync::LazyLock;
 use std::time::Instant;
 
 pub const SESSION_PREFIX: &str = "agentorch_";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxSessionInfo {
+    pub name: String,
+    pub attached: bool,
+}
 
 /// Cache of tmux session activity timestamps
 pub struct SessionCache {
@@ -122,6 +128,53 @@ pub fn is_tmux_available() -> bool {
         .unwrap_or(false)
 }
 
+/// List tmux sessions with their attachment state.
+pub fn list_sessions() -> TmuxResult<Vec<TmuxSessionInfo>> {
+    let output = Command::new("tmux")
+        .args([
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{session_attached}",
+        ])
+        .output()
+        .map_err(|e| TmuxError::CommandFailed(format!("Failed to list tmux sessions: {}", e)))?;
+
+    if !output.status.success() {
+        let detail = command_output_detail(&output.stdout, &output.stderr);
+        if detail.contains("no server running") {
+            return Ok(Vec::new());
+        }
+        return Err(TmuxError::CommandFailed(tmux_failure_message(
+            "list-sessions",
+            &output.status.to_string(),
+            &output.stdout,
+            &output.stderr,
+        )));
+    }
+
+    Ok(parse_session_infos(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn parse_session_infos(output: &str) -> Vec<TmuxSessionInfo> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (name, attached_count) = line.split_once('\t')?;
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let attached = attached_count.trim().parse::<u32>().unwrap_or(0) > 0;
+            Some(TmuxSessionInfo {
+                name: name.to_string(),
+                attached,
+            })
+        })
+        .collect()
+}
+
 /// Generate a unique tmux session name from a title
 pub fn generate_session_name(title: &str) -> String {
     let safe: String = title
@@ -187,15 +240,17 @@ pub fn create_session(
             args.push(format!("{}={}", key, value));
         }
     }
-    let status = Command::new("tmux")
+    let output = Command::new("tmux")
         .args(&args)
-        .status()
+        .output()
         .map_err(|e| TmuxError::CommandFailed(format!("Failed to spawn tmux: {}", e)))?;
 
-    if !status.success() {
-        return Err(TmuxError::CommandFailed(format!(
-            "tmux new-session failed with status {}",
-            status
+    if !output.status.success() {
+        return Err(TmuxError::CommandFailed(tmux_failure_message(
+            "new-session",
+            &output.status.to_string(),
+            &output.stdout,
+            &output.stderr,
         )));
     }
 
@@ -222,6 +277,27 @@ pub fn create_session(
     }
 
     Ok(())
+}
+
+fn tmux_failure_message(command: &str, status: &str, stdout: &[u8], stderr: &[u8]) -> String {
+    let mut message = format!("tmux {} failed with status {}", command, status);
+    let detail = command_output_detail(stdout, stderr);
+    if !detail.is_empty() {
+        message.push_str(": ");
+        message.push_str(&detail);
+    }
+    message
+}
+
+fn command_output_detail(stdout: &[u8], stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    match (stderr.is_empty(), stdout.is_empty()) {
+        (false, false) => format!("{}; stdout: {}", stderr, stdout),
+        (false, true) => stderr,
+        (true, false) => stdout,
+        (true, true) => String::new(),
+    }
 }
 
 /// Kill a tmux session
@@ -371,6 +447,46 @@ mod tests {
         // (actual tmux interaction tested manually)
         let result = send_keys_raw("nonexistent_session_xyz", "Right");
         assert!(result.is_err()); // session doesn't exist
+    }
+
+    #[test]
+    fn tmux_failure_message_includes_stderr_detail() {
+        let message = tmux_failure_message(
+            "new-session",
+            "exit status: 1",
+            b"",
+            b"create window failed: fork failed: Device not configured\n",
+        );
+
+        assert_eq!(
+            message,
+            "tmux new-session failed with status exit status: 1: create window failed: fork failed: Device not configured"
+        );
+    }
+
+    #[test]
+    fn test_parse_session_infos_reads_attachment_state() {
+        let sessions = parse_session_infos(
+            "agentorch_known\t0\nagentorch_attached\t2\nmissing-tab\n\t1\npersonal\tbad\n",
+        );
+
+        assert_eq!(
+            sessions,
+            vec![
+                TmuxSessionInfo {
+                    name: "agentorch_known".to_string(),
+                    attached: false,
+                },
+                TmuxSessionInfo {
+                    name: "agentorch_attached".to_string(),
+                    attached: true,
+                },
+                TmuxSessionInfo {
+                    name: "personal".to_string(),
+                    attached: false,
+                },
+            ]
+        );
     }
 
     #[test]

@@ -5,6 +5,7 @@ use rusqlite::{Connection, Result as SqlResult};
 use std::fs;
 use std::path::Path;
 
+mod conductors;
 mod cost_aggregation;
 mod cost_events;
 mod groups;
@@ -14,6 +15,7 @@ mod runs;
 mod schema;
 mod sessions;
 
+pub(crate) use conductors::QueuedConductorAction;
 #[allow(unused_imports)]
 pub use cost_events::{CostEvent, CostTotals};
 
@@ -89,6 +91,8 @@ pub(crate) mod test_helpers {
             created_at: 1700000000000,
             last_accessed: 1700000000000,
             parent_session_id: String::new(),
+            role: crate::types::SessionRole::Normal,
+            conductor_expanded: false,
             worktree_path: String::new(),
             worktree_repo: String::new(),
             worktree_branch: String::new(),

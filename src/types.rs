@@ -270,6 +270,146 @@ pub struct RoutineRun {
     pub promoted_session_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionRole {
+    Normal,
+    Conductor,
+}
+
+impl SessionRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Conductor => "conductor",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "conductor" => Self::Conductor,
+            _ => Self::Normal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConductorMode {
+    Manual,
+    Supervised,
+    Autonomous,
+}
+
+impl ConductorMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Supervised => "supervised",
+            Self::Autonomous => "autonomous",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "manual" => Self::Manual,
+            "supervised" => Self::Supervised,
+            "autonomous" => Self::Autonomous,
+            _ => Self::Supervised,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConductorConfig {
+    pub session_id: String,
+    pub mode: ConductorMode,
+    pub heartbeat_secs: i64,
+    pub last_heartbeat_at: i64,
+    pub max_children: i32,
+    pub max_actions_per_tick: i32,
+    pub allow_spawn_child: bool,
+    pub allow_send_child_response: bool,
+    pub enabled: bool,
+    pub failure_count: i32,
+}
+
+impl ConductorConfig {
+    pub fn default_for_session(session_id: String) -> Self {
+        Self {
+            session_id,
+            mode: ConductorMode::Autonomous,
+            heartbeat_secs: 900,
+            last_heartbeat_at: 0,
+            max_children: 8,
+            max_actions_per_tick: 5,
+            allow_spawn_child: true,
+            allow_send_child_response: true,
+            enabled: true,
+            failure_count: 0,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConductorActionType {
+    SpawnChild,
+    ReadChildSnapshot,
+    SendChildResponse,
+    MarkChildNeedsUser,
+    RecordChildSummary,
+    UpdateConductorPlan,
+}
+
+impl ConductorActionType {
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SpawnChild => "spawn_child",
+            Self::ReadChildSnapshot => "read_child_snapshot",
+            Self::SendChildResponse => "send_child_response",
+            Self::MarkChildNeedsUser => "mark_child_needs_user",
+            Self::RecordChildSummary => "record_child_summary",
+            Self::UpdateConductorPlan => "update_conductor_plan",
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConductorActionStatus {
+    Queued,
+    Processing,
+    Completed,
+    Blocked,
+    Failed,
+}
+
+impl ConductorActionStatus {
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Processing => "processing",
+            Self::Completed => "completed",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConductorActionRequest {
+    pub action_type: ConductorActionType,
+    pub child_session_id: Option<String>,
+    pub payload: serde_json::Value,
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: String,
@@ -285,6 +425,8 @@ pub struct Session {
     pub created_at: i64,
     pub last_accessed: i64,
     pub parent_session_id: String,
+    pub role: SessionRole,
+    pub conductor_expanded: bool,
     pub worktree_path: String,
     pub worktree_repo: String,
     pub worktree_branch: String,
@@ -373,6 +515,9 @@ pub struct SessionCreateOptions {
     pub tool: Tool,
     pub command: Option<String>,
     pub mcp_selection: Option<crate::core::mcp::McpSelection>,
+    pub role: SessionRole,
+    pub parent_session_id: Option<String>,
+    pub conductor_config: Option<ConductorConfig>,
     /// Worktree to create alongside this session; `None` means no worktree.
     pub worktree: Option<WorktreeCreateOptions>,
 }
@@ -599,6 +744,8 @@ mod tests {
             created_at: 0,
             last_accessed: 0,
             parent_session_id: String::new(),
+            role: SessionRole::Normal,
+            conductor_expanded: false,
             worktree_path: String::new(),
             worktree_repo: String::new(),
             worktree_branch: String::new(),
@@ -635,6 +782,8 @@ mod tests {
             created_at: 0,
             last_accessed: 0,
             parent_session_id: String::new(),
+            role: SessionRole::Normal,
+            conductor_expanded: false,
             worktree_path: String::new(),
             worktree_repo: String::new(),
             worktree_branch: String::new(),
@@ -772,6 +921,15 @@ mod tests {
     }
 
     #[test]
+    fn test_conductor_action_status_strings() {
+        assert_eq!(ConductorActionStatus::Queued.as_str(), "queued");
+        assert_eq!(ConductorActionStatus::Processing.as_str(), "processing");
+        assert_eq!(ConductorActionStatus::Completed.as_str(), "completed");
+        assert_eq!(ConductorActionStatus::Blocked.as_str(), "blocked");
+        assert_eq!(ConductorActionStatus::Failed.as_str(), "failed");
+    }
+
+    #[test]
     fn test_usage_bucket_fields() {
         let bucket = UsageBucket {
             label: "Current session".to_string(),
@@ -830,6 +988,9 @@ mod tests {
             tool: Tool::Claude,
             command: None,
             mcp_selection: None,
+            role: SessionRole::Normal,
+            parent_session_id: None,
+            conductor_config: None,
             worktree: Some(WorktreeCreateOptions {
                 branch: "feature/x".to_string(),
                 new_branch: true,
