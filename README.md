@@ -2,7 +2,7 @@
 
 **A lightweight terminal dashboard for managing multiple AI coding agent sessions.**
 
-Run multiple AI coding agents in parallel and manage them from a single terminal UI. Agent View is a tmux session manager built for AI-assisted development workflows -- monitor agent status in real-time, get notifications when agents finish or need input, and seamlessly switch between sessions.
+Run multiple AI coding agents in parallel and manage them from a single terminal UI. Agent View is a tmux session manager built for AI-assisted development workflows -- monitor agent status in real-time, get notifications when agents finish or need input, and switch between sessions.
 
 Forked from [Frayo44/agent-view](https://github.com/Frayo44/agent-view) (the original TypeScript implementation) and rewritten in Rust. The TypeScript version with additional features is preserved on the [`legacy/typescript`](https://github.com/doyled-it/agent-view/tree/legacy/typescript) branch.
 
