@@ -6,6 +6,7 @@ mod types;
 mod ui;
 
 use clap::Parser;
+use std::io::Read;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -58,6 +59,19 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Queue a conductor action request
+    ConductorAction {
+        /// The conductor session ID that owns the action
+        conductor_session_id: String,
+        /// JSON action request. If omitted, stdin is read.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Internal: read-only conductor child session sidecar panel
+    ConductorPanel {
+        /// The conductor session ID to display children for
+        session_id: String,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -86,6 +100,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(Commands::ExecRoutine { routine_id }) = &cli.command {
         return crate::core::routine::exec_routine(routine_id).map_err(|e| e.into());
+    }
+
+    if let Some(Commands::ConductorAction {
+        conductor_session_id,
+        args,
+    }) = &cli.command
+    {
+        let input = if args.is_empty() {
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            input
+        } else {
+            args.join(" ")
+        };
+        let storage = crate::core::storage::Storage::open_default()?;
+        storage.migrate()?;
+        let action_id = crate::core::conductor::actions::enqueue_action_from_json(
+            &storage,
+            conductor_session_id,
+            &input,
+        )
+        .map_err(std::io::Error::other)?;
+        println!("{}", action_id);
+        return Ok(());
+    }
+
+    if let Some(Commands::ConductorPanel { session_id }) = &cli.command {
+        return crate::core::conductor::panel::run(session_id.clone());
     }
 
     // Verify tmux is available
@@ -225,6 +267,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.rebuild_list_rows();
     }
 
+    // Clean up detached tmux sessions left behind without a storage record.
+    let session_ops = crate::core::session::SessionOps;
+    let mut cleanup_cache = crate::core::tmux::SessionCache::new();
+    if let Ok(orphan_sessions) =
+        session_ops.cleanup_orphan_tmux_sessions(&storage, &mut cleanup_cache)
+    {
+        if !orphan_sessions.is_empty() {
+            app.toast.message = Some(format!(
+                "Cleaned up {} orphan tmux session(s)",
+                orphan_sessions.len()
+            ));
+            app.toast.expire = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+        }
+    }
+
     // If --attach was passed, store for immediate attach after TUI starts
     if let Some(ref session_id) = cli.attach {
         app.attach_session = Some(session_id.clone());
@@ -303,6 +360,9 @@ fn run_tui(
     let bg_sound = config.notifications.sound;
     let _bg_handle = crate::poller::spawn(Arc::clone(&attach_state), event_state.clone(), bg_sound);
 
+    // Spawn conductor worker
+    let _conductor_worker = crate::core::conductor::worker::spawn();
+
     // Spawn usage monitor
     let (usage_shared, _usage_thread) = crate::core::usage::spawn_monitor();
     app.usage_state.shared = Some(usage_shared);
@@ -313,40 +373,14 @@ fn run_tui(
 
     // Handle --attach: immediately attach to the session
     if let Some(session_id) = app.attach_session.take() {
-        if let Some(session) = app.sessions.iter().find(|s| s.id == session_id) {
-            if !session.tmux_session.is_empty() {
-                let tmux_name = session.tmux_session.clone();
-                if let Ok(mut guard) = attach_state.lock() {
-                    guard.attached_session = Some(tmux_name.clone());
-                }
-
-                disable_raw_mode()?;
-                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-                let _ = crate::core::tmux::attach_session_sync(&tmux_name);
-
-                if let Ok(mut guard) = attach_state.lock() {
-                    guard.suppress_queue.push(tmux_name.clone());
-                    guard.attached_session = None;
-                }
-
-                enable_raw_mode()?;
-                execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                terminal.clear()?;
-
-                // Fresh reload after returning; restore cursor to attached session
-                if let Ok(sessions) = storage.load_sessions() {
-                    app.sessions = sessions;
-                    app.groups = storage.load_groups().unwrap_or_default();
-                    app.rebuild_list_rows();
-                    if let Some(pos) = app.list_rows.iter().position(|row| {
-                        matches!(row, crate::core::groups::ListRow::Session(s) if s.tmux_session == tmux_name)
-                    }) {
-                        app.selected_index = pos;
-                    }
-                }
-            }
-        }
+        crate::input::attach_session_by_id(
+            &mut app,
+            &session_id,
+            &storage,
+            &mut terminal,
+            &attach_state,
+            true,
+        )?;
     }
 
     loop {
@@ -383,8 +417,11 @@ fn run_tui(
                                 // Auto-jump to first match as user types
                                 let query = q.to_lowercase();
                                 for (i, row) in app.list_rows.iter().enumerate() {
-                                    if let crate::core::groups::ListRow::Session(s) = row {
-                                        if s.title.to_lowercase().contains(&query) {
+                                    if let crate::core::groups::ListRow::Session {
+                                        session, ..
+                                    } = row
+                                    {
+                                        if session.title.to_lowercase().contains(&query) {
                                             app.selected_index = i;
                                             break;
                                         }
@@ -483,6 +520,17 @@ fn run_tui(
 
         if app.should_quit {
             break;
+        }
+
+        if let Some(session_id) = app.attach_session.take() {
+            crate::input::attach_session_by_id(
+                &mut app,
+                &session_id,
+                &storage,
+                &mut terminal,
+                &attach_state,
+                true,
+            )?;
         }
 
         // Poll storage for changes from the background thread

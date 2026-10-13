@@ -1,7 +1,14 @@
 //! Session overlay keyboard handlers
 
-const FIELD_COUNT: usize = 6;
-const MCP_FIELD: usize = 5;
+const RUNNER_FIELD: usize = 0;
+const ROLE_FIELD: usize = 1;
+const PARENT_FIELD: usize = 2;
+const TITLE_FIELD: usize = 3;
+const PROJECT_PATH_FIELD: usize = 4;
+const WORKTREE_BRANCH_FIELD: usize = 5;
+const WORKTREE_BASE_FIELD: usize = 6;
+const MCP_FIELD: usize = 7;
+const FIELD_COUNT: usize = 8;
 
 fn build_session_create_options_from_form(
     form: &crate::app::NewSessionForm,
@@ -52,6 +59,19 @@ fn build_session_create_options_from_form(
         tool: form.runner,
         command: None,
         mcp_selection: Some(form.mcp_selection.clone()),
+        role: form.role,
+        parent_session_id: if form.role == crate::types::SessionRole::Normal {
+            form.parent_session_id.clone()
+        } else {
+            None
+        },
+        conductor_config: if form.role == crate::types::SessionRole::Conductor {
+            Some(crate::types::ConductorConfig::default_for_session(
+                String::new(),
+            ))
+        } else {
+            None
+        },
         worktree,
     })
 }
@@ -157,11 +177,22 @@ pub fn handle_new_session_key(
                     }
                 }
             }
-            (KeyModifiers::NONE, KeyCode::Left) if form.focused_field == 0 => {
+            (KeyModifiers::NONE, KeyCode::Left) if form.focused_field == RUNNER_FIELD => {
                 form.cycle_runner_prev();
             }
-            (KeyModifiers::NONE, KeyCode::Right) if form.focused_field == 0 => {
+            (KeyModifiers::NONE, KeyCode::Right) if form.focused_field == RUNNER_FIELD => {
                 form.cycle_runner_next();
+            }
+            (KeyModifiers::NONE, KeyCode::Left | KeyCode::Right)
+                if form.focused_field == ROLE_FIELD =>
+            {
+                form.cycle_role_next();
+            }
+            (KeyModifiers::NONE, KeyCode::Left) if form.focused_field == PARENT_FIELD => {
+                form.cycle_parent_prev();
+            }
+            (KeyModifiers::NONE, KeyCode::Right) if form.focused_field == PARENT_FIELD => {
+                form.cycle_parent_next();
             }
             (KeyModifiers::NONE, KeyCode::Char(' '))
                 if form.focused_field == MCP_FIELD && form.mcp_expanded =>
@@ -183,7 +214,7 @@ pub fn handle_new_session_key(
             }
             (_, KeyCode::Tab) => {
                 match form.focused_field {
-                    2 => {
+                    PROJECT_PATH_FIELD => {
                         // Path field: filesystem completion
                         if !form.completions.is_empty() && form.completions.len() > 1 {
                             // Cycle: rebuild path from the captured base + next candidate.
@@ -213,7 +244,7 @@ pub fn handle_new_session_key(
                             };
                         }
                     }
-                    3 => {
+                    WORKTREE_BRANCH_FIELD => {
                         // Branch field: local-branch completion
                         if !form.completions.is_empty() && form.completions.len() > 1 {
                             let idx = match form.completion_index {
@@ -241,7 +272,7 @@ pub fn handle_new_session_key(
                             }
                         }
                     }
-                    4 if form.worktree_new_branch => {
+                    WORKTREE_BASE_FIELD if form.worktree_new_branch => {
                         // Base ref field: local-branch completion (only when
                         // creating a new branch — no-op in attach mode).
                         if !form.completions.is_empty() && form.completions.len() > 1 {
@@ -318,17 +349,17 @@ pub fn handle_new_session_key(
                 if !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::SUPER) =>
             {
                 match form.focused_field {
-                    0 => {} // runner field — text input ignored
-                    1 => form.title.push(c),
-                    2 => {
+                    RUNNER_FIELD | ROLE_FIELD | PARENT_FIELD => {}
+                    TITLE_FIELD => form.title.push(c),
+                    PROJECT_PATH_FIELD => {
                         form.project_path.push(c);
                         form.clear_completions();
                     }
-                    3 => {
+                    WORKTREE_BRANCH_FIELD => {
                         form.worktree_branch.push(c);
                         form.error = None;
                     }
-                    4 => {
+                    WORKTREE_BASE_FIELD => {
                         form.worktree_base.push(c);
                         form.error = None;
                     }
@@ -336,19 +367,19 @@ pub fn handle_new_session_key(
                 }
             }
             (_, KeyCode::Backspace) => match form.focused_field {
-                0 => {} // runner field — text input ignored
-                1 => {
+                RUNNER_FIELD | ROLE_FIELD | PARENT_FIELD => {}
+                TITLE_FIELD => {
                     form.title.pop();
                 }
-                2 => {
+                PROJECT_PATH_FIELD => {
                     form.project_path.pop();
                     form.clear_completions();
                 }
-                3 => {
+                WORKTREE_BRANCH_FIELD => {
                     form.worktree_branch.pop();
                     form.error = None;
                 }
-                4 => {
+                WORKTREE_BASE_FIELD => {
                     form.worktree_base.pop();
                     form.error = None;
                 }
@@ -592,7 +623,7 @@ mod tests {
     use crate::app::{App, Overlay};
     use crate::core::mcp::{McpSelection, McpServerSelection};
     use crate::core::session::SessionOps;
-    use crate::types::Tool;
+    use crate::types::{ConductorMode, SessionRole, Tool};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -607,10 +638,24 @@ mod tests {
         home: Option<std::ffi::OsString>,
     }
 
+    struct McpEnvRestore {
+        claude_config_dir: Option<std::ffi::OsString>,
+        codex_home: Option<std::ffi::OsString>,
+    }
+
     impl HomeRestore {
         fn capture() -> Self {
             Self {
                 home: std::env::var_os("HOME"),
+            }
+        }
+    }
+
+    impl McpEnvRestore {
+        fn capture() -> Self {
+            Self {
+                claude_config_dir: std::env::var_os("CLAUDE_CONFIG_DIR"),
+                codex_home: std::env::var_os("CODEX_HOME"),
             }
         }
     }
@@ -621,6 +666,21 @@ mod tests {
                 std::env::set_var("HOME", value);
             } else {
                 std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    impl Drop for McpEnvRestore {
+        fn drop(&mut self) {
+            if let Some(value) = &self.claude_config_dir {
+                std::env::set_var("CLAUDE_CONFIG_DIR", value);
+            } else {
+                std::env::remove_var("CLAUDE_CONFIG_DIR");
+            }
+            if let Some(value) = &self.codex_home {
+                std::env::set_var("CODEX_HOME", value);
+            } else {
+                std::env::remove_var("CODEX_HOME");
             }
         }
     }
@@ -659,11 +719,46 @@ mod tests {
     }
 
     #[test]
+    fn test_build_session_create_options_includes_normal_parent_conductor() {
+        let mut form = crate::app::NewSessionForm::new();
+        form.project_path = "/tmp/project".into();
+        form.role = SessionRole::Normal;
+        form.parent_conductors = vec![("parent-1".into(), "Parent Conductor".into())];
+        form.select_parent_at_index(0);
+
+        let options = build_session_create_options_from_form(&form, None).unwrap();
+
+        assert_eq!(options.role, SessionRole::Normal);
+        assert_eq!(options.parent_session_id.as_deref(), Some("parent-1"));
+        assert_eq!(options.conductor_config, None);
+    }
+
+    #[test]
+    fn test_build_session_create_options_includes_conductor_role_and_config() {
+        let mut form = crate::app::NewSessionForm::new();
+        form.project_path = "/tmp/project".into();
+        form.role = SessionRole::Conductor;
+        form.parent_conductors = vec![("parent-1".into(), "Parent Conductor".into())];
+        form.select_parent_at_index(0);
+
+        let options = build_session_create_options_from_form(&form, None).unwrap();
+
+        assert_eq!(options.role, SessionRole::Conductor);
+        assert_eq!(options.parent_session_id, None);
+        let config = options
+            .conductor_config
+            .expect("conductor sessions should include default config");
+        assert_eq!(config.session_id, "");
+        assert_eq!(config.mode, ConductorMode::Autonomous);
+        assert!(config.enabled);
+    }
+
+    #[test]
     fn test_mcp_field_enter_toggles_expanded() {
         let (storage, _dir) = crate::core::storage::test_helpers::test_storage();
         let session_ops = SessionOps;
         let mut form = crate::app::NewSessionForm::new();
-        form.focused_field = 5;
+        form.focused_field = MCP_FIELD;
         let mut app = App::new(false);
         app.overlay = Overlay::NewSession(form);
 
@@ -680,7 +775,7 @@ mod tests {
         let session_ops = SessionOps;
         let mut form = crate::app::NewSessionForm::new();
         form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
-        form.focused_field = 5;
+        form.focused_field = MCP_FIELD;
         form.mcp_expanded = true;
         form.mcp_selected_row = 1;
         let mut app = App::new(false);
@@ -715,7 +810,7 @@ mod tests {
                 }],
             },
         }];
-        form.focused_field = 5;
+        form.focused_field = MCP_FIELD;
         form.mcp_expanded = true;
         form.mcp_selected_row = 0;
         let mut app = App::new(false);
@@ -746,7 +841,7 @@ mod tests {
                 }],
             },
         }];
-        form.focused_field = 5;
+        form.focused_field = MCP_FIELD;
         form.mcp_expanded = true;
         form.mcp_selected_row = 0;
         form.apply_mcp_profile("rust").unwrap();
@@ -899,20 +994,20 @@ mod tests {
         let session_ops = SessionOps;
         let mut form = crate::app::NewSessionForm::new();
         form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
-        form.focused_field = 5;
+        form.focused_field = MCP_FIELD;
         form.mcp_expanded = true;
         let mut app = App::new(false);
         app.overlay = Overlay::NewSession(form);
 
         handle_new_session_key(&mut app, key(KeyCode::Down), &storage, &session_ops).unwrap();
-        assert_eq!(form_in_overlay(&app).focused_field, 5);
+        assert_eq!(form_in_overlay(&app).focused_field, MCP_FIELD);
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
 
         handle_new_session_key(&mut app, key(KeyCode::Down), &storage, &session_ops).unwrap();
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
 
         handle_new_session_key(&mut app, key(KeyCode::Up), &storage, &session_ops).unwrap();
-        assert_eq!(form_in_overlay(&app).focused_field, 5);
+        assert_eq!(form_in_overlay(&app).focused_field, MCP_FIELD);
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 0);
     }
 
@@ -922,20 +1017,20 @@ mod tests {
         let session_ops = SessionOps;
         let mut form = crate::app::NewSessionForm::new();
         form.set_mcp_servers_for_test(vec!["GitLabMITRE".into(), "browser".into()]);
-        form.focused_field = 5;
+        form.focused_field = MCP_FIELD;
         form.mcp_expanded = true;
         let mut app = App::new(false);
         app.overlay = Overlay::NewSession(form);
 
         handle_new_session_key(&mut app, key(KeyCode::Char('j')), &storage, &session_ops).unwrap();
-        assert_eq!(form_in_overlay(&app).focused_field, 5);
+        assert_eq!(form_in_overlay(&app).focused_field, MCP_FIELD);
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
 
         handle_new_session_key(&mut app, key(KeyCode::Char('j')), &storage, &session_ops).unwrap();
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 1);
 
         handle_new_session_key(&mut app, key(KeyCode::Char('k')), &storage, &session_ops).unwrap();
-        assert_eq!(form_in_overlay(&app).focused_field, 5);
+        assert_eq!(form_in_overlay(&app).focused_field, MCP_FIELD);
         assert_eq!(form_in_overlay(&app).mcp_selected_row, 0);
     }
 
@@ -973,6 +1068,7 @@ mod tests {
     #[test]
     fn test_new_session_command_auto_syncs_mcp_servers_before_loading_catalog() {
         let _guard = crate::core::runner::hook_io::lock_env();
+        let _env_restore = McpEnvRestore::capture();
         let dir = tempfile::tempdir().unwrap();
         let claude_dir = dir.path().join("claude");
         let codex_dir = dir.path().join("codex");
@@ -1019,9 +1115,6 @@ url = "https://gitlab.example.test/api/v4/mcp"
         assert!(std::fs::read_to_string(codex_dir.join("config.toml"))
             .unwrap()
             .contains("[mcp_servers.wavecrest]"));
-
-        std::env::remove_var("CLAUDE_CONFIG_DIR");
-        std::env::remove_var("CODEX_HOME");
     }
 
     fn assert_server_ids(

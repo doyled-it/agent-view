@@ -273,6 +273,8 @@ pub fn build_promoted_session(
         created_at: now,
         last_accessed: now,
         parent_session_id: String::new(),
+        role: crate::types::SessionRole::Normal,
+        conductor_expanded: false,
         worktree_path: String::new(),
         worktree_repo: String::new(),
         worktree_branch: String::new(),

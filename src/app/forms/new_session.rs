@@ -6,9 +6,14 @@ pub struct NewSessionForm {
     /// Snapshot of `runner::implemented_tools()` taken at form construction
     /// so per-frame renders don't re-query the runner registry.
     pub runners: Vec<crate::types::Tool>,
+    pub role: crate::types::SessionRole,
+    pub parent_session_id: Option<String>,
+    pub parent_conductors: Vec<(String, String)>,
+    pub parent_conductor_index: usize,
     pub title: String,
     pub project_path: String,
-    /// 0 = runner, 1 = title, 2 = project path, 3 = worktree branch, 4 = base ref, 5 = MCP
+    /// 0 = runner, 1 = role, 2 = parent conductor, 3 = title, 4 = project path,
+    /// 5 = worktree branch, 6 = base ref, 7 = MCP
     pub focused_field: usize,
     pub completions: Vec<String>,
     pub completion_index: Option<usize>,
@@ -40,9 +45,13 @@ impl NewSessionForm {
         Self {
             runner: crate::types::Tool::Claude,
             runners: crate::core::runner::implemented_tools(),
+            role: crate::types::SessionRole::Normal,
+            parent_session_id: None,
+            parent_conductors: Vec::new(),
+            parent_conductor_index: 0,
             title: String::new(),
             project_path: home,
-            focused_field: 1,
+            focused_field: 3,
             completions: Vec::new(),
             completion_index: None,
             completion_base: String::new(),
@@ -96,6 +105,63 @@ impl NewSessionForm {
         let n = self.runners.len();
         self.runner = self.runners[(idx + n - 1) % n];
         self.refresh_mcp_servers_for_runner();
+    }
+
+    pub fn cycle_role_next(&mut self) {
+        self.role = match self.role {
+            crate::types::SessionRole::Normal => {
+                self.clear_parent_selection();
+                crate::types::SessionRole::Conductor
+            }
+            crate::types::SessionRole::Conductor => crate::types::SessionRole::Normal,
+        };
+    }
+
+    pub fn parent_label(&self) -> String {
+        let Some(parent_id) = self.parent_session_id.as_deref() else {
+            return "(none)".to_string();
+        };
+
+        self.parent_conductors
+            .iter()
+            .find(|(id, _)| id == parent_id)
+            .map(|(_, title)| title.clone())
+            .unwrap_or_else(|| "(none)".to_string())
+    }
+
+    pub fn select_parent_at_index(&mut self, index: usize) {
+        if let Some((id, _)) = self.parent_conductors.get(index) {
+            self.parent_session_id = Some(id.clone());
+            self.parent_conductor_index = index;
+        }
+    }
+
+    pub fn cycle_parent_next(&mut self) {
+        if self.parent_conductors.is_empty() {
+            self.clear_parent_selection();
+            return;
+        }
+
+        match self.current_parent_index() {
+            Some(index) if index + 1 < self.parent_conductors.len() => {
+                self.select_parent_at_index(index + 1);
+            }
+            Some(_) => self.clear_parent_selection(),
+            None => self.select_parent_at_index(0),
+        }
+    }
+
+    pub fn cycle_parent_prev(&mut self) {
+        if self.parent_conductors.is_empty() {
+            self.clear_parent_selection();
+            return;
+        }
+
+        match self.current_parent_index() {
+            Some(index) if index > 0 => self.select_parent_at_index(index - 1),
+            Some(_) => self.clear_parent_selection(),
+            None => self.select_parent_at_index(self.parent_conductors.len() - 1),
+        }
     }
 
     #[allow(dead_code)]
@@ -295,6 +361,18 @@ impl NewSessionForm {
             .position(|t| *t == self.runner)
             .expect("runner is always a member of runners")
     }
+
+    fn current_parent_index(&self) -> Option<usize> {
+        let parent_id = self.parent_session_id.as_deref()?;
+        self.parent_conductors
+            .iter()
+            .position(|(id, _)| id == parent_id)
+    }
+
+    fn clear_parent_selection(&mut self) {
+        self.parent_session_id = None;
+        self.parent_conductor_index = 0;
+    }
 }
 
 fn mcp_server_selections_from_catalog(
@@ -356,16 +434,18 @@ fn unique_profile_id(profiles: &[crate::core::mcp::McpProfile], base: &str) -> S
 mod tests {
     use super::*;
     use crate::core::mcp::{McpProfile, McpSelection, McpServerSelection};
-    use crate::types::Tool;
+    use crate::types::{SessionRole, Tool};
 
     #[test]
     fn test_form_default_runner_is_claude_with_title_focused() {
         let f = NewSessionForm::new();
         assert_eq!(f.runner, Tool::Claude);
-        // Title (field 1) is focused by default so the existing keystroke flow
+        assert_eq!(f.role, SessionRole::Normal);
+        assert_eq!(f.parent_session_id, None);
+        // Title is focused by default so the existing keystroke flow
         // — open overlay, start typing — still works. Users reach the runner
         // picker via Shift-Tab or Up.
-        assert_eq!(f.focused_field, 1);
+        assert_eq!(f.focused_field, 3);
     }
 
     #[test]
@@ -399,6 +479,75 @@ mod tests {
         assert_eq!(f.runner, Tool::Claude);
         f.cycle_runner_next();
         assert_eq!(f.runner, f.runners[1]);
+    }
+
+    #[test]
+    fn test_new_session_form_cycles_role() {
+        let mut f = NewSessionForm::new();
+        f.parent_conductors = vec![("parent-1".into(), "Conductor One".into())];
+        f.select_parent_at_index(0);
+
+        assert_eq!(f.role, SessionRole::Normal);
+        assert_eq!(f.parent_session_id.as_deref(), Some("parent-1"));
+
+        f.cycle_role_next();
+
+        assert_eq!(f.role, SessionRole::Conductor);
+        assert_eq!(f.parent_session_id, None);
+        assert_eq!(f.parent_label(), "(none)");
+
+        f.cycle_role_next();
+
+        assert_eq!(f.role, SessionRole::Normal);
+        assert_eq!(f.parent_session_id, None);
+    }
+
+    #[test]
+    fn test_new_session_form_selects_parent_conductor() {
+        let mut f = NewSessionForm::new();
+        f.parent_conductors = vec![
+            ("parent-1".into(), "Conductor One".into()),
+            ("parent-2".into(), "Conductor Two".into()),
+        ];
+
+        assert_eq!(f.parent_label(), "(none)");
+
+        f.select_parent_at_index(1);
+
+        assert_eq!(f.parent_session_id.as_deref(), Some("parent-2"));
+        assert_eq!(f.parent_conductor_index, 1);
+        assert_eq!(f.parent_label(), "Conductor Two");
+
+        f.select_parent_at_index(99);
+
+        assert_eq!(f.parent_session_id.as_deref(), Some("parent-2"));
+        assert_eq!(f.parent_conductor_index, 1);
+        assert_eq!(f.parent_label(), "Conductor Two");
+    }
+
+    #[test]
+    fn test_new_session_form_cycles_parent_conductor() {
+        let mut f = NewSessionForm::new();
+        f.parent_conductors = vec![
+            ("parent-1".into(), "Conductor One".into()),
+            ("parent-2".into(), "Conductor Two".into()),
+        ];
+
+        f.cycle_parent_next();
+        assert_eq!(f.parent_session_id.as_deref(), Some("parent-1"));
+        assert_eq!(f.parent_label(), "Conductor One");
+
+        f.cycle_parent_next();
+        assert_eq!(f.parent_session_id.as_deref(), Some("parent-2"));
+        assert_eq!(f.parent_label(), "Conductor Two");
+
+        f.cycle_parent_next();
+        assert_eq!(f.parent_session_id, None);
+        assert_eq!(f.parent_label(), "(none)");
+
+        f.cycle_parent_prev();
+        assert_eq!(f.parent_session_id.as_deref(), Some("parent-2"));
+        assert_eq!(f.parent_label(), "Conductor Two");
     }
 
     #[test]

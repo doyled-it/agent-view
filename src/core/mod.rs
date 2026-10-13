@@ -1,5 +1,6 @@
 // Submodules will be added as they are implemented
 pub mod attach_state;
+pub mod conductor;
 pub mod config;
 pub mod cost;
 pub mod git;
